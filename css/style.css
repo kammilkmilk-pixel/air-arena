@@ -18,8 +18,11 @@ body { margin: 0; padding: 0; overflow: hidden; background-color: #0c0c0c; font-
 
 /* 頂部重播時序條 */
 #replay-control-bar { 
-    position: absolute; top: 20px; left: 50%; transform: translateX(-50%); background: rgba(15, 15, 15, 0.95); border: 2px solid #555; border-radius: 8px; padding: 6px 16px; display: flex; align-items: center; gap: 12px; z-index: 9999; box-shadow: 0 0 20px rgba(0,0,0,0.8); color: #fff; width: 620px; max-width: 90vw; box-sizing: border-box; pointer-events: auto;
+    position: absolute; top: 20px; left: 50%; transform: translateX(-50%); background: rgba(15, 15, 15, 0.95); border: 2px solid #555; border-radius: 8px; padding: 6px 16px; display: flex; flex-direction: column; gap: 6px; z-index: 9999; box-shadow: 0 0 20px rgba(0,0,0,0.8); color: #fff; width: 620px; max-width: 90vw; box-sizing: border-box; pointer-events: auto;
 }
+.replay-control-main { display: flex; align-items: center; gap: 12px; width: 100%; }
+.replay-debug-row { display: flex; justify-content: flex-end; width: 100%; }
+.replay-debug-row .replay-btn { border-color: #00bcd4; color: #00e5ff; }
 .replay-btn { background: #252525; border: 1px solid #444; border-radius: 4px; color: #fff; font-size: 11px; font-weight: bold; padding: 5px 10px; cursor: pointer; font-family: inherit; }
 #replay-status { font-size: 11px; color: #00ff88; font-weight: bold; width: 85px; text-align: center; }
 .replay-timeline-container { flex-grow: 1; display: flex; align-items: center; }
@@ -117,6 +120,10 @@ body { margin: 0; padding: 0; overflow: hidden; background-color: #0c0c0c; font-
 
 /* HUD 戰術鎖定系統 */
 #dynamic-hud { position: fixed; top: 0; left: 0; pointer-events: auto; cursor: crosshair; z-index: 8000; transform: translate(-50%, -50%); display: none; }
+/* LCOS 準星：外環可拖曳調機頭 */
+#lcos-pipper { touch-action: none; }
+#lcos-pipper.lcos-dragging #lcos-cone-circle { opacity: 1; filter: drop-shadow(0 0 4px rgba(255, 255, 255, 0.85)); }
+#lcos-grab-ring:hover { fill: rgba(255, 255, 255, 0.12) !important; }
 #hud-shape { position: absolute; top: -20px; left: -20px; width: 40px; height: 40px; box-sizing: border-box; }
 #hud-shape::before, #hud-shape::after { content: none !important; display: none !important; }
 .shape-square { border: 2px solid #00ff88; border-radius: 0; background: none; }

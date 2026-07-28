@@ -21,7 +21,7 @@
         climbPenalty: 6.2,
         gunRange: 70,
         gunAngle: 22,
-        missileMinRange: 45,
+        missileMinRange: 35,
         missileMaxRange: 120,
         missileAngle: 27,
         interceptTurnGain: 0.22,

@@ -134,8 +134,9 @@ function resolveGunsForStep(step, ratio, ctx) {
 function resolveMissilesForStep(step, ratio, ctx) {
     let cFlares = ctx.flares[step] || [];
     combatActiveIds().forEach(id => {
-        let t = teams[id]; let enemy = combatEnemyOf(id);
-        if (t.isDestroyed || !t.activeMissiles || !enemy) return;
+        let t = teams[id];
+        if (t.isDestroyed || !t.activeMissiles) return;
+        const preferredEnemy = combatEnemyOf(id);
         
         t.activeMissiles.forEach(activeM => {
             if (activeM.exploded || activeM.ap <= 0) return; 
@@ -148,14 +149,34 @@ function resolveMissilesForStep(step, ratio, ctx) {
                     let pylonConfig = t.pylons.find(p => p.id === activeM.pylonId);
                     activeM.pos.copy(acPos).add(pylonConfig.localPosition.clone().add(new THREE.Vector3(0, -0.05, 0.2)).applyQuaternion(acQuat));
                     activeM.quat.copy(acQuat);
+                    activeM.launchPos = activeM.pos.clone();
+                    activeM.traveled = 0;
+                    activeM.guided = false;
                     ctx.log[`${id}MslTracks`][activeM.pylonId].push({ pos: activeM.pos.clone(), quat: activeM.quat.clone() });
                     return; 
                 }
             }
 
             let oldPos = activeM.pos.clone();
-            let targetPos = getPosAt(ratio, enemy.pathPoints); let targetQuat = getQuatAt(ratio, enemy.pathQuats);
-            let stepRes = simulateMissileStep(activeM.pos, activeM.quat, targetPos, targetQuat, activeM.ap, t, enemy, cFlares, activeM);
+            const heatSources = buildMissileHeatSources(id, ratio, cFlares);
+            let fallbackPos = null;
+            let fallbackQuat = null;
+            if (preferredEnemy && preferredEnemy.pathPoints && preferredEnemy.pathPoints.length) {
+                fallbackPos = getPosAt(ratio, preferredEnemy.pathPoints);
+                fallbackQuat = getQuatAt(ratio, preferredEnemy.pathQuats);
+            }
+            let stepRes = simulateMissileStep(
+                activeM.pos,
+                activeM.quat,
+                fallbackPos,
+                fallbackQuat,
+                activeM.ap,
+                t,
+                preferredEnemy,
+                cFlares,
+                activeM,
+                { shooterId: id, ratio, heatSources }
+            );
 
             let isMissileCrashedIntoBuilding = false;
             if (typeof obstacles !== 'undefined' && obstacles.length > 0 && stepRes.pos) {
@@ -174,6 +195,10 @@ function resolveMissilesForStep(step, ratio, ctx) {
             if (stepRes.pos) activeM.pos.copy(stepRes.pos); 
             if (stepRes.quat) activeM.quat.copy(stepRes.quat); 
             if (stepRes.ap !== undefined) activeM.ap = stepRes.ap;
+            if (stepRes.trackId) activeM.trackId = stepRes.trackId;
+            if (stepRes.trackKind) activeM.trackKind = stepRes.trackKind;
+            if (typeof stepRes.traveled === 'number') activeM.traveled = stepRes.traveled;
+            if (typeof stepRes.guided === 'boolean') activeM.guided = stepRes.guided;
 
             if (isMissileCrashedIntoBuilding) {
                 stepRes.exploded = true;
@@ -198,9 +223,31 @@ function resolveMissilesForStep(step, ratio, ctx) {
                 const frontFuseMult = stepRes.frontAspect ? (fox2.frontAspectFuseRangeMult || 0.45) : 1;
                 const frontDamageMult = stepRes.frontAspect ? (fox2.frontAspectDamageMult || 0.45) : 1;
                 const effectiveFuseRange = (fuseRange * frontFuseMult) + (stepRes.frontAspect ? 0.25 : 1.1);
-                if (!isMissileCrashedIntoBuilding && activeM.pos.distanceTo(targetPos) <= effectiveFuseRange) { 
+
+                // 傷害對象 = 實際追蹤載機；追熱焰時改打近炸範圍內最近載機（可含友軍）
+                let victimId = stepRes.hitTargetId || null;
+                if (!victimId && stepRes.trackKind === 'aircraft' && stepRes.trackId) {
+                    const victimSrc = heatSources.find((s) => s.kind === 'aircraft' && s.id === stepRes.trackId);
+                    if (victimSrc && activeM.pos.distanceTo(victimSrc.pos) <= effectiveFuseRange) {
+                        victimId = stepRes.trackId;
+                    }
+                }
+                if (!victimId && !isMissileCrashedIntoBuilding) {
+                    let bestD = effectiveFuseRange;
+                    heatSources.forEach((src) => {
+                        if (!src || src.kind !== 'aircraft' || !src.pos) return;
+                        const d = activeM.pos.distanceTo(src.pos);
+                        if (d <= bestD) {
+                            bestD = d;
+                            victimId = src.id;
+                        }
+                    });
+                }
+
+                if (!isMissileCrashedIntoBuilding && victimId && ctx.hp[victimId] !== undefined) {
                     const damage = MISSILE_DAMAGE * frontDamageMult;
-                    ctx.hp[enemy.id] -= damage; ctx.log[enemy.id].damageTaken += damage;
+                    ctx.hp[victimId] -= damage;
+                    if (ctx.log[victimId]) ctx.log[victimId].damageTaken += damage;
                 }
             }
         });

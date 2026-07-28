@@ -754,9 +754,24 @@ function updateMissilePreview(teamObj) {
         } else { mPos = activeM.pos.clone(); mQuat = activeM.quat.clone(); mAP = activeM.ap; }
 
         let mPoints = [mPos.clone()]; let simPos = mPos.clone(); let simQuat = mQuat.clone(); let simAP = mAP;
+        const previewSources = (typeof buildMissileHeatSources === 'function')
+            ? buildMissileHeatSources(teamObj.id, null, [])
+            : null;
         for (let step = 0; step <= 100; step++) { 
-            let ratio = step / 100; let eIdx = Math.min(enemyObj.pathPoints.length - 1, Math.floor(ratio * enemyObj.pathPoints.length)); let targetPos = enemyObj.pathPoints[eIdx] || enemyObj.wrapper.position; let targetQuat = enemyObj.pathQuats[eIdx] || enemyObj.wrapper.quaternion;
-            let stepRes = simulateMissileStep(simPos, simQuat, targetPos, targetQuat, simAP, teamObj, enemyObj, []); 
+            let ratio = step / 100;
+            // Rebuild aircraft poses along paths for no-IFF preview when possible
+            let heatSources = previewSources;
+            if (typeof buildMissileHeatSources === 'function') {
+                heatSources = buildMissileHeatSources(teamObj.id, ratio, []);
+            }
+            let eIdx = Math.min(enemyObj.pathPoints.length - 1, Math.floor(ratio * enemyObj.pathPoints.length));
+            let targetPos = enemyObj.pathPoints[eIdx] || enemyObj.wrapper.position;
+            let targetQuat = enemyObj.pathQuats[eIdx] || enemyObj.wrapper.quaternion;
+            let stepRes = simulateMissileStep(simPos, simQuat, targetPos, targetQuat, simAP, teamObj, enemyObj, [], null, {
+                shooterId: teamObj.id,
+                ratio,
+                heatSources
+            });
             simPos = stepRes.pos; simQuat = stepRes.quat; simAP = stepRes.ap; mPoints.push(simPos.clone()); 
             if (stepRes.exploded || simAP <= 0) break; 
         }

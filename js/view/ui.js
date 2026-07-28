@@ -371,11 +371,17 @@ function uiSetWingmanOrder(order) {
     if (!uiIsNpcWingman(id)) return;
     if (!GameContext.stateMachine.setWingmanOrder(id, order)) return;
     uiRefreshWingmanOrderButtons(id);
-    const labels = { follow: '跟隨', attack: '攻擊我的目標', cover: '掩護', break: '脫離' };
+    const labels = { follow: '跟隨', attack: '攻擊我的目標', free: '主動進攻', cover: '掩護', break: '脫離' };
     if (typeof showSMSAlert === 'function') {
         showSMSAlert(`${id.toUpperCase()} 指令: ${labels[order] || order}`, '#ffffff');
     }
-    updateDashboardUI(teams[id] || teams[uiCurrentTeamId()]);
+    // Apply immediately so status/path reflect the new order (don't wait for human Ready).
+    const t = teams[id];
+    if (t && t.aiEnabled && !t.ready && !t.isDestroyed) {
+        uiRunAI(id);
+    } else {
+        updateDashboardUI(t || teams[uiCurrentTeamId()]);
+    }
 }
 function uiBindWingmanOrderHudOnce() {
     const hud = document.getElementById('wingman-order-hud');
@@ -628,29 +634,93 @@ function uiGetAIDebugTeam(teamId) {
     return teamId ? teams[teamId] : null;
 }
 
-function uiBuildAIDebugSnapshot(teamId) {
+function uiRoundVec3(pos) {
+    if (!pos) return null;
+    return { x: Number(pos.x.toFixed(2)), y: Number(pos.y.toFixed(2)), z: Number(pos.z.toFixed(2)) };
+}
+
+function uiBuildAIDebugSnapshot(teamId, opts = {}) {
     const team = uiGetAIDebugTeam(teamId);
     if (!team) return null;
+    const includeJsonTail = opts.includeJsonTail !== false;
     const action = team.aiLastAction || null;
     const dbg = action && action.debug ? action.debug : null;
     const turn = Number((GameContext && GameContext.state && GameContext.state.currentTurn) || 1);
     const arenaMode = (GameContext && GameContext.getArenaMode) ? GameContext.getArenaMode() : 'buildings';
+    const matchCfg = (GameContext && GameContext.getMatchConfig) ? GameContext.getMatchConfig() : null;
+    const faction = (GameContext.getFaction && GameContext.getFaction(teamId))
+        || (String(teamId).startsWith('blue') ? 'blue' : 'red');
+    const control = team.aiEnabled ? 'ai' : 'human';
     const pos = team.wrapper && team.wrapper.position ? team.wrapper.position : null;
-    const enemyId = (GameContext.getTargetId && GameContext.getTargetId(teamId))
+    const lockedTargetId = team.lockedTargetId || null;
+    const targetId = (GameContext.getTargetId && GameContext.getTargetId(teamId))
         || (GameContext.getNearestHostileId && GameContext.getNearestHostileId(teamId))
+        || null;
+    const enemyId = targetId
         || (String(teamId).startsWith('red') ? 'blue' : 'red');
     const enemy = teams[enemyId];
     const enemyPos = enemy && enemy.wrapper && enemy.wrapper.position ? enemy.wrapper.position : null;
+
+    let leadId = null;
+    let wingmanOrder = team.wingmanOrder || null;
+    if (typeof window.AirArenaAI !== 'undefined' && window.AirArenaAI.getWingmanLeadId) {
+        leadId = window.AirArenaAI.getWingmanLeadId(teamId);
+    }
+    if (typeof window.AirArenaAI !== 'undefined' && window.AirArenaAI.getWingmanOrder) {
+        wingmanOrder = window.AirArenaAI.getWingmanOrder(teamId);
+    }
+
+    const allyIds = (GameContext.getAllyIds && GameContext.getAllyIds(teamId)) || [];
+    const hostileIds = (GameContext.getHostileIds && GameContext.getHostileIds(teamId)) || [];
+    const allies = allyIds.map((id) => {
+        const a = teams[id];
+        if (!a) return { id };
+        const aPos = a.wrapper && a.wrapper.position ? a.wrapper.position : null;
+        return {
+            id,
+            control: a.aiEnabled ? 'ai' : 'human',
+            wingmanOrder: a.wingmanOrder || null,
+            state: (a.aiLastAction && a.aiLastAction.state) || null,
+            statusText: a.aiStatusText || null,
+            hp: a.hp,
+            ready: !!a.ready,
+            isDestroyed: !!a.isDestroyed,
+            distance: (pos && aPos) ? Number(pos.distanceTo(aPos).toFixed(1)) : null
+        };
+    });
+    const hostiles = hostileIds.map((id) => {
+        const h = teams[id];
+        if (!h) return { id };
+        const hPos = h.wrapper && h.wrapper.position ? h.wrapper.position : null;
+        return {
+            id,
+            hp: h.hp,
+            ap: h.ap,
+            isDestroyed: !!h.isDestroyed,
+            distance: (pos && hPos) ? Number(pos.distanceTo(hPos).toFixed(1)) : null
+        };
+    });
+
     return {
-        schema: 'air-arena-ai-debug-v1',
+        schema: 'air-arena-ai-debug-v2',
         exportedAt: new Date().toISOString(),
         turn,
         teamId,
+        faction,
+        control,
+        matchMode: matchCfg ? matchCfg.mode : null,
         enemyId,
+        targetId,
+        lockedTargetId,
+        leadId,
+        wingmanOrder,
         arenaMode,
         policyMode: team.aiPolicyMode || 'heuristic',
         manualOverride: team.aiManualOverride || 'auto',
         statusText: team.aiStatusText || null,
+        ready: !!team.ready,
+        isDestroyed: !!team.isDestroyed,
+        matchActive: team.matchActive !== false,
         aircraft: {
             type: team.type || 'mig21',
             ap: team.ap,
@@ -661,14 +731,16 @@ function uiBuildAIDebugSnapshot(teamId) {
             weapon: team.weapon,
             queuedAction: team.queuedAction || 'none',
             flareAmmo: team.flareAmmo,
-            position: pos ? { x: Number(pos.x.toFixed(2)), y: Number(pos.y.toFixed(2)), z: Number(pos.z.toFixed(2)) } : null
+            position: uiRoundVec3(pos)
         },
         enemy: enemy ? {
             hp: enemy.hp,
             ap: enemy.ap,
-            position: enemyPos ? { x: Number(enemyPos.x.toFixed(2)), y: Number(enemyPos.y.toFixed(2)), z: Number(enemyPos.z.toFixed(2)) } : null,
+            position: uiRoundVec3(enemyPos),
             distance: (pos && enemyPos) ? Number(pos.distanceTo(enemyPos).toFixed(1)) : null
         } : null,
+        allies,
+        hostiles,
         action: action ? {
             state: action.state || null,
             statusText: action.statusText || null,
@@ -687,19 +759,23 @@ function uiBuildAIDebugSnapshot(teamId) {
         debug: dbg ? JSON.parse(JSON.stringify(dbg)) : null,
         tree: dbg && Array.isArray(dbg.tree) ? dbg.tree.slice() : [],
         threatLog: Array.isArray(team.aiThreatLog) ? team.aiThreatLog.slice() : [],
-        tuningMeta: (typeof window !== 'undefined' && window.AIR_ARENA_AI_TUNING_META) ? { ...window.AIR_ARENA_AI_TUNING_META } : null
+        tuningMeta: (typeof window !== 'undefined' && window.AIR_ARENA_AI_TUNING_META) ? { ...window.AIR_ARENA_AI_TUNING_META } : null,
+        _includeJsonTail: includeJsonTail
     };
 }
 
-function uiFormatAIDebugText(teamId) {
-    const snap = uiBuildAIDebugSnapshot(teamId);
+function uiFormatAIDebugText(teamId, opts = {}) {
+    const snap = uiBuildAIDebugSnapshot(teamId, opts);
     if (!snap) return `${String(teamId || '').toUpperCase()}: N/A`;
+    const includeJsonTail = opts.includeJsonTail !== false && snap._includeJsonTail !== false;
     const lines = [];
     lines.push(`# Air Arena AI Debug Snapshot`);
     lines.push(`schema: ${snap.schema}`);
     lines.push(`exportedAt: ${snap.exportedAt}`);
-    lines.push(`turn: ${snap.turn}`);
-    lines.push(`team: ${snap.teamId}  enemy: ${snap.enemyId}  arena: ${snap.arenaMode}`);
+    lines.push(`turn: ${snap.turn}  match: ${snap.matchMode || '-'}  arena: ${snap.arenaMode}`);
+    lines.push(`team: ${snap.teamId}  faction: ${snap.faction}  control: ${snap.control}  ready=${snap.ready} destroyed=${snap.isDestroyed}`);
+    lines.push(`target: ${snap.targetId || '-'}  locked: ${snap.lockedTargetId || '-'}  enemy: ${snap.enemyId || '-'}`);
+    lines.push(`wingman: order=${snap.wingmanOrder || '-'} lead=${snap.leadId || '-'}`);
     lines.push(`policy: ${snap.policyMode}  override: ${snap.manualOverride}`);
     lines.push(`status: ${snap.statusText || '-'}`);
     if (snap.aircraft) {
@@ -713,10 +789,20 @@ function uiFormatAIDebugText(teamId) {
         const p = e.position;
         lines.push(`enemy: hp=${e.hp} ap=${e.ap} dist=${e.distance ?? '-'} pos=${p ? `(${p.x},${p.y},${p.z})` : '-'}`);
     }
-    if (snap.action) {
+    if (snap.allies && snap.allies.length) {
+        lines.push(`allies: ${snap.allies.map((a) => `${a.id}(${a.control},ord=${a.wingmanOrder || '-'},st=${a.state || '-'},d=${a.distance ?? '-'})`).join(' | ')}`);
+    }
+    if (snap.hostiles && snap.hostiles.length) {
+        lines.push(`hostiles: ${snap.hostiles.map((h) => `${h.id}(hp=${h.hp},d=${h.distance ?? '-'})`).join(' | ')}`);
+    }
+    if (snap.control === 'human' && !snap.action) {
+        lines.push(`action: (human — no AI decide)`);
+    } else if (snap.action) {
         const act = snap.action;
         lines.push(`action: ${act.state} | ${act.statusText || act.reason || '-'}`);
         lines.push(`controls: thr=${act.throttle} joyX=${act.joyX} joyY=${act.joyY} pitchCmd=${act.pitchCmd ?? '-'} roll=${act.roll ?? '-'} queue=${act.queueAction}`);
+    } else {
+        lines.push(`action: (none)`);
     }
     if (snap.debug) {
         const d = snap.debug;
@@ -743,9 +829,113 @@ function uiFormatAIDebugText(teamId) {
             lines.push(`- T${item.turn} ${item.threatLevel || 'low'} D${item.distance} A${item.angleDeg} LOS:${item.losBlocked ? 'MASKED' : 'OPEN'} ${item.flare ? 'FLARE' : 'EVADE'}`);
         });
     }
-    lines.push(`json:`);
-    lines.push(JSON.stringify(snap, null, 2));
+    if (includeJsonTail) {
+        const clean = { ...snap };
+        delete clean._includeJsonTail;
+        lines.push(`json:`);
+        lines.push(JSON.stringify(clean, null, 2));
+    }
     return lines.join('\n');
+}
+
+function uiActiveMatchIdsForDebug() {
+    if (GameContext.getActiveMatchIds) return GameContext.getActiveMatchIds();
+    return ['red', 'blue'].filter((id) => teams[id] && teams[id].matchActive !== false);
+}
+
+function uiBuildAIRosterSnapshot() {
+    const ids = uiActiveMatchIdsForDebug();
+    const turn = Number((GameContext && GameContext.state && GameContext.state.currentTurn) || 1);
+    const arenaMode = (GameContext && GameContext.getArenaMode) ? GameContext.getArenaMode() : 'buildings';
+    const matchCfg = (GameContext && GameContext.getMatchConfig) ? GameContext.getMatchConfig() : null;
+    const units = {};
+    const rosterSummary = [];
+    ids.forEach((id) => {
+        const snap = uiBuildAIDebugSnapshot(id, { includeJsonTail: false });
+        if (!snap) return;
+        const clean = { ...snap };
+        delete clean._includeJsonTail;
+        units[id] = clean;
+        rosterSummary.push({
+            id,
+            faction: snap.faction,
+            control: snap.control,
+            ready: snap.ready,
+            isDestroyed: snap.isDestroyed,
+            hp: snap.aircraft ? snap.aircraft.hp : null,
+            ap: snap.aircraft ? snap.aircraft.ap : null,
+            wingmanOrder: snap.wingmanOrder,
+            leadId: snap.leadId,
+            lockedTargetId: snap.lockedTargetId,
+            targetId: snap.targetId,
+            state: snap.action ? snap.action.state : null,
+            statusText: snap.statusText
+        });
+    });
+    return {
+        schema: 'air-arena-ai-debug-roster-v1',
+        exportedAt: new Date().toISOString(),
+        turn,
+        matchMode: matchCfg ? matchCfg.mode : null,
+        arenaMode,
+        unitIds: ids.slice(),
+        rosterSummary,
+        units
+    };
+}
+
+function uiFormatAIRosterText(roster) {
+    const dump = roster || uiBuildAIRosterSnapshot();
+    const lines = [];
+    lines.push(`# Air Arena AI Roster Dump`);
+    lines.push(`schema: ${dump.schema}`);
+    lines.push(`exportedAt: ${dump.exportedAt}`);
+    lines.push(`turn: ${dump.turn}  mode: ${dump.matchMode || '-'}  arena: ${dump.arenaMode}`);
+    lines.push(`## Roster`);
+    (dump.rosterSummary || []).forEach((r) => {
+        lines.push(
+            `- ${String(r.id).toUpperCase()}  ${r.faction}  ${String(r.control).toUpperCase()}` +
+            `  ready=${r.ready} destroyed=${r.isDestroyed}` +
+            `  hp=${r.hp ?? '-'} ap=${r.ap ?? '-'}` +
+            `  order=${r.wingmanOrder || '-'} lead=${r.leadId || '-'}` +
+            `  target=${r.targetId || '-'} locked=${r.lockedTargetId || '-'}` +
+            `  state=${r.state || '-'}  ${r.statusText || ''}`
+        );
+    });
+    (dump.unitIds || []).forEach((id) => {
+        lines.push('');
+        lines.push(`## ${String(id).toUpperCase()}`);
+        lines.push(uiFormatAIDebugText(id, { includeJsonTail: false }));
+    });
+    return lines.join('\n');
+}
+
+async function uiExportAllAIDebug() {
+    const roster = uiBuildAIRosterSnapshot();
+    if (!roster.unitIds || !roster.unitIds.length) {
+        showSMSAlert('沒有可匯出的參戰機', '#ffbb00');
+        return false;
+    }
+    const text = uiFormatAIRosterText(roster);
+    const turn = roster.turn || 0;
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const filename = `ai-debug-roster-T${turn}-${stamp}.json`;
+    try {
+        await uiCopyTextToClipboard(text);
+        uiDownloadTextFile(filename, JSON.stringify(roster, null, 2), 'application/json;charset=utf-8');
+        showSMSAlert(`全機決策已複製 + 下載 (${roster.unitIds.length}機)`, '#00ff88');
+        return true;
+    } catch (err) {
+        console.error('[ai-debug] export-all failed', err);
+        try {
+            uiDownloadTextFile(filename, JSON.stringify(roster, null, 2), 'application/json;charset=utf-8');
+            showSMSAlert('複製失敗，已改下載 JSON', '#ffbb00');
+            return true;
+        } catch (err2) {
+            showSMSAlert('全機決策匯出失敗', '#ff5555');
+            return false;
+        }
+    }
 }
 
 function uiCopyTextToClipboard(text) {
@@ -795,7 +985,9 @@ function uiAppendAIDebugTrace(teamId, action) {
     if (!Array.isArray(team.aiDebugTrace)) team.aiDebugTrace = [];
     const snap = uiBuildAIDebugSnapshot(teamId);
     if (!snap) return;
-    team.aiDebugTrace.push(snap);
+    const clean = { ...snap };
+    delete clean._includeJsonTail;
+    team.aiDebugTrace.push(clean);
     if (team.aiDebugTrace.length > 600) team.aiDebugTrace.shift();
 }
 
@@ -836,7 +1028,9 @@ function uiDownloadAIDebugSnapshot() {
     }
     const snap = uiBuildAIDebugSnapshot(teamId);
     if (!snap) return;
-    uiDownloadTextFile(uiAIDebugFilename(teamId, 'snapshot', 'json'), JSON.stringify(snap, null, 2), 'application/json;charset=utf-8');
+    const clean = { ...snap };
+    delete clean._includeJsonTail;
+    uiDownloadTextFile(uiAIDebugFilename(teamId, 'snapshot', 'json'), JSON.stringify(clean, null, 2), 'application/json;charset=utf-8');
 }
 
 function uiToggleAIDebugRecording() {
@@ -1057,6 +1251,8 @@ document.addEventListener("DOMContentLoaded", () => {
     if (btnAIDebugRecord) btnAIDebugRecord.addEventListener('click', () => { uiToggleAIDebugRecording(); });
     const btnAIDebugDownloadTrace = document.getElementById('btn-ai-debug-download-trace');
     if (btnAIDebugDownloadTrace) btnAIDebugDownloadTrace.addEventListener('click', () => { uiDownloadAIDebugTrace(); });
+    const btnAIDebugExportAll = document.getElementById('btn-ai-debug-export-all');
+    if (btnAIDebugExportAll) btnAIDebugExportAll.addEventListener('click', () => { uiExportAllAIDebug(); });
     const overrideActive = document.getElementById('ai-override-active');
     if (overrideActive) overrideActive.addEventListener('change', (e) => uiApplyAIOverride(e.target.value));
     const policyModeActive = document.getElementById('ai-policy-mode');
@@ -1275,7 +1471,8 @@ document.addEventListener("DOMContentLoaded", () => {
 function startJoystickDrag(e) { 
     let currentTeam = uiCurrentTeamId(); 
     let t = teams[currentTeam]; 
-    if (!t || t.aiEnabled || t.isDestroyed || GameContext.isAnimating() || t.ready) return; 
+    if (!t || t.aiEnabled || t.isDestroyed || GameContext.isAnimating() || t.ready) return;
+    if (window.isDraggingLcosRing) return;
     isDraggingJoystick = true; updateJoystickPosition(e); 
 }
 function doJoystickDrag(e) { if (!isDraggingJoystick) return; updateJoystickPosition(e); }
@@ -1548,6 +1745,15 @@ window.AirArenaAIDebug = {
     },
     formatText(teamId) {
         return uiFormatAIDebugText(teamId || uiAIDebugExpandedTeam);
+    },
+    buildRoster() {
+        return uiBuildAIRosterSnapshot();
+    },
+    formatRosterText() {
+        return uiFormatAIRosterText();
+    },
+    exportAll() {
+        return uiExportAllAIDebug();
     },
     copy(teamId) {
         if (teamId) uiAIDebugExpandedTeam = teamId;

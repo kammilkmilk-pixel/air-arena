@@ -314,11 +314,15 @@ GameContext.stateMachine = {
         if (!t || !action || t.isDestroyed) return false;
 
         this.setAIStatus(teamId, action.state || 'thinking', action.statusText || action.reason || 'NPC: 決策中', action);
-        if (t.aiEnabled && t.wingmanOrder) {
-            const labels = { follow: '跟隨', attack: '攻擊我的目標', cover: '掩護', break: '脫離' };
-            const label = labels[t.wingmanOrder];
-            if (label && t.aiStatusText && t.aiStatusText.indexOf(label) < 0) {
-                t.aiStatusText = `${t.aiStatusText}｜${label}`;
+        // Only tag wingman orders when a living human lead exists (solo AI has no pair).
+        if (t.aiEnabled && t.wingmanOrder && typeof AirArenaAI !== 'undefined' && AirArenaAI.getWingmanLeadId) {
+            const leadId = AirArenaAI.getWingmanLeadId(teamId);
+            if (leadId) {
+                const labels = { follow: '跟隨', attack: '攻擊我的目標', free: '主動進攻', cover: '掩護', break: '脫離' };
+                const label = labels[t.wingmanOrder];
+                if (label && t.aiStatusText && t.aiStatusText.indexOf(label) < 0) {
+                    t.aiStatusText = `${t.aiStatusText}｜${label}`;
+                }
             }
         }
         if (action.debug && action.debug.missileThreat) {
@@ -471,9 +475,9 @@ GameContext.stateMachine = {
     setWingmanOrder(teamId, order) {
         const t = this.getTeamOrNull(teamId);
         if (!t) return false;
-        const normalized = ['follow', 'attack', 'cover', 'break'].includes(order) ? order : 'follow';
+        const normalized = ['follow', 'attack', 'free', 'cover', 'break'].includes(order) ? order : 'follow';
         t.wingmanOrder = normalized;
-        const labels = { follow: '跟隨', attack: '攻擊我的目標', cover: '掩護', break: '脫離' };
+        const labels = { follow: '跟隨', attack: '攻擊我的目標', free: '主動進攻', cover: '掩護', break: '脫離' };
         if (t.aiEnabled) {
             t.aiStatusText = `NPC: 僚機令｜${labels[normalized]}`;
         }

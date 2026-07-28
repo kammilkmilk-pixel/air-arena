@@ -99,7 +99,7 @@ const CONFIG = {
             seekerAngle: Math.PI / 12,
             seekerMinHeat: 16,
             fuseRange: 2.8,
-            minArmingRange: 45,
+            minArmingRange: 35,
             maxFlightRange: 120,
             frontAspectDot: 0.40,
             frontAspectHeatFloor: 0.04,

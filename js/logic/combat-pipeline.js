@@ -94,7 +94,18 @@ function processFlightPaths(ctx) {
                     fireDelayCounter++; 
                     singleMissileFired = true;
                     let initAP = (typeof MISSILE_MAX_AP !== 'undefined') ? MISSILE_MAX_AP : 150;
-                    activeM = { pylonId: p.id, active: false, launchStep: launchStep, ap: initAP, pos: new THREE.Vector3(), quat: new THREE.Quaternion(), exploded: false };
+                    activeM = {
+                        pylonId: p.id,
+                        active: false,
+                        launchStep: launchStep,
+                        ap: initAP,
+                        pos: new THREE.Vector3(),
+                        quat: new THREE.Quaternion(),
+                        exploded: false,
+                        launchPos: null,
+                        traveled: 0,
+                        guided: false
+                    };
                     t.activeMissiles.push(activeM); p.state = 'empty'; 
                 }
                 if (activeM && !activeM.exploded) ctx.log[`${id}MslTracks`][p.id] = []; 

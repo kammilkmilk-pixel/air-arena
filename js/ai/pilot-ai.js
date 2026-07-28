@@ -26,7 +26,7 @@ window.AirArenaAI = {
             climbPenalty: 6.2,
             gunRange: 70,
             gunAngle: 22,
-            missileMinRange: 45,
+            missileMinRange: 35,
             missileMaxRange: 120,
             missileAngle: 27,
             interceptTurnGain: 0.22,
@@ -180,6 +180,73 @@ window.AirArenaAI = {
         return altitude < 8 ? 5 : 5;
     },
 
+    /**
+     * Phase A: map turn demand → max throttle (physics turnLimit: AB0.4 / MIL0.7 / ECO0.85 / IDL1.0).
+     * Never raises throttle; only caps so hard turns keep authority.
+     */
+    pickThrottleForTurn(requestedThrottle, joyX, opts = {}) {
+        let thr = Math.max(1, Math.min(5, Math.round(Number(requestedThrottle) || 4)));
+        const turnAuth = Math.abs(Number(joyX) || 0);
+        const heat = Number(opts.heat || 0);
+        const ap = Number(opts.ap);
+        const energyTight = (Number.isFinite(ap) && ap < Number(opts.lowAp || 65))
+            || !!opts.energyCritical
+            || !!opts.stalled;
+        let maxThr = 5;
+        if (turnAuth >= 0.62 || (energyTight && turnAuth >= 0.28)) maxThr = 3;
+        else if (turnAuth >= 0.38) maxThr = 4;
+        else if (energyTight && turnAuth >= 0.15) maxThr = 4;
+        // Heat already blocks AB often; keep MIL when hot + turning.
+        if (heat > 78 && maxThr >= 5) maxThr = 4;
+        if (heat > 86 && maxThr >= 4) maxThr = 3;
+        return Math.min(thr, maxThr);
+    },
+
+    /** States that must keep AB/MIL for climb-out / ground escape. */
+    isEnergyTurnExemptState(state) {
+        const s = String(state || '');
+        return (
+            s === 'emergencyPullUp' ||
+            s === 'emergencyRecoverLock' ||
+            s === 'postGroundClimbOut' ||
+            s === 'obstacleEmergencyEscape' ||
+            s === 'terrainEscape' ||
+            s === 'groundAvoid' ||
+            s === 'wingmanPullUp' ||
+            s.indexOf('safetyObstacle') === 0 ||
+            s.indexOf('safetyStall') === 0
+        );
+    },
+
+    /**
+     * Phase A exit gate: hard-turn actions cannot keep thr 4–5.
+     * Mutates action in place; tags debug.energyTurn.
+     */
+    enforceEnergyTurnConsistency(action, ctx = {}) {
+        if (!action || typeof action !== 'object') return action;
+        if (this.isEnergyTurnExemptState(action.state)) return action;
+        const before = Math.max(1, Math.min(5, Math.round(Number(action.throttle) || 4)));
+        const joyX = Number(action.joyX) || 0;
+        const after = this.pickThrottleForTurn(before, joyX, ctx);
+        if (after !== before) {
+            action.throttle = after;
+            if (!action.debug) action.debug = {};
+            action.debug.energyTurn = {
+                before,
+                after,
+                joyX: Number(joyX.toFixed(3)),
+                reason: Math.abs(joyX) >= 0.38 ? 'capThrottleForTurnAuth' : 'capThrottleForEnergy'
+            };
+            if (Array.isArray(action.debug.tree)) {
+                action.debug.tree.push(`energyTurnGate: thr ${before}->${after} |joyX|=${Math.abs(joyX).toFixed(2)}`);
+            }
+            if (action.statusText && String(action.statusText).indexOf('ECO轉') < 0 && after <= 3 && Math.abs(joyX) >= 0.38) {
+                action.statusText = `${action.statusText}｜ECO轉`;
+            }
+        }
+        return action;
+    },
+
     // Near midair merge while pulling up: keep climb, but bank away so both sides don't share one vertical track.
     getEmergencyPullUpLateral(ctx = {}) {
         const distance = Number(ctx.distance);
@@ -210,16 +277,33 @@ window.AirArenaAI = {
         return raw ? new THREE.Vector3(raw.x, raw.y, raw.z) : new THREE.Vector3();
     },
 
+    /** Living hostile only — never fall back to a faction default corpse. */
     getEnemyId(teamId) {
         if (typeof GameContext !== 'undefined' && GameContext.getTargetId) {
             const locked = GameContext.getTargetId(teamId);
-            if (locked) return locked;
+            if (locked) {
+                const ht = GameContext.getTeam ? GameContext.getTeam(locked) : null;
+                if (ht && !ht.isDestroyed) return locked;
+            }
         }
         if (typeof GameContext !== 'undefined' && GameContext.getNearestHostileId) {
             const nearest = GameContext.getNearestHostileId(teamId);
-            if (nearest) return nearest;
+            if (nearest) {
+                const ht = GameContext.getTeam ? GameContext.getTeam(nearest) : null;
+                if (ht && !ht.isDestroyed) return nearest;
+            }
         }
-        return String(teamId).startsWith('red') ? 'blue' : 'red';
+        return null;
+    },
+
+    isLivingEnemy(enemyId, battleState) {
+        if (!enemyId) return false;
+        const live = (typeof GameContext !== 'undefined' && GameContext.getTeam)
+            ? GameContext.getTeam(enemyId) : null;
+        if (live && live.isDestroyed) return false;
+        const snap = battleState && battleState.teams ? battleState.teams[enemyId] : null;
+        if (!snap || snap.isDestroyed || !snap.position) return false;
+        return true;
     },
 
     getWingmanLeadId(teamId) {
@@ -243,11 +327,61 @@ window.AirArenaAI = {
     getWingmanOrder(teamId) {
         const t = (typeof GameContext !== 'undefined' && GameContext.getTeam) ? GameContext.getTeam(teamId) : null;
         const order = t && t.wingmanOrder;
-        return ['follow', 'attack', 'cover', 'break'].includes(order) ? order : 'follow';
+        return ['follow', 'attack', 'free', 'cover', 'break'].includes(order) ? order : 'follow';
     },
 
     getWingmanOrderLabel(order) {
-        return ({ follow: '跟隨', attack: '攻擊我的目標', cover: '掩護', break: '脫離' })[order] || order;
+        return ({
+            follow: '跟隨',
+            attack: '攻擊我的目標',
+            free: '主動進攻',
+            cover: '掩護',
+            break: '脫離'
+        })[order] || order;
+    },
+
+    /** Orders that use formation / support FSM (not independent combat). */
+    isWingmanSupportOrder(order) {
+        return order === 'follow' || order === 'cover' || order === 'break';
+    },
+
+    /**
+     * Lead pose for formation: prefer planned end-of-turn (WE-GO ghost),
+     * else current wrapper / serialized pose.
+     */
+    getWingmanLeadPose(leadId, battleState) {
+        const live = (typeof GameContext !== 'undefined' && GameContext.getTeam)
+            ? GameContext.getTeam(leadId) : null;
+        if (live && !live.isDestroyed && live.wrapper) {
+            const pts = live.pathPoints;
+            const quats = live.pathQuats;
+            if (Array.isArray(pts) && pts.length > 0) {
+                const last = pts[pts.length - 1];
+                const pos = (last && typeof last.clone === 'function')
+                    ? last.clone()
+                    : new THREE.Vector3(last.x, last.y, last.z);
+                let forward;
+                if (Array.isArray(quats) && quats.length > 0) {
+                    const q = quats[quats.length - 1];
+                    forward = new THREE.Vector3(0, 0, 1).applyQuaternion(q).normalize();
+                } else {
+                    forward = new THREE.Vector3(0, 0, 1).applyQuaternion(live.wrapper.quaternion).normalize();
+                }
+                return { pos, forward, fromPath: true };
+            }
+            return {
+                pos: live.wrapper.position.clone(),
+                forward: new THREE.Vector3(0, 0, 1).applyQuaternion(live.wrapper.quaternion).normalize(),
+                fromPath: false
+            };
+        }
+        const snap = battleState && battleState.teams ? battleState.teams[leadId] : null;
+        if (!snap || !snap.position) return null;
+        return {
+            pos: this.toVector3(snap.position),
+            forward: this.toVector3(snap.forward).normalize(),
+            fromPath: false
+        };
     },
 
     /** Formation / cover slot in world space relative to lead. */
@@ -263,11 +397,11 @@ window.AirArenaAI = {
                 .add(fwd.multiplyScalar(-24))
                 .add(new THREE.Vector3(0, 2.5, 0));
         }
-        // follow: combat wing
+        // follow: tighter combat wing on lead's planned end pose
         return leadPos.clone()
-            .add(right.multiplyScalar(sideSign * 11))
-            .add(fwd.multiplyScalar(-15))
-            .add(new THREE.Vector3(0, 1.2, 0));
+            .add(right.multiplyScalar(sideSign * 9))
+            .add(fwd.multiplyScalar(-12))
+            .add(new THREE.Vector3(0, 1.0, 0));
     },
 
     steerTowardWorldPoint(selfPos, selfQuat, targetPos) {
@@ -294,29 +428,32 @@ window.AirArenaAI = {
      */
     decideWingmanSupport(teamId, battleState, leadId, order) {
         const self = battleState.teams[teamId];
-        const lead = battleState.teams[leadId];
+        const leadSnap = battleState.teams[leadId];
         const liveSelf = GameContext.getTeam(teamId);
-        if (!self || !lead || !self.position || !lead.position || self.isDestroyed || lead.isDestroyed) return null;
+        const leadPose = this.getWingmanLeadPose(leadId, battleState);
+        if (!self || !leadSnap || !leadPose || !self.position || self.isDestroyed || leadSnap.isDestroyed) return null;
 
         const selfPos = this.toVector3(self.position);
-        const leadPos = this.toVector3(lead.position);
-        const leadForward = this.toVector3(lead.forward).normalize();
+        const leadPos = leadPose.pos;
+        const leadForward = leadPose.forward.clone().normalize();
         const selfForward = this.toVector3(self.forward).normalize();
         const selfQuat = (liveSelf && liveSelf.wrapper)
             ? liveSelf.wrapper.quaternion.clone()
             : new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), selfForward);
         const label = this.getWingmanOrderLabel(order);
-        const leadThrottle = Math.max(2, Math.min(5, Number(lead.throttle) || 4));
+        const leadThrottle = Math.max(2, Math.min(5, Number(leadSnap.throttle) || 4));
         const hostileId = (GameContext.getTargetId && GameContext.getTargetId(leadId))
             || (GameContext.getNearestHostileId && GameContext.getNearestHostileId(leadId))
             || this.getEnemyId(teamId);
         const hostile = hostileId ? battleState.teams[hostileId] : null;
-        const hostilePos = hostile && hostile.position ? this.toVector3(hostile.position) : null;
+        const hostileAlive = !!(hostile && !hostile.isDestroyed && hostile.position);
+        const hostilePos = hostileAlive ? this.toVector3(hostile.position) : null;
         const distToLead = selfPos.distanceTo(leadPos);
         const distToHostile = hostilePos ? selfPos.distanceTo(hostilePos) : 9999;
         const canFlare = !!(liveSelf && liveSelf.flareAmmo > 0 && !liveSelf.flaresArmed);
         const needFlare = canFlare && distToHostile < 55 && hostilePos
             && selfForward.angleTo(hostilePos.clone().sub(selfPos).normalize()) > Math.PI * 0.45;
+        const poseTag = leadPose.fromPath ? 'ghost' : 'now';
 
         // Low altitude safety always wins.
         if (selfPos.y < 16 || (selfPos.y < 28 && selfForward.y < -0.35)) {
@@ -331,7 +468,7 @@ window.AirArenaAI = {
                 queueAction: needFlare ? 'flare' : 'none',
                 ready: true,
                 reason: 'Wingman ground safety'
-            }, { wingmanOrder: order, leadId, distToLead }, [`wingman: order=${order} pullUp`], 'wingmanPullUp');
+            }, { wingmanOrder: order, leadId, distToLead, leadPose: poseTag }, [`wingman: order=${order} pullUp pose=${poseTag}`], 'wingmanPullUp');
         }
 
         if (order === 'break') {
@@ -360,7 +497,7 @@ window.AirArenaAI = {
                 queueAction: needFlare ? 'flare' : 'none',
                 ready: true,
                 reason: 'Wingman break / extend'
-            }, { wingmanOrder: order, leadId, distToLead, distToHostile }, [`wingman: order=break distH=${distToHostile.toFixed(1)}`], 'wingmanBreak');
+            }, { wingmanOrder: order, leadId, distToLead, distToHostile, leadPose: poseTag }, [`wingman: order=break distH=${distToHostile.toFixed(1)} pose=${poseTag}`], 'wingmanBreak');
         }
 
         if (order === 'cover') {
@@ -382,8 +519,8 @@ window.AirArenaAI = {
                     queueAction: needFlare ? 'flare' : (inGun ? 'gun' : 'none'),
                     ready: true,
                     reason: 'Cover: engage threat near lead'
-                }, { wingmanOrder: order, leadId, leadThreatDist, distToHostile }, [
-                    `wingman: cover engage threat=${hostileId} leadThreat=${leadThreatDist.toFixed(1)}`
+                }, { wingmanOrder: order, leadId, leadThreatDist, distToHostile, leadPose: poseTag }, [
+                    `wingman: cover engage threat=${hostileId} leadThreat=${leadThreatDist.toFixed(1)} pose=${poseTag}`
                 ], 'wingmanCoverEngage');
             }
             const slot = this.getWingmanSlotPos(leadPos, leadForward, teamId, 'cover');
@@ -400,15 +537,15 @@ window.AirArenaAI = {
                 queueAction: needFlare ? 'flare' : 'none',
                 ready: true,
                 reason: 'Cover: hold six / trail station'
-            }, { wingmanOrder: order, leadId, distToLead, slotDist: steer.dist }, [
-                `wingman: cover station dist=${steer.dist.toFixed(1)}`
+            }, { wingmanOrder: order, leadId, distToLead, slotDist: steer.dist, leadPose: poseTag }, [
+                `wingman: cover station dist=${steer.dist.toFixed(1)} pose=${poseTag}`
             ], 'wingmanCover');
         }
 
         // follow (default support)
         const slot = this.getWingmanSlotPos(leadPos, leadForward, teamId, 'follow');
         const steer = this.steerTowardWorldPoint(selfPos, selfQuat, slot);
-        const onStation = steer.dist < 14;
+        const onStation = steer.dist < 12;
         // Also nudge to match lead nose when close to station.
         let joyX = steer.joyX;
         let joyY = steer.joyY;
@@ -427,9 +564,11 @@ window.AirArenaAI = {
             weapon: 'gun',
             queueAction: needFlare ? 'flare' : 'none',
             ready: true,
-            reason: 'Wingman follow formation slot'
-        }, { wingmanOrder: order, leadId, distToLead, slotDist: steer.dist }, [
-            `wingman: follow slotDist=${steer.dist.toFixed(1)} onStation=${onStation ? 1 : 0}`
+            reason: leadPose.fromPath
+                ? 'Wingman follow lead planned end pose'
+                : 'Wingman follow lead current pose'
+        }, { wingmanOrder: order, leadId, distToLead, slotDist: steer.dist, leadPose: poseTag }, [
+            `wingman: follow slotDist=${steer.dist.toFixed(1)} onStation=${onStation ? 1 : 0} pose=${poseTag}`
         ], 'wingmanFollow');
     },
 
@@ -1927,21 +2066,39 @@ window.AirArenaAI = {
         const wingmanOrder = this.getWingmanOrder(teamId);
 
         // Phase 1: wingman support orders (follow / cover / break).
-        if (leadId && liveSelf && liveSelf.aiEnabled && wingmanOrder !== 'attack') {
+        // attack = lead's target; free = independent hunt (full combat AI).
+        if (leadId && liveSelf && liveSelf.aiEnabled && this.isWingmanSupportOrder(wingmanOrder)) {
             const support = this.decideWingmanSupport(teamId, battleState, leadId, wingmanOrder);
             if (support) return support;
         }
 
-        // Attack-my-target: use lead lock / lead target as primary hostile.
+        // Attack-my-target: lead lock / nearest living hostile of lead only.
         let enemyId = this.getEnemyId(teamId);
         if (leadId && liveSelf && liveSelf.aiEnabled && wingmanOrder === 'attack') {
             const leadTarget = (GameContext.getTargetId && GameContext.getTargetId(leadId))
                 || (GameContext.getNearestHostileId && GameContext.getNearestHostileId(leadId));
-            if (leadTarget) enemyId = leadTarget;
+            if (leadTarget && this.isLivingEnemy(leadTarget, battleState)) {
+                enemyId = leadTarget;
+            } else {
+                // No living target for attack → fall back to formation follow.
+                const support = this.decideWingmanSupport(teamId, battleState, leadId, 'follow');
+                if (support) {
+                    support.statusText = (support.statusText || 'NPC: 僚機') + '｜無目標改跟隨';
+                    if (!support.debug) support.debug = {};
+                    support.debug.wingmanOrder = 'attack';
+                    support.debug.wingmanFallback = 'follow';
+                    support.debug.leadId = leadId;
+                    return support;
+                }
+                enemyId = null;
+            }
         }
-        const enemy = battleState.teams[enemyId];
+        // free / 主動進攻: keep enemyId from getEnemyId (own nearest hostile).
 
-        if (!self || !enemy || self.isDestroyed || enemy.isDestroyed || !self.position || !enemy.position) {
+        const enemy = (enemyId && battleState.teams) ? battleState.teams[enemyId] : null;
+        const enemyAlive = this.isLivingEnemy(enemyId, battleState);
+
+        if (!self || self.isDestroyed || !self.position || !enemyAlive || !enemy) {
             return {
                 state: 'idle',
                 statusText: 'NPC: 無有效目標',
@@ -2921,11 +3078,17 @@ window.AirArenaAI = {
 
         if (stallTrap && coverInfo.collisionRisk !== 'high') {
             const unloadPitch = altitude > 40 ? 0.4 : 0.18;
+            const breakJoyX = this.clamp(horizontalBias * 0.2, -0.18, 0.18);
+            const breakThr = this.pickThrottleForTurn(
+                self.heat > 78 ? 3 : 4,
+                breakJoyX,
+                { heat: self.heat || 0, ap: self.ap, energyCritical: true }
+            );
             return this.withDebug({
                 state: 'stallBreakout',
                 statusText: `NPC: 失速改出 AP ${Math.floor(self.ap)} FWDY ${selfForward.y.toFixed(2)}`,
-                throttle: self.heat > 78 ? 3 : 4,
-                joyX: this.clamp(horizontalBias * 0.2, -0.18, 0.18),
+                throttle: breakThr,
+                joyX: breakJoyX,
                 joyY: altitude > 40 ? -0.45 : -0.16,
                 pitchCmd: maxPitchCmd * unloadPitch,
                 roll: 0,
@@ -2942,23 +3105,30 @@ window.AirArenaAI = {
             const recoverPitchCmd = (lowAltRecover && divingStall)
                 ? -maxPitchCmd
                 : (lowAltRecover ? -maxPitchCmd * 0.32 : maxPitchCmd * 0.26);
+            // Ultra-low diving stall: keep nose authority; otherwise ECO + light turn toward fight.
             const recoveryThrottle = (lowAltRecover && divingStall)
                 ? this.getEmergencyRecoveryThrottle(altitude, selfForward.y, self.heat || 0)
-                : (self.heat > 40 ? 4 : 5);
+                : this.pickThrottleForTurn(3, 0.45, { heat: self.heat || 0, ap: self.ap, stalled: true, energyCritical: true });
+            const recoverJoyX = (lowAltRecover && divingStall)
+                ? 0
+                : this.clamp(horizontalBias * 0.42, -0.48, 0.48);
             return this.withDebug({
                 state: 'stallRecoverNoRoll',
-                statusText: `NPC: 失速強制改出 AP ${Math.floor(self.ap)} ALT ${altitude.toFixed(1)}`,
-                // AB may be blocked by heat logic; MIL(4) is stable for recovery.
+                statusText: recoverJoyX
+                    ? `NPC: 失速ECO改出 AP ${Math.floor(self.ap)} ALT ${altitude.toFixed(1)}`
+                    : `NPC: 失速強制改出 AP ${Math.floor(self.ap)} ALT ${altitude.toFixed(1)}`,
                 throttle: recoveryThrottle,
-                joyX: 0,
+                joyX: recoverJoyX,
                 joyY: (lowAltRecover && divingStall) ? 1 : (lowAltRecover ? 0.22 : -0.34),
                 pitchCmd: recoverPitchCmd,
-                roll: 0,
+                roll: this.clamp(recoverJoyX * Math.PI / 8, -Math.PI / 8, Math.PI / 8),
                 weapon: 'gun',
                 queueAction: 'none',
                 ready: true,
-                reason: 'Force no-roll stall recovery to regain controllability'
-            }, debugBase, [...tree, 'selected: stallRecoverNoRoll'], 'stallRecoverNoRoll');
+                reason: recoverJoyX
+                    ? 'Stall recovery with ECO turn authority (Phase A)'
+                    : 'Force no-roll stall recovery to regain controllability'
+            }, debugBase, [...tree, `selected: stallRecoverNoRoll turn=${recoverJoyX ? 1 : 0}`], 'stallRecoverNoRoll');
         }
 
         if (energyCritical && altitude > 18 && coverInfo.collisionRisk !== 'high') {
@@ -2972,19 +3142,26 @@ window.AirArenaAI = {
                 recoverJoyY = Math.min(recoverJoyY, 0.06);
             }
             recoverJoyY = this.capCombatVerticalJoy(recoverJoyY, altitude, selfForward.y, tuning, sensor.hasContact);
+            // Phase A: rebuild energy while ECO-turning toward target (not joyX=0 freeze).
+            const recoverJoyX = this.clamp(horizontalBias * 0.55, -0.62, 0.62);
+            const recoverThr = this.pickThrottleForTurn(
+                self.heat > 78 ? 3 : 3,
+                recoverJoyX,
+                { heat: self.heat || 0, ap: self.ap, energyCritical: true, lowAp: tuning.lowAp }
+            );
             return this.withDebug({
                 state: 'energyRecover',
-                statusText: `NPC: 失速/低速恢復 AP ${Math.floor(self.ap)}`,
-                throttle: self.heat > 78 ? 3 : 4,
-                joyX: 0,
+                statusText: `NPC: 低能ECO回轉 AP ${Math.floor(self.ap)}`,
+                throttle: recoverThr,
+                joyX: recoverJoyX,
                 joyY: recoverJoyY,
                 ...(self.stalled && altitude > 30 ? { pitchCmd: maxPitchCmd * 0.14 } : {}),
-                roll: 0,
+                roll: this.clamp(recoverJoyX * Math.PI / 6, -Math.PI / 6, Math.PI / 6),
                 weapon: 'gun',
                 queueAction: 'none',
                 ready: true,
-                reason: 'Recover energy before maneuvering'
-            }, debugBase, [...tree, 'selected: energyRecover'], 'energyRecover');
+                reason: 'Recover energy with ECO turn authority (Phase A)'
+            }, debugBase, [...tree, `selected: energyRecover joyX=${recoverJoyX.toFixed(2)} thr=${recoverThr}`], 'energyRecover');
         }
 
         // FOX-2 inbound with flares available: break+flare before any urban climb/route.
@@ -3120,18 +3297,24 @@ window.AirArenaAI = {
 
         if (loopEval.loopTrap && coverInfo.collisionRisk !== 'high' && !groundRisk && !energyCritical && !offenseAssist.hardReacquireBoost) {
             const antiLoopFlare = canUseFlare && flareCooldownReady && !lineOfSightBlocked && actualMissileThreat;
+            const antiJoyX = this.clamp(breakSide * 0.9, -1, 1);
+            const antiThr = this.pickThrottleForTurn(
+                self.heat > 76 ? 3 : 4,
+                antiJoyX,
+                { heat: self.heat || 0, ap: self.ap, lowAp: tuning.lowAp }
+            );
             return this.withDebug({
                 state: 'antiLoopBreak',
                 statusText: `NPC: 脫離打圈 LOOP ${loopEval.loopCount}`,
-                throttle: self.heat > 76 ? 3 : 4,
-                joyX: this.clamp(breakSide * 0.9, -1, 1),
+                throttle: antiThr,
+                joyX: antiJoyX,
                 joyY: altitude < 24 ? 0.28 : 0.08,
                 roll: this.clamp(breakSide * Math.PI / 4, -Math.PI / 4, Math.PI / 4),
                 weapon: hasArmedMissile ? 'missile' : 'gun',
                 queueAction: antiLoopFlare ? 'flare' : 'none',
                 ready: true,
                 reason: 'Break repetitive circle trap'
-            }, debugBase, [...tree, `selected: antiLoopBreak flare=${antiLoopFlare}`], 'antiLoopBreak');
+            }, debugBase, [...tree, `selected: antiLoopBreak flare=${antiLoopFlare} thr=${antiThr}`], 'antiLoopBreak');
         }
 
         const imminentMerge = distance < 42 && closureSpeed > 0.12;
@@ -3242,10 +3425,15 @@ window.AirArenaAI = {
                 openSkyOrbitBoost > 1.0 ? 0.88 : 0.72
             );
             const openSkyCutThrottle = !urbanArenaMode && self.heat < 62 && distance > 70 ? 5 : 4;
+            const orbitThr = this.pickThrottleForTurn(
+                self.heat > 72 ? 3 : (openSkyOrbitBoost > 1.0 ? openSkyCutThrottle : 4),
+                cutJoyX,
+                { heat: self.heat || 0, ap: self.ap, lowAp: tuning.lowAp }
+            );
             return this.withDebug({
                 state: 'orbitCutIn',
                 statusText: openSkyOrbitBoost > 1.0 ? `NPC: 開闊空域強切 ${Math.floor(distance)}m` : `NPC: 切入接敵 ${Math.floor(distance)}m`,
-                throttle: self.heat > 72 ? 4 : (openSkyOrbitBoost > 1.0 ? openSkyCutThrottle : 5),
+                throttle: orbitThr,
                 joyX: cutJoyX,
                 joyY: this.clamp(
                     (Math.abs(cutJoyX) > 0.65 ? verticalBias * 0.28 : verticalBias * (openSkyOrbitBoost > 1.0 ? 0.72 : 0.55)) +
@@ -3258,8 +3446,8 @@ window.AirArenaAI = {
                 powerPylons: preferMissileCut && !hasArmedMissile,
                 queueAction: openSkyOrbitBoost > 1.0 && distance < tuning.gunRange + 22 && angleToTargetDeg < 38 ? 'gun' : 'none',
                 ready: true,
-                reason: `Break co-orbit stalemate and force closure (openSkyBoost=${openSkyOrbitBoost.toFixed(2)})`
-            }, debugBase, [...tree, `selected: orbitCutIn openSkyBoost=${openSkyOrbitBoost.toFixed(2)}`], 'orbitCutIn');
+                reason: `Break co-orbit stalemate and force closure (openSkyBoost=${openSkyOrbitBoost.toFixed(2)}; energyTurn thr=${orbitThr})`
+            }, debugBase, [...tree, `selected: orbitCutIn openSkyBoost=${openSkyOrbitBoost.toFixed(2)} thr=${orbitThr}`], 'orbitCutIn');
         }
         const optionalMergeBreak =
             coverInfo.collisionRisk !== 'high' &&
@@ -3363,13 +3551,19 @@ window.AirArenaAI = {
                 flareCooldownReady &&
                 !shouldSaveFlare &&
                 altitude >= 14;
+            const mergeJoyX = this.clamp(breakSide * (hardBreak ? 0.92 : 0.72), -1, 1);
+            const mergeThr = this.pickThrottleForTurn(
+                self.heat > 76 ? 3 : 4,
+                mergeJoyX,
+                { heat: self.heat || 0, ap: self.ap, lowAp: tuning.lowAp }
+            );
             return this.withDebug({
                 state: flareOnMerge ? 'defensiveFlare' : (hardBreak ? 'mandatoryMergeBreak' : 'mergeBreak'),
                 statusText: flareOnMerge
                     ? `NPC: 迎頭熱焰脫離 ${Math.floor(distance)}m`
                     : `NPC: 迎頭避撞 ${Math.floor(distance)}m`,
-                throttle: self.heat > 76 ? 3 : 4,
-                joyX: this.clamp(breakSide * (hardBreak ? 0.92 : 0.72), -1, 1),
+                throttle: mergeThr,
+                joyX: mergeJoyX,
                 joyY: altitude < 24 ? 0.34 : (hardBreak ? 0.12 : 0.04),
                 roll: this.clamp(breakSide * (hardBreak ? Math.PI / 4 : Math.PI / 5), -Math.PI / 4, Math.PI / 5),
                 weapon: 'gun',
@@ -3378,23 +3572,35 @@ window.AirArenaAI = {
                 reason: flareOnMerge
                     ? 'Merge break with flare under actual missile threat'
                     : (hardBreak ? 'Mandatory deconfliction before head-on collision' : 'Break merge before missile tactics')
-            }, debugBase, [...tree, `selected: ${flareOnMerge ? 'defensiveFlare-merge' : (hardBreak ? 'mandatoryMergeBreak' : 'mergeBreak')}`], flareOnMerge ? 'defensiveFlare' : (hardBreak ? 'mandatoryMergeBreak' : 'mergeBreak'));
+            }, debugBase, [...tree, `selected: ${flareOnMerge ? 'defensiveFlare-merge' : (hardBreak ? 'mandatoryMergeBreak' : 'mergeBreak')} thr=${mergeThr}`], flareOnMerge ? 'defensiveFlare' : (hardBreak ? 'mandatoryMergeBreak' : 'mergeBreak'));
         }
 
-        // Survival first.
+        // Survival first — Phase A: ECO turn while rebuilding energy (no AB + joyX freeze).
         if (self.ap < 65 || self.stalled || altitude < 5) {
+            const recoverJoyX = this.clamp(horizontalBias * 0.52, -0.58, 0.58);
+            const recoverThr = this.pickThrottleForTurn(
+                3,
+                recoverJoyX,
+                {
+                    heat: self.heat || 0,
+                    ap: self.ap,
+                    energyCritical: self.ap < tuning.energyCriticalAp,
+                    stalled: !!self.stalled,
+                    lowAp: tuning.lowAp
+                }
+            );
             return this.withDebug({
                 state: 'recover',
-                statusText: `NPC: 能量恢復 AP ${Math.floor(self.ap)}`,
-                throttle: self.heat > 75 ? 3 : 5,
-                joyX: this.clamp(horizontalBias * 0.18, -0.25, 0.25),
+                statusText: `NPC: 能量ECO恢復 AP ${Math.floor(self.ap)}`,
+                throttle: recoverThr,
+                joyX: recoverJoyX,
                 joyY: altitude < 18 ? 0.28 : -0.05,
-                roll: this.clamp(roll * 0.4, -Math.PI / 8, Math.PI / 8),
+                roll: this.clamp(recoverJoyX * Math.PI / 6, -Math.PI / 6, Math.PI / 6),
                 weapon: 'gun',
                 queueAction: 'none',
                 ready: true,
-                reason: 'Recover speed/altitude'
-            }, debugBase, [...tree, 'selected: recover'], 'recover');
+                reason: 'Recover speed/altitude with ECO turn authority (Phase A)'
+            }, debugBase, [...tree, `selected: recover thr=${recoverThr} joyX=${recoverJoyX.toFixed(2)}`], 'recover');
         }
 
         if (self.heat > 82) {
@@ -4029,7 +4235,7 @@ window.AirArenaAI = {
         const leadId = this.getWingmanLeadId(teamId);
         const wingmanOrder = this.getWingmanOrder(teamId);
         const action = this.decide(teamId, battleState);
-        const isWingmanSupport = !!(leadId && wingmanOrder !== 'attack' && action && String(action.state || '').indexOf('wingman') === 0);
+        const isWingmanSupport = !!(leadId && this.isWingmanSupportOrder(wingmanOrder) && action && String(action.state || '').indexOf('wingman') === 0);
         const policyAction = isWingmanSupport ? action : this.applyPolicyMode(teamId, action, battleState);
         const safeAction = this.chooseSafeAction(teamId, policyAction);
         const team = (typeof GameContext !== 'undefined' && GameContext.getTeam) ? GameContext.getTeam(teamId) : null;
@@ -4041,7 +4247,7 @@ window.AirArenaAI = {
             const coverInfo = this.getCoverInfo(selfPos, selfForward, selfAp);
             this.adjustActionForCombatBand(safeAction, selfPos.y, coverInfo, this.getTuning(), selfPitch, selfAp);
         }
-        if (leadId && wingmanOrder === 'attack' && safeAction) {
+        if (leadId && (wingmanOrder === 'attack' || wingmanOrder === 'free') && safeAction) {
             const label = this.getWingmanOrderLabel(wingmanOrder);
             if (safeAction.statusText && String(safeAction.statusText).indexOf(label) < 0) {
                 safeAction.statusText = `${safeAction.statusText}｜${label}`;
@@ -4049,7 +4255,45 @@ window.AirArenaAI = {
             if (!safeAction.debug) safeAction.debug = {};
             safeAction.debug.wingmanOrder = wingmanOrder;
             safeAction.debug.leadId = leadId;
+        } else if (!leadId && wingmanOrder && safeAction && team && team.aiEnabled) {
+            // Order stuck on follow/cover but human lead is gone → free fight (explicit).
+            if (safeAction.statusText && String(safeAction.statusText).indexOf('無長機') < 0) {
+                safeAction.statusText = `${safeAction.statusText}｜無長機自由作戰`;
+            }
+            if (!safeAction.debug) safeAction.debug = {};
+            safeAction.debug.wingmanOrder = wingmanOrder;
+            safeAction.debug.leadId = null;
+            safeAction.debug.wingmanOrphan = true;
         }
+
+        // No-IFF IR: withhold missile if seeker would prefer a friendly heat source.
+        if (safeAction && safeAction.queueAction === 'missile' && typeof isMissileFratricideRisk === 'function') {
+            const preferred = this.getEnemyId(teamId);
+            if (isMissileFratricideRisk(teamId, preferred)) {
+                safeAction.queueAction = 'none';
+                if (safeAction.statusText && String(safeAction.statusText).indexOf('避免誤擊') < 0) {
+                    safeAction.statusText = `${safeAction.statusText}｜避免誤擊`;
+                }
+                if (!safeAction.debug) safeAction.debug = {};
+                safeAction.debug.fratricideHold = 1;
+                if (Array.isArray(safeAction.debug.tree)) {
+                    safeAction.debug.tree.push('fratricideGate: hold=1 (friendly heat in seeker)');
+                }
+            }
+        }
+
+        // Phase A: hard turns keep ECO/MIL — never AB while demanding turn authority.
+        if (safeAction && team) {
+            const tuning = this.getTuning();
+            this.enforceEnergyTurnConsistency(safeAction, {
+                heat: team.heat || 0,
+                ap: typeof team.ap === 'number' ? team.ap : null,
+                energyCritical: typeof team.ap === 'number' && team.ap < tuning.energyCriticalAp,
+                stalled: !!team.stalled,
+                lowAp: tuning.lowAp
+            });
+        }
+
         GameContext.stateMachine.applyPilotAction(teamId, safeAction);
         return safeAction;
     }

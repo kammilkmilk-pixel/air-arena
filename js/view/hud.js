@@ -19,10 +19,13 @@
     pipper.style.transform = 'translate(-50%, -50%)';
     pipper.style.transition = 'opacity 0.2s ease-in-out';
     // 外圓平時顯示；倒 T / 中心點僅機砲排程後顯示
+    // #lcos-grab-ring：整圓（含內部）可拖曳調整機頭（joyX/joyY）；外環視覺比基準大約 10%
     pipper.innerHTML = `
-        <svg viewBox="0 0 100 100" style="width: 100%; height: 100%; overflow: visible; filter: none;">
-            <circle id="lcos-cone-circle" cx="50" cy="50" r="34" stroke="#e6c200" stroke-width="1.6" fill="none" opacity="0.9"/>
-            <g id="lcos-aim-group" style="display: none;">
+        <svg viewBox="0 0 100 100" style="width: 100%; height: 100%; overflow: visible; filter: none; pointer-events: none;">
+            <circle id="lcos-cone-circle" cx="50" cy="50" r="37.4" stroke="#ffffff" stroke-width="2.6" fill="none" opacity="0.9"/>
+            <circle id="lcos-grab-ring" cx="50" cy="50" r="37.4" stroke="none" fill="rgba(255,255,255,0.01)"
+                style="pointer-events: fill; cursor: grab;"/>
+            <g id="lcos-aim-group" style="display: none; pointer-events: none;">
                 <g id="lcos-inner-t" stroke="#e6c200" stroke-width="1.8" stroke-linecap="square" fill="none">
                     <line id="lcos-t-bar" x1="38" y1="52" x2="62" y2="52"/>
                     <line id="lcos-t-stem" x1="50" y1="52" x2="50" y2="34"/>
@@ -31,6 +34,142 @@
             </g>
         </svg>
     `;
+})();
+
+// 準星外環拖曳 → 調整機頭方向（與座艙搖桿同一套 joyX / joyY）
+(function initLcosRingDrag() {
+    window.isDraggingLcosRing = false;
+    let dragCenterX = 0;
+    let dragCenterY = 0;
+    let activePointerId = null;
+
+    // 短距近乎與手指同步；超過 soft 區才增幅拉滿
+    const LCOS_DRAG = {
+        softJoy: 0.40,   // soft 區末端對應的搖桿量（不提早拉滿）
+        softFrac: 0.09,  // soft 區約為短邊 9%
+        softMin: 64,
+        softMax: 96,
+        fullFrac: 0.26,  // 拉滿約為短邊 26%
+        fullMin: 170,
+        fullMax: 260
+    };
+
+    function canPilotActive() {
+        if (typeof GameContext === 'undefined' || typeof teams === 'undefined') return null;
+        const teamId = GameContext.getActiveTeamId ? GameContext.getActiveTeamId() : null;
+        const t = teamId ? teams[teamId] : null;
+        if (!t || t.aiEnabled || t.isDestroyed || GameContext.isAnimating() || t.ready) return null;
+        if (GameContext.isReplayMode && GameContext.isReplayMode()) return null;
+        return t;
+    }
+
+    function getDragRadii() {
+        const shortSide = Math.min(window.innerWidth || 800, window.innerHeight || 600);
+        const softPx = Math.max(LCOS_DRAG.softMin, Math.min(LCOS_DRAG.softMax, shortSide * LCOS_DRAG.softFrac));
+        const fullPx = Math.max(LCOS_DRAG.fullMin, Math.min(LCOS_DRAG.fullMax, shortSide * LCOS_DRAG.fullFrac));
+        return { softPx, fullPx: Math.max(fullPx, softPx + 40) };
+    }
+
+    /** 距離 → 搖桿幅度：短距線性近似同步，長距才二次增幅 */
+    function mapDistToJoyMag(dist, softPx, fullPx) {
+        if (!(dist > 0)) return 0;
+        const softJoy = LCOS_DRAG.softJoy;
+        if (dist <= softPx) {
+            return (dist / softPx) * softJoy;
+        }
+        const span = Math.max(1, fullPx - softPx);
+        const t = Math.min(1, (dist - softPx) / span);
+        // t²：越拉越遠增幅越明顯，短距過渡不突兀
+        return softJoy + (1 - softJoy) * (t * t);
+    }
+
+    function syncJoystickHandle(joyX, joyY) {
+        const joyZone = document.getElementById('joystick-zone');
+        const joyHandle = document.getElementById('joystick-handle');
+        if (!joyZone || !joyHandle) return;
+        const maxRadius = Math.max(8, joyZone.getBoundingClientRect().width / 2 - 15);
+        joyHandle.style.transform = `translate(${joyX * maxRadius}px, ${-joyY * maxRadius}px)`;
+    }
+
+    function applyNoseFromPointer(clientX, clientY) {
+        const t = canPilotActive();
+        if (!t) return;
+        const dx = clientX - dragCenterX;
+        const dy = clientY - dragCenterY;
+        const dist = Math.hypot(dx, dy);
+        const { softPx, fullPx } = getDragRadii();
+        const mag = mapDistToJoyMag(dist, softPx, fullPx);
+        let joyX = 0;
+        let joyY = 0;
+        if (dist > 0.001 && mag > 0) {
+            joyX = (dx / dist) * mag;
+            joyY = (-dy / dist) * mag;
+        }
+        if (!GameContext.stateMachine.setJoystickInput(t.id, joyX, joyY)) return;
+        syncJoystickHandle(joyX, joyY);
+        if (typeof uiRefreshPreview === 'function') uiRefreshPreview(t);
+        else if (typeof updateDashboardUI === 'function') updateDashboardUI(t);
+    }
+
+    function endDrag(e) {
+        if (!window.isDraggingLcosRing) return;
+        if (e && activePointerId != null && e.pointerId !== activePointerId) return;
+        window.isDraggingLcosRing = false;
+        activePointerId = null;
+        const grab = document.getElementById('lcos-grab-ring');
+        if (grab) grab.style.cursor = 'grab';
+        const pipper = document.getElementById('lcos-pipper');
+        if (pipper) pipper.classList.remove('lcos-dragging');
+        const cone = document.getElementById('lcos-cone-circle');
+        if (cone) cone.setAttribute('stroke-width', '2.6');
+    }
+
+    function bindGrabRing() {
+        const grab = document.getElementById('lcos-grab-ring');
+        if (!grab || grab.dataset.dragBound === 'true') return;
+        grab.dataset.dragBound = 'true';
+
+        grab.addEventListener('pointerdown', (e) => {
+            if (e.button != null && e.button !== 0) return;
+            if (typeof isDraggingJoystick !== 'undefined' && isDraggingJoystick) return;
+            if (typeof isDraggingRollRing !== 'undefined' && isDraggingRollRing) return;
+            const t = canPilotActive();
+            if (!t) return;
+
+            const pipper = document.getElementById('lcos-pipper');
+            if (!pipper || pipper.style.display === 'none') return;
+            const rect = pipper.getBoundingClientRect();
+            dragCenterX = rect.left + rect.width / 2;
+            dragCenterY = rect.top + rect.height / 2;
+
+            window.isDraggingLcosRing = true;
+            activePointerId = e.pointerId;
+            try { grab.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
+            grab.style.cursor = 'grabbing';
+            pipper.classList.add('lcos-dragging');
+            const cone = document.getElementById('lcos-cone-circle');
+            if (cone) cone.setAttribute('stroke-width', '3.4');
+
+            e.preventDefault();
+            e.stopPropagation();
+            applyNoseFromPointer(e.clientX, e.clientY);
+        });
+
+        grab.addEventListener('pointermove', (e) => {
+            if (!window.isDraggingLcosRing) return;
+            if (activePointerId != null && e.pointerId !== activePointerId) return;
+            e.preventDefault();
+            e.stopPropagation();
+            applyNoseFromPointer(e.clientX, e.clientY);
+        });
+
+        grab.addEventListener('pointerup', endDrag);
+        grab.addEventListener('pointercancel', endDrag);
+        grab.addEventListener('lostpointercapture', endDrag);
+    }
+
+    bindGrabRing();
+    setInterval(bindGrabRing, 2000);
 })();
 
 // 🌟 2. 動態注入敵機未來預估框 (Estimated Position Box)
@@ -111,17 +250,19 @@ window.updateDynamicHUD = function() {
     let lcosPipper = document.getElementById('lcos-pipper');
     let lcosConeCircle = document.getElementById('lcos-cone-circle');
 
+    const ringDragging = !!window.isDraggingLcosRing;
+
     if (!t || !enemy || !t.wrapper || !enemy.wrapper || t.isDestroyed || enemy.isDestroyed) {
         if(dynamicHud) dynamicHud.style.display = 'none';
         if(ghostHud) ghostHud.style.display = 'none';
-        if(lcosPipper) lcosPipper.style.display = 'none';
+        if(lcosPipper && !ringDragging) lcosPipper.style.display = 'none';
         return;
     }
 
     if (GameContext.isReplayMode()) {
         if(dynamicHud) dynamicHud.style.display = 'none';
         if(ghostHud) ghostHud.style.display = 'none';
-        if(lcosPipper) lcosPipper.style.display = 'none';
+        if(lcosPipper && !ringDragging) lcosPipper.style.display = 'none';
         return;
     }
 
@@ -206,22 +347,24 @@ window.updateDynamicHUD = function() {
         );
 
     const hidePipper = () => {
+        if (window.isDraggingLcosRing) return;
         if (lcosPipper) lcosPipper.style.display = 'none';
         if (ghostHud) ghostHud.style.display = 'none';
     };
 
     const paintPipperColor = (inRange) => {
-        const stroke = inRange ? '#ff0055' : '#e6c200';
+        const ringStroke = inRange ? '#ff0055' : '#ffffff';
+        const aimStroke = inRange ? '#ff0055' : '#e6c200';
         if (inRange) {
             lcosPipper.style.opacity = '1.0';
             lcosPipper.querySelector('svg').style.filter = 'drop-shadow(0 0 5px #ff0055)';
         } else {
             lcosPipper.style.opacity = '0.85';
-            lcosPipper.querySelector('svg').style.filter = 'drop-shadow(0 0 3px rgba(230, 194, 0, 0.55))';
+            lcosPipper.querySelector('svg').style.filter = 'drop-shadow(0 0 3px rgba(255, 255, 255, 0.45))';
         }
-        if (lcosConeCircle) lcosConeCircle.setAttribute('stroke', stroke);
+        if (lcosConeCircle) lcosConeCircle.setAttribute('stroke', ringStroke);
         const innerT = document.getElementById('lcos-inner-t');
-        if (innerT) innerT.setAttribute('stroke', stroke);
+        if (innerT) innerT.setAttribute('stroke', aimStroke);
         const centerDot = document.getElementById('lcos-center-dot');
         if (centerDot) centerDot.setAttribute('fill', inRange ? '#ff0055' : '#e6c200');
     };
@@ -303,10 +446,18 @@ window.updateDynamicHUD = function() {
                 const leaveYSvg = leaveYPx * svgPerPx;
 
                 if (lcosConeCircle) {
-                    const funnelR = 32 + turnMag * (showInnerT ? 5 : 2);
-                    lcosConeCircle.setAttribute('cx', String(50 - leaveXSvg * 0.35));
-                    lcosConeCircle.setAttribute('cy', String(50 - leaveYSvg * 0.35));
+                    const funnelR = (32 + turnMag * (showInnerT ? 5 : 2)) * 1.1;
+                    const cx = 50 - leaveXSvg * 0.35;
+                    const cy = 50 - leaveYSvg * 0.35;
+                    lcosConeCircle.setAttribute('cx', String(cx));
+                    lcosConeCircle.setAttribute('cy', String(cy));
                     lcosConeCircle.setAttribute('r', String(funnelR));
+                    const grabRing = document.getElementById('lcos-grab-ring');
+                    if (grabRing) {
+                        grabRing.setAttribute('cx', String(cx));
+                        grabRing.setAttribute('cy', String(cy));
+                        grabRing.setAttribute('r', String(funnelR));
+                    }
                 }
 
                 const aimGroup = document.getElementById('lcos-aim-group');
@@ -378,9 +529,16 @@ window.updateDynamicHUD = function() {
                 lcosPipper.style.height = `${pipperSizePx}px`;
 
                 if (lcosConeCircle) {
+                    const funnelR = (32 + turnMag * 3) * 1.1;
                     lcosConeCircle.setAttribute('cx', '50');
                     lcosConeCircle.setAttribute('cy', '50');
-                    lcosConeCircle.setAttribute('r', String(32 + turnMag * 3));
+                    lcosConeCircle.setAttribute('r', String(funnelR));
+                    const grabRing = document.getElementById('lcos-grab-ring');
+                    if (grabRing) {
+                        grabRing.setAttribute('cx', '50');
+                        grabRing.setAttribute('cy', '50');
+                        grabRing.setAttribute('r', String(funnelR));
+                    }
                 }
                 const aimGroup = document.getElementById('lcos-aim-group');
                 if (aimGroup) {
