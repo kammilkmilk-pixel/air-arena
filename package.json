@@ -1,0 +1,19 @@
+{
+  "name": "air-arena",
+  "version": "3.0.0",
+  "private": true,
+  "description": "Vertical Airspace tactical air combat simulator",
+  "scripts": {
+    "start": "serve -l 8080",
+    "dev": "serve -l 8080",
+    "autotune": "node tools/ai-autotune.js --iterations 120 --episodes 60 --turns 80",
+    "autotune:merge": "node tools/ai-autotune-merge.js --top 3 --stableN 3",
+    "autotune:apply": "node tools/ai-apply-tuning.js --source consensus",
+    "autotune:pipeline": "npm run autotune && npm run autotune:merge && npm run autotune:apply",
+    "test:ai": "node tools/ai-regression.js",
+    "tuning:dashboard": "node tools/tuning-dashboard-server.js"
+  },
+  "devDependencies": {
+    "serve": "^14.2.4"
+  }
+}

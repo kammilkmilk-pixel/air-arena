@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect fill='%2300bcd4' width='16' height='16'/%3E%3C/svg%3E">
+    <title>垂直空域 (Vertical Airspace) - 側翼 MFD 完全體</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body class="theme-red">
+    <!-- 1. 開場授權黑幕 + 對戰設定 -->
+    <div id="startup-screen">
+        <div id="startup-shell">
+            <div id="startup-text">
+                ENTERING COMBAT AIRSPACE...<br>
+                <span class="startup-sub">ENGAGEMENT AUTHORIZED</span>
+            </div>
+            <div id="match-setup-panel" hidden>
+                <div class="match-setup-title">MATCH SETUP</div>
+                <div class="match-setup-section">
+                    <div class="match-setup-label">對戰模式</div>
+                    <div class="match-mode-row" role="group" aria-label="match mode">
+                        <button type="button" class="match-mode-btn is-active" data-mode="1v1">1 vs 1</button>
+                        <button type="button" class="match-mode-btn" data-mode="2v2">2 vs 2</button>
+                    </div>
+                    <div id="match-mode-hint" class="match-setup-hint">2v2：翼機可收僚機令（跟隨／攻擊我的目標／掩護／脫離）。建議 RED-1 人工、RED-2 AI 測合作。</div>
+                </div>
+                <div class="match-setup-section">
+                    <div class="match-setup-label">機組配置</div>
+                    <div id="match-seat-list" class="match-seat-list"></div>
+                </div>
+                <button type="button" id="btn-match-engage" class="match-engage-btn">ENGAGE</button>
+            </div>
+        </div>
+    </div>
+    
+     
+    <!-- 3. 頂部戰術重播面板 -->
+    <div id="replay-control-bar">
+        <span id="replay-status" style="color:#aaa; font-size:12px; font-weight:bold; letter-spacing:1px; margin-right: 15px;">狀態: 戰術規劃中</span>
+        <button id="btn-rep-play" class="replay-btn">▶ 播放</button>
+        <button id="btn-rep-exit" class="replay-btn" style="display:none; color:#ff3355; font-weight:bold; border-color:#ff3355;">↩ 返回座艙</button>
+        <div class="replay-timeline-container">
+            <input type="range" id="replay-slider" min="1" max="1" value="1" step="0.01" disabled>
+        </div>
+    </div>
+
+    <!-- 4. 戰術階段橫幅與狀態警告 -->
+    <!-- 🟢 加上 pointer-events: none; 讓滑鼠穿透失速警告，避免控制台凍結 -->
+    <div id="stall-screen" style="pointer-events: none;">
+        <div id="stall-text">⚠ STALL ⚠<br><span style="font-size:18px;">失速臨界：系統將強制修正航向</span></div>
+    </div>
+    <div id="combat-lock-screen"></div>
+    <div id="phase-banner" style="position: absolute; top: 30%; left: 0; width: 100vw; text-align: center; color: #fff; font-size: 38px; font-weight: bold; letter-spacing: 8px; text-shadow: 0 0 20px #ffeb3b, 0 0 10px #000; pointer-events: none; opacity: 0; transition: opacity 0.4s ease-in-out; z-index: 8500; font-family: 'Courier New', monospace;"></div>
+
+    <div id="sensor-panel">
+        <div class="sensor-header">📡 本機狀態儀</div>
+        <div id="sensor-list"></div>
+    </div>
+
+    <!-- 5. 3D 空間浮動標籤 -->
+    <div id="alt-label-red" class="alt-label"></div>
+    <div id="alt-label-red2" class="alt-label"></div>
+    <div id="alt-label-blue" class="alt-label"></div>
+    <div id="alt-label-blue2" class="alt-label"></div>
+    <div id="alt-label-ghost" class="alt-label"></div>
+    
+    <!-- 6. WebGL 渲染畫布容器 -->
+    <div id="canvas-container"></div>
+    
+    <!-- 7. 真·雷達視線 (LOS) 鎖定框 -->
+    <div id="dynamic-hud">
+        <div id="hud-shape" class="shape-square"></div>
+        <div id="hud-data-tag">
+            <span id="hud-tgt-type">MIG21</span><br>
+            ALT: <span id="hud-tgt-alt">0</span>m<br>
+            DST: <span id="hud-tgt-dist">0</span>m
+        </div>
+    </div>
+
+    <!-- 重播浮動名稱 -->
+    <div id="replay-tag-red" class="replay-floating-tag"></div>
+    <div id="replay-tag-blue" class="replay-floating-tag"></div>
+
+<div id="panel-red-team" class="team-panel-group layout-top-left">
+    <div class="team-seat-row" data-team-id="red">
+        <button id="btn-sel-red" class="team-sel-btn" type="button">RED-1</button>
+        <button id="btn-engage-red" class="cockpit-rect-btn" type="button">規劃中</button>
+    </div>
+    <div class="team-seat-row" data-team-id="red2" hidden>
+        <button id="btn-sel-red2" class="team-sel-btn" type="button">RED-2</button>
+        <button id="btn-engage-red2" class="cockpit-rect-btn" type="button">規劃中</button>
+    </div>
+</div>
+
+<div id="panel-blue-team" class="team-panel-group layout-top-right">
+    <div class="team-seat-row" data-team-id="blue">
+        <button id="btn-sel-blue" class="team-sel-btn" type="button">BLUE-1</button>
+        <button id="btn-engage-blue" class="cockpit-rect-btn" type="button">規劃中</button>
+    </div>
+    <div class="team-seat-row" data-team-id="blue2" hidden>
+        <button id="btn-sel-blue2" class="team-sel-btn" type="button">BLUE-2</button>
+        <button id="btn-engage-blue2" class="cockpit-rect-btn" type="button">規劃中</button>
+    </div>
+</div>
+
+<div id="wingman-order-hud" hidden>
+    <div class="wingman-frame" aria-hidden="true"></div>
+    <div class="wingman-orders" role="group" aria-label="wingman orders">
+        <div class="wingman-orders-title">WINGMAN</div>
+        <button type="button" class="wingman-order-btn" data-order="follow">跟隨</button>
+        <button type="button" class="wingman-order-btn" data-order="attack">攻擊我的目標</button>
+        <button type="button" class="wingman-order-btn" data-order="cover">掩護</button>
+        <button type="button" class="wingman-order-btn" data-order="break">脫離</button>
+    </div>
+</div>
+
+<div id="scenario-test-banner" class="scenario-test-banner"></div>
+
+<div id="arena-mode-panel" class="arena-mode-panel">
+    <label for="arena-mode-select">場地模式</label>
+    <select id="arena-mode-select">
+        <option value="blank">空白場地（隱藏建築/關閉碰撞）</option>
+        <option value="visual-only">建築顯示-only（顯示建築/關閉碰撞）</option>
+        <option value="sparse-urban">稀疏建築（約 4 棟）</option>
+        <option value="medium-urban">中等建築（約 8 棟）</option>
+        <option value="dense-urban" selected>密集建築（全部）</option>
+        <option value="obstacle-stress">建築壓力測試（顯示/啟用碰撞）</option>
+    </select>
+    <div id="arena-mode-status">建築物: ON / 碰撞: ON</div>
+</div>
+
+<div id="ai-debug-panel" class="ai-debug-panel">
+    <div class="ai-debug-header">
+        <span id="ai-debug-title">NPC 決策樹</span>
+        <button id="btn-toggle-ai-debug" class="ai-debug-toggle">隱藏</button>
+    </div>
+    <div id="ai-debug-body" class="ai-debug-body">
+        <div id="ai-debug-content" class="ai-debug-team">NPC: 待機中</div>
+        <div class="ai-debug-actions">
+            <button id="btn-ai-debug-copy" class="ai-debug-action-btn" type="button">複製快照</button>
+            <button id="btn-ai-debug-download" class="ai-debug-action-btn" type="button">下載 JSON</button>
+            <button id="btn-ai-debug-record" class="ai-debug-action-btn" type="button">開始錄製</button>
+            <button id="btn-ai-debug-download-trace" class="ai-debug-action-btn" type="button" disabled>下載錄製</button>
+            <span id="ai-debug-record-status" class="ai-debug-record-status">錄製: OFF (0)</span>
+        </div>
+        <div class="ai-debug-control">
+            <label for="ai-override-active">人工干預</label>
+            <select id="ai-override-active">
+                <option value="auto">AUTO</option>
+                <option value="evade">EVADE</option>
+                <option value="gun">FORCE GUN</option>
+                <option value="missile">FORCE MISSILE</option>
+            </select>
+        </div>
+        <div class="ai-debug-control">
+            <label for="ai-policy-mode">策略模式</label>
+            <select id="ai-policy-mode">
+                <option value="heuristic">HEURISTIC（防衛優先）</option>
+                <option value="hybrid">HYBRID（壓制微調）</option>
+                <option value="fox2-first">FOX2-FIRST（開局搶射）</option>
+            </select>
+        </div>
+    </div>
+</div>
+
+<div id="temp-score-panel" class="temp-score-panel">
+    <div class="temp-score-header">
+        <span>臨時評分面板</span>
+        <button id="btn-temp-score-reset" class="temp-score-reset">重置</button>
+    </div>
+    <div class="temp-score-row">
+        <span class="temp-score-label">HEURISTIC</span>
+        <button class="temp-score-btn" data-score-mode="heuristic" data-score-delta="-1">-1</button>
+        <span id="temp-score-heuristic" class="temp-score-value">0</span>
+        <button class="temp-score-btn" data-score-mode="heuristic" data-score-delta="1">+1</button>
+    </div>
+    <div class="temp-score-row">
+        <span class="temp-score-label">HYBRID</span>
+        <button class="temp-score-btn" data-score-mode="hybrid" data-score-delta="-1">-1</button>
+        <span id="temp-score-hybrid" class="temp-score-value">0</span>
+        <button class="temp-score-btn" data-score-mode="hybrid" data-score-delta="1">+1</button>
+    </div>
+    <div class="temp-score-row temp-score-quick-row">
+        <span id="temp-score-active-mode" class="temp-score-active">目前模式: -</span>
+        <button id="btn-temp-score-active-plus" class="temp-score-btn">目前+1</button>
+        <button id="btn-temp-score-active-minus" class="temp-score-btn">目前-1</button>
+    </div>
+    <div class="temp-score-note-row">
+        <input id="temp-score-note" type="text" maxlength="80" placeholder="備註（可選）例如：低空撞樓 / 成功鎖定" />
+        <button id="btn-temp-score-note" class="temp-score-btn">記錄</button>
+    </div>
+    <div id="temp-score-log" class="temp-score-log"></div>
+</div>
+
+    <!-- ========================================================================
+         🎛️ 唯一純粹的玻璃座艙 MFD 控制面板
+         ======================================================================== -->
+    <div id="ui-wrapper">
+        <div id="combat-hud-mobile">
+            
+            <!-- 💻 TACTICAL SYS 戰術電腦 -->
+            <div id="tactical-computer-module">
+                <div id="sms-header">
+                    <button class="sms-top-btn" id="btn-flare">FLARE [3]</button>
+                    <div id="sms-title">TACTICAL SYS</div>
+                    <button class="sms-top-btn" id="btn-chaff">CHAFF [3]</button>
+                </div>
+                
+                <div id="pylon-weapons-bay">
+                    <div class="pylon-switch-wrapper" data-pylon="1">
+                        <div class="pylon-label">PYLON 1</div>
+                        <div class="pylon-stick" id="pylon-stick-1"></div>
+                    </div>
+                    <div class="pylon-switch-wrapper" data-pylon="2">
+                        <div class="pylon-label">PYLON 2</div>
+                        <div class="pylon-stick" id="pylon-stick-2"></div>
+                    </div>
+                    <div class="pylon-switch-wrapper" data-pylon="3">
+                        <div class="pylon-label">PYLON 3</div>
+                        <div class="pylon-stick" id="pylon-stick-3"></div>
+                    </div>
+                    <div class="pylon-switch-wrapper" data-pylon="4">
+                        <div class="pylon-label">PYLON 4</div>
+                        <div class="pylon-stick" id="pylon-stick-4"></div>
+                    </div>
+                </div>
+                
+                <div id="sms-display-screen">
+                    <div id="sms-text-content">狀態 [就緒] 機砲</div>
+                    <button id="sms-enter-btn">ENT</button>
+                </div>
+            </div>
+
+            <!-- 🎨 底部 U 型綜合儀表盤板 -->
+            <div id="u-shape-panel">
+                <!-- 左翼：磁吸 5 檔油門滑軌 -->
+                <div id="left-arm-throttle">
+                    <div id="throttle-track">
+                        <!-- 🟢 5檔文字刻度 -->
+                        <div class="thr-mark" style="top: 0%;">AB</div>
+                        <div class="thr-mark" style="top: 25%;">MIL</div>
+                        <div class="thr-mark" style="top: 50%;">ECO</div>
+                        <div class="thr-mark" style="top: 75%;">IDL</div>
+                        <div class="thr-mark" style="top: 100%;">BRK</div>
+                        <div id="throttle-handle">
+                            <div class="handle-grip"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 右翼：生命值垂直光柵條 -->
+                <div id="right-arm-hp">
+                    <div class="hp-track-vertical">
+                        <div id="hud-hp-fill-vertical"></div>
+                    </div>
+                    <div class="hp-text-label">HP</div>
+                </div>
+
+                <!-- 中央：圓形儀表宇宙 -->
+                <div id="center-stacked-zone">
+                    <div class="instruments-circle-core">
+                        
+                        <!-- 左指針錶盤 (發動機核心溫度) -->
+                        <div class="gauge-dial-box" id="dial-left">
+                            <svg class="gauge-dial" viewBox="0 0 100 100">
+                                <circle class="dial-bg" cx="50" cy="50" r="45"/>
+                                <g stroke="#444" stroke-width="1.5">
+                                    <line x1="5" y1="50" x2="10" y2="50" />
+                                    <line x1="18.2" y1="18.2" x2="22.5" y2="22.5" />
+                                    <line x1="50" y1="5" x2="50" y2="10" />
+                                    <line x1="81.8" y1="18.2" x2="77.5" y2="22.5" />
+                                    <line x1="95" y1="50" x2="90" y2="50" />
+                                </g>
+                                <g fill="#222" font-size="6" font-family="monospace" font-weight="bold">
+                                    <text x="14" y="52" text-anchor="start">0</text>
+                                    <text x="24" y="31" text-anchor="start">50</text>
+                                    <text x="50" y="21" text-anchor="middle">100</text>
+                                    <text x="76" y="31" text-anchor="end">150</text>
+                                    <text x="86" y="52" text-anchor="end">200</text>
+                                </g>
+                                <text x="50" y="74" text-anchor="middle" fill="#111" font-size="8" font-weight="900">CORE TEMP</text>
+                                <line class="dial-needle" id="needle-heat" x1="50" y1="50" x2="50" y2="22" stroke="#ff9800" stroke-width="3" stroke-linecap="round"/>
+                                <circle cx="50" cy="50" r="3" fill="#fff"/>
+                            </svg>
+                            <div class="digital-val"><span id="hud-val-heat">0</span>°C</div>
+                        </div>
+
+                        <!-- 正中央控制桿與滾轉環 -->
+                        <div id="control-assembly-center">
+                            <div id="roll-ring">
+                                <div class="nav-light light-port"></div>
+                                <div class="nav-light light-starbd"></div>
+                            </div>
+                            <div id="joystick-zone">
+                                <div id="joystick-handle"></div>
+                            </div>
+                        </div>
+
+                        <!-- 右指針錶盤 (發動機真實速度 AP) -->
+                        <div class="gauge-dial-box" id="dial-right">
+                            <svg class="gauge-dial" viewBox="0 0 100 100">
+                                <circle class="dial-bg" cx="50" cy="50" r="45"/>
+                                <g stroke="#444" stroke-width="1.5">
+                                    <line x1="5" y1="50" x2="10" y2="50" />
+                                    <line x1="18.2" y1="18.2" x2="22.5" y2="22.5" />
+                                    <line x1="50" y1="5" x2="50" y2="10" />
+                                    <line x1="81.8" y1="18.2" x2="77.5" y2="22.5" />
+                                    <line x1="95" y1="50" x2="90" y2="50" />
+                                </g>
+                                <g fill="#222" font-size="6" font-family="monospace" font-weight="bold">
+                                    <text x="14" y="52" text-anchor="start">0</text>
+                                    <text x="24" y="31" text-anchor="start">25</text>
+                                    <text x="50" y="21" text-anchor="middle">50</text>
+                                    <text x="76" y="31" text-anchor="end">75</text>
+                                    <text x="86" y="52" text-anchor="end">100</text>
+                                </g>
+                                <text x="50" y="74" text-anchor="middle" fill="#111" font-size="8" font-weight="900">AIRSPEED</text>
+                                <line class="dial-needle" id="needle-ap" x1="50" y1="50" x2="50" y2="22" stroke="#00bcd4" stroke-width="3" stroke-linecap="round"/>
+                                <circle cx="50" cy="50" r="3" fill="#fff"/>
+                            </svg>
+                            <div class="digital-val"><span id="hud-val-ap">0</span> m/s</div>
+                        </div>
+
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+       
+    <!-- 基礎 3D 腳本庫 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+
+    <!-- 模組化遊戲組件 -->
+    <script src="js/core/config.js"></script>
+    <script src="js/core/fallbacks.js"></script>
+    <script src="js/core/context.js"></script>
+    <script src="js/core/team-state.js"></script>
+    <script src="js/core/compat-aliases.js"></script>
+    <script src="js/core/state-machine-match.js"></script>
+    <script src="js/core/state-machine-wreck.js"></script>
+    <script src="js/core/state-machine.js"></script>
+    <script src="js/logic/physics.js"></script>
+    <script src="js/logic/weapon.js"></script>
+    <script src="js/logic/combat-helpers.js"></script>
+    <script src="js/logic/combat-pipeline.js"></script>
+    <script src="js/logic/combat-resolution.js"></script>
+    <script src="js/logic/combat-turn.js"></script>
+    <script src="js/ai/pilot-tuning-defaults.js"></script>
+    <script src="js/ai/pilot-tuning.local.js" onerror="this.onerror=null;this.src='js/ai/pilot-tuning.local.example.js'"></script>
+    <script src="js/ai/pilot-ai.js"></script>
+    <script src="js/ai/scenario-flare-test.js"></script>
+    <script src="js/view/render.js"></script>
+    <script src="js/view/hud.js"></script>
+    <script src="js/view/ui.js"></script>
+    <script src="js/game.js"></script>
+</body>
+</html>

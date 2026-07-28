@@ -1,0 +1,23 @@
+{
+  "version": "2.2",
+  "required": {
+    "models": [
+      { "path": "assets/models/mig21_red.glb", "fallback": "procedural aircraft" },
+      { "path": "assets/models/mig21_blue.glb", "fallback": "procedural aircraft" },
+      { "path": "assets/models/city.glb", "fallback": "CONFIG.map.buildings boxes" }
+    ],
+    "vfx": [
+      { "json": "assets/vfx/smoke_flipbook.json", "pngFromMeta": "smoke_flipbook-1.png" },
+      { "json": "assets/vfx/explosion_flipbook.json", "pngFromMeta": "Explosion.png" },
+      { "json": "assets/vfx/flash_flipbook.json", "pngFromMeta": "flash_flipbook.png" },
+      { "json": "assets/vfx/puff_flipbook.json", "pngFromMeta": "puff_flipbook.png" }
+    ],
+    "interface": [
+      { "path": "assets/interface/ui_l.png", "fallback": "solid cockpit panel color" },
+      { "path": "assets/interface/ui_s.png", "fallback": "solid cockpit panel color" }
+    ],
+    "optional": [
+      { "path": "assets/models/fox_two.glb", "fallback": "procedural missile mesh" }
+    ]
+  }
+}

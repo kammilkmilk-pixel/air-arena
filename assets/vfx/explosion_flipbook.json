@@ -1,0 +1,84 @@
+{"frames": {
+
+"explosion00.png":
+{
+	"frame": {"x":0,"y":0,"w":583,"h":536},
+	"rotated": false,
+	"trimmed": false,
+	"spriteSourceSize": {"x":0,"y":0,"w":583,"h":536},
+	"sourceSize": {"w":583,"h":536}
+},
+"explosion01.png":
+{
+	"frame": {"x":634,"y":0,"w":634,"h":585},
+	"rotated": false,
+	"trimmed": false,
+	"spriteSourceSize": {"x":0,"y":0,"w":634,"h":585},
+	"sourceSize": {"w":634,"h":585}
+},
+"explosion02.png":
+{
+	"frame": {"x":1268,"y":0,"w":620,"h":526},
+	"rotated": false,
+	"trimmed": false,
+	"spriteSourceSize": {"x":0,"y":0,"w":620,"h":526},
+	"sourceSize": {"w":620,"h":526}
+},
+"explosion03.png":
+{
+	"frame": {"x":0,"y":636,"w":574,"h":636},
+	"rotated": false,
+	"trimmed": false,
+	"spriteSourceSize": {"x":0,"y":0,"w":574,"h":636},
+	"sourceSize": {"w":574,"h":636}
+},
+"explosion04.png":
+{
+	"frame": {"x":634,"y":636,"w":600,"h":618},
+	"rotated": false,
+	"trimmed": false,
+	"spriteSourceSize": {"x":0,"y":0,"w":600,"h":618},
+	"sourceSize": {"w":600,"h":618}
+},
+"explosion05.png":
+{
+	"frame": {"x":1268,"y":636,"w":572,"h":545},
+	"rotated": false,
+	"trimmed": false,
+	"spriteSourceSize": {"x":0,"y":0,"w":572,"h":545},
+	"sourceSize": {"w":572,"h":545}
+},
+"explosion06.png":
+{
+	"frame": {"x":0,"y":1272,"w":583,"h":590},
+	"rotated": false,
+	"trimmed": false,
+	"spriteSourceSize": {"x":0,"y":0,"w":583,"h":590},
+	"sourceSize": {"w":583,"h":590}
+},
+"explosion07.png":
+{
+	"frame": {"x":634,"y":1272,"w":634,"h":521},
+	"rotated": false,
+	"trimmed": false,
+	"spriteSourceSize": {"x":0,"y":0,"w":634,"h":521},
+	"sourceSize": {"w":634,"h":521}
+},
+"explosion08.png":
+{
+	"frame": {"x":1268,"y":1272,"w":603,"h":590},
+	"rotated": false,
+	"trimmed": false,
+	"spriteSourceSize": {"x":0,"y":0,"w":603,"h":590},
+	"sourceSize": {"w":603,"h":590}
+}},
+"meta": {
+	"app": "https://www.codeandweb.com/texturepacker",
+	"version": "1.0",
+	"image": "Explosion.png",
+	"format": "RGBA8888",
+	"size": {"w":1902,"h":1908},
+	"scale": "1",
+	"smartupdate": "$TexturePacker:SmartUpdate:3f35029d974295f51a1c9f1d42098750:5587caa23c991f2b6d8ab3fab5e36a30:d78cc49f9e4731d8a410312d2f6ae08e$"
+}
+}

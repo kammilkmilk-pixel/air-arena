@@ -1,0 +1,869 @@
+/* ============================================================================
+   垂直空域 (Vertical Airspace) - 終極側翼 MFD 軍規控制面板樣式表 (完整修復版)
+   ============================================================================ */
+
+body { margin: 0; padding: 0; overflow: hidden; background-color: #0c0c0c; font-family: 'Courier New', monospace; user-select: none; }
+
+/* 3D 畫布鋪滿底層 */
+#canvas-container { position: fixed !important; top: 0; left: 0; right: 0; bottom: 0; z-index: 0; pointer-events: auto !important; }
+#canvas-container canvas { display: block; width: 100vw; height: 100vh; cursor: grab; }
+#canvas-container canvas:active { cursor: grabbing; }
+
+/* 舊版殘留組件防崩潰隱藏 */
+#team-tabs, .team-tab, .ready-badge, .bar-container, #cost-preview, #adi-container { display: none !important; }
+
+/* ==========================================================================
+   🎬 頂部系統 UI (重播列、開場黑幕、HUD 鎖定框)
+   ========================================================================== */
+
+/* 頂部重播時序條 */
+#replay-control-bar { 
+    position: absolute; top: 20px; left: 50%; transform: translateX(-50%); background: rgba(15, 15, 15, 0.95); border: 2px solid #555; border-radius: 8px; padding: 6px 16px; display: flex; align-items: center; gap: 12px; z-index: 9999; box-shadow: 0 0 20px rgba(0,0,0,0.8); color: #fff; width: 620px; max-width: 90vw; box-sizing: border-box; pointer-events: auto;
+}
+.replay-btn { background: #252525; border: 1px solid #444; border-radius: 4px; color: #fff; font-size: 11px; font-weight: bold; padding: 5px 10px; cursor: pointer; font-family: inherit; }
+#replay-status { font-size: 11px; color: #00ff88; font-weight: bold; width: 85px; text-align: center; }
+.replay-timeline-container { flex-grow: 1; display: flex; align-items: center; }
+#replay-slider { width: 100%; appearance: none; -webkit-appearance: none; height: 6px; background: #444; border-radius: 3px; cursor: pointer; }
+#replay-slider::-webkit-slider-thumb { appearance: none; -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #ffeb3b; box-shadow: 0 0 6px #ffeb3b; }
+
+/* 警報與開場黑幕 */
+#stall-screen { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255, 0, 0, 0.25); z-index: 9000; display: none; justify-content: center; align-items: center; pointer-events: none; }
+#stall-text { color: white; font-size: 40px; font-weight: bold; text-shadow: 0 0 15px red; text-align: center; }
+.alt-label { position: absolute; font-size: 11px; font-weight: bold; color: #fff; text-shadow: 1px 1px 2px #000; pointer-events: none; display: none; z-index: 15; }
+
+#startup-screen {
+    position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+    background-color: #050505; z-index: 99999;
+    display: flex; justify-content: center; align-items: center;
+    color: #fff; font-family: 'Courier New', monospace; text-align: center;
+    pointer-events: auto; transition: opacity 1.2s ease-in-out;
+}
+#startup-shell {
+    display: flex; flex-direction: column; align-items: center; gap: 28px;
+    max-width: min(560px, 92vw); padding: 12px;
+}
+#startup-text {
+    font-size: clamp(18px, 3.2vw, 28px); font-weight: bold; letter-spacing: 4px;
+    text-shadow: 0 0 10px rgba(255, 255, 255, 0.5);
+    animation: pulseText 1.5s infinite alternate;
+}
+#startup-text .startup-sub {
+    display: inline-block; margin-top: 8px; color: #ff0055;
+    font-size: clamp(14px, 2.4vw, 22px); letter-spacing: 6px;
+}
+#startup-screen.is-setup #startup-text { animation: none; opacity: 0.85; font-size: clamp(14px, 2.4vw, 20px); letter-spacing: 3px; }
+#startup-screen.is-setup #startup-text .startup-sub { font-size: clamp(12px, 2vw, 16px); letter-spacing: 4px; }
+
+#match-setup-panel {
+    width: 100%; box-sizing: border-box;
+    background: rgba(12, 14, 16, 0.96);
+    border: 1px solid #3a3a3a;
+    box-shadow: 0 0 28px rgba(0, 0, 0, 0.75);
+    padding: 18px 18px 16px;
+    text-align: left;
+}
+#match-setup-panel[hidden] { display: none !important; }
+.match-setup-title {
+    font-size: 15px; font-weight: bold; letter-spacing: 3px;
+    color: #e6e6e6; margin-bottom: 14px; text-align: center;
+    border-bottom: 1px solid #2c2c2c; padding-bottom: 10px;
+}
+.match-setup-section { margin-bottom: 16px; }
+.match-setup-label {
+    font-size: 11px; letter-spacing: 2px; color: #8a8a8a;
+    margin-bottom: 8px; text-transform: uppercase;
+}
+.match-mode-row { display: flex; gap: 8px; }
+.match-mode-btn {
+    flex: 1; font-family: inherit; font-size: 13px; font-weight: bold;
+    letter-spacing: 1px; padding: 10px 8px; cursor: pointer;
+    color: #ccc; background: #1a1a1a; border: 1px solid #444;
+}
+.match-mode-btn.is-active {
+    color: #0c0c0c; background: #d8d8d8; border-color: #f0f0f0;
+}
+.match-setup-hint {
+    margin-top: 8px; font-size: 10px; line-height: 1.4; color: #777;
+    letter-spacing: 0.5px;
+}
+.match-setup-hint.is-hidden { display: none; }
+.match-seat-list { display: flex; flex-direction: column; gap: 8px; }
+.match-seat-row {
+    display: grid;
+    grid-template-columns: 72px 1fr 1.35fr;
+    gap: 8px; align-items: center;
+    padding: 8px; background: #121212; border: 1px solid #2a2a2a;
+}
+.match-seat-row.is-disabled { opacity: 0.35; pointer-events: none; }
+.match-seat-name { font-size: 12px; font-weight: bold; letter-spacing: 1px; }
+.match-seat-name.red { color: #ff3355; }
+.match-seat-name.blue { color: #00bcd4; }
+.match-seat-row select {
+    width: 100%; font-family: inherit; font-size: 11px;
+    color: #eee; background: #1e1e1e; border: 1px solid #444;
+    padding: 7px 6px; cursor: pointer;
+}
+.match-engage-btn {
+    width: 100%; margin-top: 4px; font-family: inherit;
+    font-size: 15px; font-weight: bold; letter-spacing: 4px;
+    padding: 12px 10px; cursor: pointer;
+    color: #0a0a0a; background: #ff0055; border: 1px solid #ff4477;
+    box-shadow: 0 0 16px rgba(255, 0, 85, 0.35);
+}
+.match-engage-btn:hover { filter: brightness(1.08); }
+.match-engage-btn:disabled { opacity: 0.5; cursor: wait; }
+
+@keyframes pulseText { from { opacity: 0.5; } to { opacity: 1; } }
+
+/* HUD 戰術鎖定系統 */
+#dynamic-hud { position: fixed; top: 0; left: 0; pointer-events: auto; cursor: crosshair; z-index: 8000; transform: translate(-50%, -50%); display: none; }
+#hud-shape { position: absolute; top: -20px; left: -20px; width: 40px; height: 40px; box-sizing: border-box; }
+#hud-shape::before, #hud-shape::after { content: none !important; display: none !important; }
+.shape-square { border: 2px solid #00ff88; border-radius: 0; background: none; }
+.shape-circle { border: 2px solid #00ff88; border-radius: 50%; background: none; }
+.shape-gun { border: none !important; background: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Cpath d='M 6 6 L 15 15 M 34 6 L 25 15 M 6 34 L 15 25 M 34 34 L 25 25' stroke='%2300ff88' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E"); background-size: 100% 100%; }
+.predicted-hit { border-color: #ffffff !important; filter: drop-shadow(0 0 6px #ffffff); }
+#hud-data-tag { position: absolute; left: 30px; top: -20px; color: #00ff88; font-size: 11px; font-weight: bold; white-space: nowrap; text-shadow: 1px 1px 2px #000; pointer-events: none; }
+.replay-floating-tag { position: fixed; top: 0; left: 0; color: #fff; font-size: 11px; font-weight: bold; background: rgba(10, 10, 10, 0.85); border: 1px solid #444; padding: 3px 8px; border-radius: 4px; pointer-events: none; z-index: 8500; display: none; text-shadow: 1px 1px 2px #000; box-shadow: 0 2px 8px rgba(0,0,0,0.8); }
+#replay-tag-red { border-left: 3px solid #ff0055; }
+#replay-tag-blue { border-left: 3px solid #00bcd4; }
+
+/* ============================================================================
+ * 🎛️ 現代化響應式玻璃座艙 (CSS Variables 幾何連動版)
+ * ============================================================================ */
+
+/* 🟢 定義全域變數大腦 */
+:root {
+    --edge-dist: 4%;         /* 油門與HP 距離邊緣 */
+    --joy-size: 99px;        /* 搖桿與錶盤同步直徑 */
+    --dial-spread: 21.5%;    /* 左右錶盤展開間距 */
+    --center-t: 19.5%;       /* 儀表整體高度下移 */
+    --sms-w: 365px;          /* SMS 戰術電腦寬度 */
+    --sms-b: 63%;            /* SMS 懸浮高度 (完美卡入儀表上方) */
+}
+
+#ui-wrapper { position: fixed !important; bottom: 0 !important; left: 0 !important; width: 100vw !important; height: 0 !important; transform: none !important; display: block !important; pointer-events: none !important; }
+#combat-hud-mobile { position: fixed !important; bottom: 0 !important; left: 50% !important; transform: translateX(-50%) !important; z-index: 9000 !important; pointer-events: auto !important; margin: 0 !important; display: block !important; transition: opacity 0.2s ease, transform 0.25s ease; }
+#ui-wrapper.is-controls-hidden #combat-hud-mobile {
+    opacity: 0 !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+    transform: translateX(-50%) translateY(28px) !important;
+}
+
+#wingman-order-hud {
+    position: fixed;
+    z-index: 8800;
+    pointer-events: none;
+    left: 0;
+    top: 0;
+}
+#wingman-order-hud[hidden] {
+    display: none !important;
+}
+#wingman-order-hud .wingman-frame {
+    position: absolute;
+    width: 72px;
+    height: 72px;
+    margin-left: -36px;
+    margin-top: -36px;
+    border: 2px solid #ffffff;
+    box-shadow: 0 0 0 1px rgba(0,0,0,0.55), 0 0 14px rgba(255,255,255,0.35);
+    background: transparent;
+    pointer-events: none;
+}
+#wingman-order-hud .wingman-orders {
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-left: 44px;
+    margin-top: -40px;
+    pointer-events: auto;
+    min-width: 132px;
+}
+#wingman-order-hud .wingman-orders-title {
+    color: #fff;
+    font-family: 'Courier New', monospace;
+    font-size: 10px;
+    letter-spacing: 1px;
+    text-shadow: 0 1px 2px #000;
+    margin-bottom: 2px;
+}
+#wingman-order-hud .wingman-order-btn {
+    pointer-events: auto;
+    border: 1px solid rgba(255,255,255,0.75);
+    background: rgba(0,0,0,0.55);
+    color: #fff;
+    font-family: 'Courier New', monospace;
+    font-size: 11px;
+    padding: 5px 8px;
+    text-align: left;
+    cursor: pointer;
+}
+#wingman-order-hud .wingman-order-btn.is-active {
+    background: rgba(255,255,255,0.92);
+    color: #111;
+    border-color: #fff;
+}
+#wingman-order-hud .wingman-order-btn:hover {
+    background: rgba(255,255,255,0.22);
+}
+
+/* ─── SMS 戰術面板 ─── */
+#tactical-computer-module {
+    position: absolute !important; bottom: var(--sms-b) !important; left: 50% !important; transform: translateX(-50%) !important;
+    width: var(--sms-w) !important; background: rgba(12, 12, 12, 0.96) !important; border: 2px solid #3a3a3a !important; border-radius: 8px 8px 0 0 !important;
+    display: flex; flex-direction: column; align-items: center; padding: 4px; box-shadow: 0 -4px 15px rgba(0,0,0,0.7); box-sizing: border-box;
+    z-index: 100 !important; /* 🟢 關鍵修復：提高層級，確保 SMS 永遠蓋在藍色底盤上方 */
+}
+#sms-header { display: flex; justify-content: space-between; align-items: center; width: 100%; padding: 4px 8px; box-sizing: border-box; border-bottom: 1px solid #222; margin-bottom: 4px; }
+#sms-title { font-size: 11px; color: #777; font-weight: bold; letter-spacing: 2px; }
+.sms-top-btn { background: #111; color: #ffeb3b; border: 1px solid #555; border-radius: 4px; font-size: 10px; font-family: monospace; font-weight: bold; cursor: pointer; padding: 3px 8px; }
+#btn-flare { color: #ff9800; border-color: #ff9800; }
+#btn-chaff { color: #888; border-color: #444; } 
+
+/* 武器掛架與 SMS 螢幕內部細節 */
+#pylon-weapons-bay { display: flex; justify-content: center; gap: 24px; background: rgba(5,5,5,0.9); padding: 2px 10px; border-radius: 4px; border: 1px solid #222; margin-bottom: 4px; width: 95%; box-sizing: border-box;}
+.pylon-switch-wrapper { display: flex; flex-direction: column; align-items: center; gap: 4px; cursor: pointer; }
+.pylon-label { font-size: 8px; color: #888; font-weight: bold; }
+.pylon-stick { width: 6px; height: 14px; background: #444; border-radius: 2px; transition: transform 0.2s; }
+.pylon-stick.stick-up { transform: translateY(-2px); background: #ffeb3b; }
+.pylon-lamp { width: 8px; height: 8px; background: #222; border-radius: 50%; transition: all 0.2s; opacity: 0.2; }
+.pylon-lamp.lamp-cold { background: #ffbb00; box-shadow: 0 0 6px #ffbb00; opacity: 1; }
+.pylon-lamp.lamp-hot { background: #00ff88; box-shadow: 0 0 8px #00ff88; opacity: 1; }
+
+#sms-display-screen { width: 95%; background: #0c0c0c; border: 1px solid #444; border-radius: 4px; padding: 4px 8px; display: flex; flex-direction: row; justify-content: space-between; align-items: center; box-sizing: border-box; }
+#sms-text-content { font-size: 13px; font-weight: bold; color: #ffeb3b; text-shadow: 0 0 5px rgba(255,235,59,0.7); cursor: pointer; flex-grow: 1; text-align: left; }
+#sms-enter-btn { width: 42px; height: 22px; background: #111; border: 1.5px solid #00ff88; color: #00ff88; font-family: inherit; font-size: 10px; font-weight: bold; border-radius: 3px; cursor: pointer; display: flex; justify-content: center; align-items: center; }
+#sms-enter-btn:active { transform: scale(0.92); background: #00aa5e; }
+
+/* ─── U型面板底圖 ─── */
+#u-shape-panel { position: relative !important; width: 100% !important; height: 100% !important; background-color: rgba(18, 18, 22, 0.96) !important; background-repeat: no-repeat !important; background-position: bottom center !important; background-size: 100% 100% !important; display: block !important; }
+
+/* ─── 左翼推力滑軌 ─── */
+#left-arm-throttle { position: absolute !important; top: 16% !important; left: var(--edge-dist) !important; width: 10% !important; height: 65% !important; display: flex !important; align-items: center !important; justify-content: center !important; }
+#throttle-track { position: relative !important; width: 14px !important; height: 90% !important; background: #151515 !important; border: 1px solid #444 !important; border-radius: 4px !important; box-shadow: inset 0 0 8px #000 !important; }
+.thr-mark { position: absolute; left: 15px; font-size: 11px; font-weight: 900; color: #888; transform: translateY(-50%); pointer-events: none; user-select: none; }
+.thr-mark.mark-active { color: #ff9800; text-shadow: 0 0 8px #ff9800; }
+.thr-mark { position: absolute !important; left: 18px !important; font-size: 9px !important; font-weight: bold !important; color: #777 !important; }
+.mark-top { top: 0% !important; color: #ff5500 !important; } .mark-mid { top: 45% !important; color: #4caf50 !important; } .mark-bot { bottom: 0% !important; color: #2196f3 !important; }
+#throttle-handle { position: absolute !important; left: -12px !important; width: 38px !important; height: 20px !important; background: #333 !important; border: 2px solid #aaa !important; border-radius: 4px !important; display: flex !important; align-items: center !important; justify-content: center !important; box-shadow: 0 4px 6px rgba(0,0,0,0.6) !important; cursor: grab !important; z-index: 50 !important; transform: translateY(-50%) !important; transition: top 0.15s ease-out !important; }
+.handle-grip { width: 80% !important; height: 2px !important; background: #ffeb3b !important; box-shadow: 0 0 4px #ffeb3b !important; }
+
+/* ─── 右翼 HP 血條 ─── */
+#right-arm-hp { position: absolute !important; top: 16% !important; right: var(--edge-dist) !important; width: 10% !important; height: 65% !important; display: flex !important; flex-direction: column !important; align-items: center !important; justify-content: space-between !important;}
+.hp-track-vertical { width: 14px !important; height: 80% !important; background: #151515; border: 1px solid #444; border-radius: 4px; box-shadow: inset 0 0 8px #000; position: relative; display: flex; flex-direction: column; justify-content: flex-end; }
+#hud-hp-fill-vertical { width: 100%; height: 100%; background: #00bcd4; border-radius: 3px; transition: height 0.3s ease, background-color 0.3s ease; box-shadow: 0 0 10px #00bcd4; }
+.hp-text-label { font-size: 10px; font-weight: bold; color: #777; margin-top: 5px; }
+
+/* ─── 🎯 中央儀表宇宙 ─── */
+#center-stacked-zone { position: absolute !important; top: var(--center-t) !important; left: 0 !important; width: 100% !important; height: 100% !important; }
+.instruments-circle-core { position: relative !important; width: 100% !important; height: 100% !important; }
+
+/* 🚫 強制封殺隱藏殘留的舊版六個按鈕 */
+#center-instruments .btn-column-side { display: none !important; }
+
+/* 同步所有圓圈幾何 */
+.gauge-dial-box, #control-assembly-center {
+    position: absolute !important; top: 50% !important; width: var(--joy-size) !important; height: var(--joy-size) !important;
+}
+#control-assembly-center { left: 50% !important; transform: translate(-50%, -50%) !important; }
+#dial-left { left: calc(50% - var(--dial-spread)) !important; transform: translate(-50%, -50%) !important; }
+#dial-right { left: calc(50% + var(--dial-spread)) !important; transform: translate(-50%, -50%) !important; }
+
+/* 讓滾轉環變成一個單純的旋轉容器 */
+#roll-ring { 
+    position: absolute !important; width: 100% !important; height: 100% !important; 
+    top: 50% !important; left: 50% !important; transform: translate(-50%, -50%);
+    border: 10px solid #333 !important; border-radius: 50% !important; 
+    pointer-events: auto !important; z-index: 5 !important; box-sizing: border-box !important;
+    transition: none !important; /* 確保 JS 可以無延遲控制旋轉 */
+}
+/* 物理綁定在滾轉環上的左右發光刻度 (會跟著環一起旋轉) */
+#roll-ring::before, #roll-ring::after {
+    content: ''; position: absolute; top: 50%; transform: translateY(-50%);
+    width: 14px; height: 4px; /* 刻度實體大小 */
+    pointer-events: none; z-index: 6;
+}
+#roll-ring::before { left: -12px; background: #ff0055; box-shadow: 0 0 6px #ff0055; } /* 左紅 (Port) */
+#roll-ring::after { right: -12px; background: #00ff88; box-shadow: 0 0 6px #00ff88; } /* 右綠 (Starboard) */
+
+/* ─── 🕹️ 搖桿區：純黑平底凹槽，徹底消除倒影 ─── */
+#joystick-zone { 
+    position: absolute !important; width: 75% !important; height: 75% !important; 
+    top: 50% !important; left: 50% !important; transform: translate(-50%, -50%) !important; 
+    background: #111 !important; /* 🟢 移除放射漸層，改用純平暗色消除立體錯覺倒影 */
+    box-shadow: inset 0 3px 15px rgba(0,0,0,1) !important; /* 加深硬體邊緣下沉感 */
+    border: 2px solid #222 !important; border-radius: 50% !important; 
+    display: flex !important; align-items: center !important; justify-content: center !important; 
+    pointer-events: auto !important; z-index: 10 !important; 
+}
+#joystick-handle { 
+    position: relative !important; width: 35% !important; height: 35% !important; 
+    background: #ff0055 !important; border-radius: 50% !important; 
+    border: 1px solid #fff !important; box-shadow: 0 0 10px rgba(255,0,85,0.8) !important; 
+    z-index: 20 !important; cursor: grab !important; 
+}
+#joystick-handle:active { cursor: grabbing !important; }
+
+/* ─── 📊 類比儀表盤樣式 (淺灰加厚黑色外圈) ─── */
+.gauge-dial { width: 100% !important; height: 100% !important; display: block !important; }
+.dial-bg { 
+    fill: #d4d4d4 !important;    /* 淺灰色底板 */
+    stroke: #111 !important;     /* 黑色加厚外圈 */
+    stroke-width: 4px !important;
+}
+/* 讓內部文字與刻度線在淺灰底色上變黑，高反差顯示 */
+.gauge-dial g line { stroke: #444 !important; }
+.gauge-dial g text { fill: #222 !important; font-weight: bold !important; }
+.gauge-dial > text { fill: #111 !important; font-weight: 900 !important; }
+
+/* 數字鑲嵌在錶盤內部正下方 */
+.digital-val {
+    position: absolute !important; bottom: 12% !important; left: 50% !important; transform: translateX(-50%) !important;
+    font-size: 11px !important; font-weight: bold !important; color: #00ff88 !important;
+    background: rgba(0,0,0,0.8) !important; padding: 2px 6px !important; border-radius: 4px !important; border: 1px solid #444 !important;
+}
+
+/* ============================================================================
+ * 📱 媒體查詢 RWD (載入底圖並賦予變數)
+ * ============================================================================ */
+@media (min-width: 769px) { 
+    #combat-hud-mobile { width: 620px !important; height: 190px !important; } 
+    #u-shape-panel { background-image: url('../assets/interface/ui_l.png') !important; } 
+}
+@media (max-width: 768px) { 
+    :root { --edge-dist: 2%; --joy-size: 65px; --dial-spread: 26%; --sms-w: 95vw; --sms-b: 100%; }
+    #combat-hud-mobile { width: 100vw !important; height: 48vw !important; } 
+    #u-shape-panel { background-image: url('../assets/interface/ui_s.png') !important; } 
+}
+/* 1. 讓滾轉環本體變成 10px 超厚深灰外圈，精確填滿與 75% 搖桿之間的空隙 */
+#roll-ring { 
+    position: absolute !important; 
+    width: 100% !important; 
+    height: 100% !important; 
+    top: 50% !important; 
+    left: 50% !important; 
+    transform: translate(-50%, -50%) rotate(0rad); /* 預設基準 */
+    border: 10px solid #333333 !important; 
+    border-radius: 50% !important; 
+    display: block !important; 
+    pointer-events: auto !important; 
+    z-index: 5 !important; 
+    box-sizing: border-box !important;
+    transition: none !important; /* 拔除非同步動畫，防止拖曳延遲 */
+}
+
+/* 2. 實體刻度燈（左右兩端內嵌，會隨著父容器 #roll-ring 一起物理旋轉） */
+.nav-light { 
+    position: absolute !important; 
+    top: 50% !important; 
+    margin-top: -3px !important; /* 精確垂直置中 */
+    width: 14px !important; 
+    height: 6px !important; 
+    z-index: 6 !important; 
+    pointer-events: none !important; 
+    border-radius: 2px !important;
+}
+/* 左側紅燈 (Port) */
+.light-port { 
+    left: -12px !important; 
+    background: #ff0055 !important; 
+    box-shadow: 0 0 8px #ff0055 !important; 
+}
+/* 右側綠燈 (Starboard) */
+.light-starbd { 
+    right: -12px !important; 
+    background: #00ff88 !important; 
+    box-shadow: 0 0 8px #00ff88 !important; 
+}
+
+/* 3. 強制拔除舊漸層（消滅殘影），改用純霧面黑底槽 */
+#joystick-zone {
+    background: #121212 !important;
+    box-shadow: inset 0 3px 12px rgba(0,0,0,1) !important;
+}
+/* ========================================================================
+   📱 寬螢幕基礎排版樣式基準 (紅藍隊按鈕群組)
+   ======================================================================== */
+.team-panel-group {
+    position: absolute;
+    z-index: 9999;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.team-seat-row {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+}
+.team-seat-row[hidden] {
+    display: none !important;
+}
+.team-sel-btn {
+    background: #111;
+    color: #aaa;
+    border: 2px solid #444;
+    padding: 8px 14px;
+    font-weight: bold;
+    cursor: pointer;
+    border-radius: 4px;
+    min-width: 88px;
+}
+.team-sel-btn.is-active.faction-red {
+    background: #ff0055;
+    color: #fff;
+    border-color: #fff;
+    box-shadow: 0 0 10px rgba(255, 0, 85, 0.5);
+}
+.team-sel-btn.is-active.faction-blue {
+    background: #00bcd4;
+    color: #fff;
+    border-color: #fff;
+    box-shadow: 0 0 10px rgba(0, 188, 212, 0.5);
+}
+.team-sel-btn.faction-red:not(.is-active) {
+    color: #ff0055;
+}
+.team-sel-btn.faction-blue:not(.is-active) {
+    color: #00bcd4;
+}
+.team-panel-group .cockpit-rect-btn {
+    background: rgba(0, 0, 0, 0.5);
+    color: #fff;
+    border: 2px solid #aaa;
+    padding: 6px 12px;
+    font-weight: bold;
+    cursor: pointer;
+    border-radius: 16px;
+}
+.layout-top-left {
+    top: 20px;
+    left: 20px;
+    align-items: flex-start;
+}
+.layout-top-right {
+    top: 20px;
+    right: 20px;
+    align-items: flex-end;
+}
+
+.scenario-test-banner {
+    position: fixed;
+    top: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: min(520px, 92vw);
+    padding: 10px 14px;
+    background: rgba(20, 12, 4, 0.92);
+    border: 1px solid #ffbb00;
+    border-radius: 8px;
+    color: #ffe8a8;
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
+    line-height: 1.45;
+    z-index: 8950;
+    box-shadow: 0 0 18px rgba(255, 187, 0, 0.25);
+    pointer-events: none;
+    display: none;
+}
+.scenario-test-banner .scenario-hint {
+    color: #c9b07a;
+    font-size: 11px;
+}
+
+.arena-mode-panel {
+    position: fixed;
+    top: 76px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: min(380px, 86vw);
+    background: rgba(10, 14, 20, 0.9);
+    border: 1px solid #3a4a58;
+    border-radius: 8px;
+    box-shadow: 0 0 16px rgba(0, 0, 0, 0.55);
+    z-index: 8900;
+    color: #d4dde6;
+    font-family: 'Courier New', monospace;
+    padding: 7px 9px;
+    box-sizing: border-box;
+    display: grid;
+    grid-template-columns: 74px 1fr;
+    gap: 6px 8px;
+    align-items: center;
+    pointer-events: auto;
+}
+.arena-mode-panel label {
+    font-size: 11px;
+    color: #90a3b8;
+    font-weight: 700;
+}
+.arena-mode-panel select {
+    background: #1a2330;
+    color: #dcecff;
+    border: 1px solid #3f5368;
+    border-radius: 4px;
+    padding: 3px 6px;
+    font-size: 11px;
+    height: 26px;
+    font-family: inherit;
+}
+#arena-mode-status {
+    grid-column: 1 / -1;
+    color: #9ed5ff;
+    font-size: 10px;
+    letter-spacing: 0.3px;
+}
+
+.ai-debug-panel {
+    position: fixed;
+    top: 120px;
+    left: 50%;
+    transform: none;
+    width: min(420px, 86vw);
+    background: rgba(10, 14, 20, 0.9);
+    border: 1px solid #3a4a58;
+    border-radius: 8px;
+    box-shadow: 0 0 16px rgba(0, 0, 0, 0.65);
+    z-index: 9999;
+    color: #d4dde6;
+    font-family: 'Courier New', monospace;
+    backdrop-filter: blur(3px);
+    display: none;
+}
+.ai-debug-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 10px;
+    border-bottom: 1px solid rgba(76, 93, 108, 0.55);
+    font-size: 12px;
+    font-weight: bold;
+    letter-spacing: 0.6px;
+}
+.ai-debug-toggle {
+    background: #1d2732;
+    color: #9ed5ff;
+    border: 1px solid #3c5b75;
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: 11px;
+    cursor: pointer;
+}
+.ai-debug-body {
+    padding: 8px 10px;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+}
+.ai-debug-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+}
+.ai-debug-action-btn {
+    background: #1d2732;
+    color: #9ed5ff;
+    border: 1px solid #3c5b75;
+    border-radius: 4px;
+    padding: 3px 8px;
+    font-size: 10px;
+    cursor: pointer;
+}
+.ai-debug-action-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+.ai-debug-record-status {
+    font-size: 10px;
+    color: #8fa4b8;
+    margin-left: 2px;
+}
+.ai-debug-team {
+    white-space: normal;
+    font-size: 11px;
+    line-height: 1.4;
+    background: rgba(0, 0, 0, 0.28);
+    border: 1px solid rgba(65, 78, 92, 0.5);
+    border-radius: 6px;
+    padding: 6px 8px;
+}
+.ai-tree {
+    white-space: pre-wrap;
+    font-size: 10px;
+    color: #bfcddd;
+}
+.ai-threat-inline {
+    margin-top: 3px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    border: 1px solid transparent;
+}
+.ai-threat-log {
+    margin-top: 8px;
+    border-top: 1px dashed rgba(95, 112, 126, 0.5);
+    padding-top: 6px;
+}
+.ai-threat-title {
+    font-size: 10px;
+    letter-spacing: 0.6px;
+    color: #92a5b9;
+    margin-bottom: 4px;
+}
+.ai-threat-entry {
+    font-size: 10px;
+    border: 1px solid rgba(73, 88, 102, 0.55);
+    border-radius: 4px;
+    padding: 2px 6px;
+    margin-bottom: 4px;
+}
+.ai-threat-badge {
+    display: inline-block;
+    min-width: 46px;
+    font-weight: 700;
+}
+.ai-threat-empty {
+    font-size: 10px;
+    color: #7f92a6;
+}
+.ai-threat-high {
+    color: #ffb9b9;
+    border-color: rgba(255, 87, 87, 0.7);
+    background: rgba(255, 55, 55, 0.15);
+}
+.ai-threat-medium {
+    color: #ffe8ac;
+    border-color: rgba(255, 189, 61, 0.65);
+    background: rgba(255, 185, 65, 0.14);
+}
+.ai-threat-low {
+    color: #b9ecff;
+    border-color: rgba(93, 197, 255, 0.55);
+    background: rgba(67, 149, 255, 0.12);
+}
+.ai-debug-control {
+    display: grid;
+    grid-template-columns: 70px 1fr;
+    align-items: center;
+    gap: 8px;
+}
+.ai-debug-control label {
+    font-size: 10px;
+    color: #90a3b8;
+    letter-spacing: 0.4px;
+}
+.ai-debug-control select {
+    background: #1a2330;
+    color: #dcecff;
+    border: 1px solid #3f5368;
+    border-radius: 4px;
+    padding: 2px 6px;
+    font-size: 11px;
+    height: 24px;
+    font-family: inherit;
+}
+
+.temp-score-panel {
+    position: fixed;
+    right: 14px;
+    bottom: 14px;
+    width: min(360px, 92vw);
+    background: rgba(9, 13, 18, 0.92);
+    border: 1px solid #3a4a58;
+    border-radius: 8px;
+    box-shadow: 0 0 16px rgba(0, 0, 0, 0.6);
+    z-index: 9998;
+    color: #d4dde6;
+    font-family: 'Courier New', monospace;
+    padding: 8px;
+    display: grid;
+    gap: 6px;
+}
+.temp-score-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 12px;
+    font-weight: bold;
+}
+.temp-score-reset {
+    background: #23161a;
+    color: #ffb8b8;
+    border: 1px solid #72434c;
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: 11px;
+    cursor: pointer;
+}
+.temp-score-row {
+    display: grid;
+    grid-template-columns: 88px 46px 1fr 46px;
+    gap: 6px;
+    align-items: center;
+}
+.temp-score-label {
+    font-size: 11px;
+    color: #8fb3d3;
+}
+.temp-score-value {
+    text-align: center;
+    border: 1px solid #3f5368;
+    border-radius: 4px;
+    background: rgba(23, 32, 42, 0.7);
+    padding: 3px 4px;
+    font-size: 12px;
+    font-weight: bold;
+}
+.temp-score-btn {
+    background: #1a2330;
+    color: #dcecff;
+    border: 1px solid #3f5368;
+    border-radius: 4px;
+    height: 24px;
+    font-size: 11px;
+    font-family: inherit;
+    cursor: pointer;
+}
+.temp-score-quick-row {
+    grid-template-columns: 1fr auto auto;
+}
+.temp-score-active {
+    font-size: 10px;
+    color: #8fb3d3;
+}
+.temp-score-note-row {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 6px;
+}
+.temp-score-note-row input {
+    background: #111923;
+    color: #dcecff;
+    border: 1px solid #3f5368;
+    border-radius: 4px;
+    padding: 4px 6px;
+    font-size: 11px;
+    font-family: inherit;
+}
+.temp-score-log {
+    max-height: 120px;
+    overflow: auto;
+    border-top: 1px dashed rgba(92, 111, 129, 0.6);
+    padding-top: 6px;
+    font-size: 10px;
+    color: #9db2c8;
+    line-height: 1.4;
+}
+.temp-score-log-entry {
+    border: 1px solid rgba(73, 88, 102, 0.55);
+    border-radius: 4px;
+    padding: 2px 6px;
+    margin-bottom: 4px;
+}
+
+/* ========================================================================
+   ⚡ 畫面收窄時的響應式軍規佈局 (Responsive Tactical Layout)
+   ======================================================================== */
+@media (max-width: 768px) {
+    
+    /* 1. 紅藍隊按鈕：高度跟隨螢幕總高度的比例 (約頂部往下 10%)，左右跟隨螢幕寬度自動往中間靠攏 */
+    #panel-red-team {
+        top: max(70px, 10vh) !important; /* 動態取值：如果螢幕太扁，至少保持 70px 避開重播條，否則使用螢幕高度的 10% */
+        left: 5vw !important;            /* 動態靠左：距離左邊緣 5% 的螢幕寬度 */
+        align-items: flex-start !important;
+    }
+    #panel-blue-team {
+        top: max(70px, 10vh) !important;
+        right: 5vw !important;           /* 動態靠右：距離右邊緣 5% 的螢幕寬度 */
+        align-items: flex-end !important;
+    }
+    .ai-debug-panel {
+        top: max(118px, 15vh) !important;
+        width: min(94vw, 420px);
+    }
+    .ai-debug-body {
+        grid-template-columns: 1fr;
+    }
+    .temp-score-panel {
+        right: 8px;
+        bottom: 8px;
+        width: min(96vw, 360px);
+    }
+    
+    /* 縮小按鈕內邊距與字型，防止在窄螢幕下溢出 */
+    .team-panel-group button {
+        padding: 1vh 2vw !important;     /* 內邊距也改用動態比例 */
+        font-size: min(11px, 3vw) !important; /* 字體大小動態適應，最大不超過 11px */
+    }
+    .team-panel-group .cockpit-rect-btn {
+        padding: 0.8vh 1.5vw !important;
+        font-size: min(10px, 2.5vw) !important;
+        border-radius: 12px !important;
+    }
+
+    #combat-hud-mobile {
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-end;
+        align-items: center;
+    }
+
+    /* 2. TACTICAL SYS 操作版面：採用高度百分比，動態懸浮於下方儀表板之上 */
+    #tactical-computer-module {
+        position: absolute !important;
+        /* 動態高度：距離底部約 22% 的螢幕高度，這樣無論手機螢幕多長多短，都會剛好卡在操縱桿上方 */
+        bottom: max(150px, 12vh) !important; 
+        left: 50% !important;
+        transform: translateX(-50%) !important;
+        
+        /* 動態寬度：佔據螢幕寬度的 55%，但設定最大和最小值以防變形 */
+        width: clamp(220px, 85vw, 320px) !important;   
+        
+        z-index: 100 !important;
+        background: rgba(10, 10, 10, 0.95) !important; 
+        border: 1px solid #444 !important;
+        padding: 1vh !important;
+        border-radius: 6px;
+        box-shadow: 0 0 15px rgba(0, 0, 0, 0.85);
+        transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    /* 🎯 精細收縮 TACTICAL SYS 內部組件與掛架按鈕，使其呈高整合軍規姿態 */
+    #sms-header {
+        height: 22px !important;
+        font-size: 10px !important;
+        line-height: 22px !important;
+    }
+    .sms-top-btn {
+        padding: 1px 5px !important;
+        font-size: 9px !important;
+    }
+    #pylon-weapons-bay {
+        gap: 4px !important;
+        padding: 3px 0 !important;
+    }
+    .pylon-switch-wrapper {
+        min-width: 38px !important;
+    }
+    .pylon-label {
+        font-size: 8px !important;
+        transform: scale(0.9);
+    }
+    .pylon-stick {
+        height: 12px !important;
+        width: 6px !important;
+    }
+    #sms-display-screen {
+        height: 22px !important;
+        font-size: 10px !important;
+    }
+    #sms-enter-btn {
+        padding: 1px 6px !important;
+        font-size: 9px !important;
+    }
+}

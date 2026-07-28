@@ -1,0 +1,14 @@
+node_modules/
+
+# Local AI tuning overrides (use pilot-tuning.local.example.js as template)
+js/ai/pilot-tuning.local.js
+
+# Generated tool reports (keep *smoke.json fixtures committed)
+tools/reports/autotune-*.json
+tools/reports/merged-*.json
+tools/reports/regression-[0-9]*.json
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.log

@@ -1,0 +1,141 @@
+{
+  "version": "1.0.0",
+  "description": "AI curriculum stages for single-variable progression.",
+  "baseline": {
+    "aircraft": "mig21",
+    "policy_modes": [
+      "heuristic",
+      "hybrid"
+    ],
+    "runs_per_stage": 3,
+    "episodes_per_run": 40,
+    "max_turns": 80,
+    "metrics": [
+      "crash_rate",
+      "stall_events_per_episode",
+      "avg_stall_recovery_turns",
+      "avg_hits_gun",
+      "avg_hits_missile",
+      "avg_hp_left",
+      "avg_enemy_hp_left",
+      "avg_turns",
+      "win_rate"
+    ]
+  },
+  "pass_gates": {
+    "crash_rate_max": 0.08,
+    "stall_events_per_episode_max": 0.55,
+    "avg_stall_recovery_turns_max": 2.4,
+    "avg_enemy_hp_left_max": 62,
+    "notes": "All gates must pass before advancing to the next stage."
+  },
+  "stages": [
+    {
+      "id": "A-open-sky",
+      "name": "Open Sky Baseline",
+      "variable_focus": "No buildings; validate pure flight and intercept behavior.",
+      "enforce_combat_gates": true,
+      "environment": {
+        "building_density": "none",
+        "building_count": 0,
+        "building_layout": "disabled",
+        "spawn_profile": "default"
+      },
+      "pass_overrides": {
+        "crash_rate_max": 0.04,
+        "stall_events_per_episode_max": 0.4,
+        "avg_stall_recovery_turns_max": 2.0,
+        "max_altitude_max": 120,
+        "avg_high_altitude_turns_max": 13,
+        "avg_enemy_hp_left_max": 72,
+        "avg_hits_gun_min": 0.15,
+        "avg_turns_max": 65,
+        "win_rate_min": 0.02
+      }
+    },
+    {
+      "id": "B-light-urban",
+      "name": "Light Urban",
+      "variable_focus": "Reintroduce sparse obstacles and verify collision avoidance.",
+      "environment": {
+        "building_density": "low",
+        "building_count": 3,
+        "building_layout": "spaced",
+        "spawn_profile": "default"
+      },
+      "pass_overrides": {
+        "crash_rate_max": 0.06,
+        "stall_events_per_episode_max": 0.5,
+        "avg_stall_recovery_turns_max": 2.3,
+        "max_altitude_max": 115,
+        "avg_high_altitude_turns_max": 22,
+        "avg_enemy_hp_left_max": 80
+      }
+    },
+    {
+      "id": "C-medium-urban",
+      "name": "Medium Urban",
+      "variable_focus": "Stress test tactical transitions with medium obstacle pressure.",
+      "environment": {
+        "building_density": "medium",
+        "building_count": 6,
+        "building_layout": "alternating-corridor",
+        "spawn_profile": "default"
+      },
+      "pass_overrides": {
+        "crash_rate_max": 0.08,
+        "stall_events_per_episode_max": 0.55,
+        "avg_stall_recovery_turns_max": 2.4,
+        "max_altitude_max": 112,
+        "avg_high_altitude_turns_max": 12,
+        "avg_enemy_hp_left_max": 89,
+        "avg_turns_max": 78
+      }
+    },
+    {
+      "id": "D-full-map",
+      "name": "Full Tactical Map",
+      "variable_focus": "Production map verification with all buildings enabled.",
+      "environment": {
+        "building_density": "full",
+        "building_count": 10,
+        "building_layout": "config-default",
+        "spawn_profile": "default"
+      },
+      "pass_overrides": {
+        "crash_rate_max": 0.1,
+        "stall_events_per_episode_max": 0.65,
+        "avg_stall_recovery_turns_max": 2.8,
+        "max_altitude_max": 115,
+        "avg_high_altitude_turns_max": 18,
+        "avg_enemy_hp_left_max": 88,
+        "win_rate_min": 0.01,
+        "avg_turns_max": 78
+      }
+    },
+    {
+      "id": "E-ground-recovery",
+      "name": "Ground Recovery",
+      "variable_focus": "Validate low-altitude pull-up before urban or combat decisions.",
+      "environment": {
+        "building_density": "none",
+        "building_count": 0,
+        "building_layout": "disabled",
+        "spawn_profile": "ground-recovery"
+      },
+      "pass_overrides": {
+        "crash_rate_max": 0,
+        "stall_events_per_episode_max": 0.2,
+        "avg_stall_recovery_turns_max": 1.5,
+        "min_altitude_min": 0,
+        "avg_low_altitude_turns_max": 8,
+        "avg_enemy_hp_left_max": null
+      }
+    }
+  ],
+  "manual_notes": [
+    "Advance only one stage at a time.",
+    "If a stage fails, tune only one variable group before rerunning (e.g., flare logic or stall recovery).",
+    "Do not tune weapon seeker values until stage A and B are stable."
+  ]
+}

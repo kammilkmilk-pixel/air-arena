@@ -1,0 +1,1292 @@
+{
+  "generatedAt": "2026-07-07T23:01:37.133Z",
+  "config": {
+    "seed": 20260707,
+    "runs": 1,
+    "episodesPerRun": 12,
+    "maxTurns": 35,
+    "stage": "E-ground-recovery",
+    "policyModes": [
+      "heuristic",
+      "hybrid"
+    ]
+  },
+  "tuning": {
+    "source": "js\\ai\\pilot-tuning.local.js",
+    "params": {
+      "energyCriticalAp": 57,
+      "lowAp": 66,
+      "stallPitchThreshold": 0.215241,
+      "minRecoverAlt": 25,
+      "stallRecoverBonus": 6.164014,
+      "climbPenalty": 6.591119,
+      "gunRange": 48,
+      "gunAngle": 27,
+      "missileMinRange": 29,
+      "missileMaxRange": 91,
+      "missileAngle": 21,
+      "interceptTurnGain": 0.270246,
+      "recoverPitchBias": -0.293639,
+      "hybridAggression": 0.421478
+    }
+  },
+  "passed": true,
+  "safetyPassed": true,
+  "stages": [
+    {
+      "id": "E-ground-recovery",
+      "name": "Ground Recovery",
+      "environment": {
+        "building_density": "none",
+        "building_count": 0,
+        "building_layout": "disabled",
+        "spawn_profile": "ground-recovery"
+      },
+      "gates": {
+        "crash_rate_max": 0,
+        "stall_events_per_episode_max": 0.2,
+        "avg_stall_recovery_turns_max": 1.5,
+        "avg_enemy_hp_left_max": null,
+        "notes": "All gates must pass before advancing to the next stage.",
+        "min_altitude_min": 0,
+        "avg_low_altitude_turns_max": 8
+      },
+      "policies": {
+        "heuristic": {
+          "metrics": {
+            "episodes": 12,
+            "winRate": 0,
+            "surviveRate": 1,
+            "crashRate": 0,
+            "stallEventsPerEpisode": 0,
+            "avgStallRecoveryTurns": 0,
+            "avgHitsGun": 0.25,
+            "avgHitsMissile": 0.5,
+            "avgHpLeft": 96.42,
+            "avgEnemyHpLeft": 82.25,
+            "avgTurns": 35,
+            "minAltitude": 4.1,
+            "avgLowAltitudeTurns": 6.25,
+            "buildingCollisionRate": 0
+          },
+          "passed": true,
+          "safetyPassed": true,
+          "failedGates": [],
+          "failedSafetyGates": [],
+          "worstEpisodes": [
+            {
+              "stageId": "E-ground-recovery",
+              "policyMode": "heuristic",
+              "runIndex": 0,
+              "episodeIndex": 3,
+              "win": false,
+              "survive": true,
+              "crash": false,
+              "crashReason": null,
+              "hpLeft": 88,
+              "enemyHpLeft": 100,
+              "turns": 35,
+              "stallEvents": 0,
+              "avgStallDuration": 0,
+              "gunHits": 0,
+              "missileHits": 0,
+              "minAltitude": 8.7,
+              "lowAltitudeTurns": 7,
+              "minObstacleDistance": -1,
+              "trace": [
+                {
+                  "turn": 1,
+                  "state": "emergencyPullUp",
+                  "ap": 120,
+                  "alt": 8.9,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 2,
+                  "state": "emergencyPullUp",
+                  "ap": 121.3,
+                  "alt": 8.7,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 3,
+                  "state": "emergencyPullUp",
+                  "ap": 122.7,
+                  "alt": 9.2,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 4,
+                  "state": "emergencyPullUp",
+                  "ap": 124,
+                  "alt": 10.5,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 5,
+                  "state": "groundAvoid",
+                  "ap": 125.3,
+                  "alt": 12.3,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 6,
+                  "state": "groundAvoid",
+                  "ap": 126.7,
+                  "alt": 14.9,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 7,
+                  "state": "groundAvoid",
+                  "ap": 125,
+                  "alt": 17.5,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 8,
+                  "state": "groundAvoid",
+                  "ap": 123.4,
+                  "alt": 20.1,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 9,
+                  "state": "groundAvoid",
+                  "ap": 123,
+                  "alt": 22.7,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 10,
+                  "state": "heuristicIntercept",
+                  "ap": 122.7,
+                  "alt": 25.3,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 11,
+                  "state": "heuristicIntercept",
+                  "ap": 122.3,
+                  "alt": 27.8,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 12,
+                  "state": "heuristicIntercept",
+                  "ap": 121.8,
+                  "alt": 30.4,
+                  "cover": -1,
+                  "risk": "low"
+                }
+              ]
+            },
+            {
+              "stageId": "E-ground-recovery",
+              "policyMode": "heuristic",
+              "runIndex": 0,
+              "episodeIndex": 4,
+              "win": false,
+              "survive": true,
+              "crash": false,
+              "crashReason": null,
+              "hpLeft": 91,
+              "enemyHpLeft": 52,
+              "turns": 35,
+              "stallEvents": 0,
+              "avgStallDuration": 0,
+              "gunHits": 1,
+              "missileHits": 1,
+              "minAltitude": 12.7,
+              "lowAltitudeTurns": 6,
+              "minObstacleDistance": -1,
+              "trace": [
+                {
+                  "turn": 1,
+                  "state": "groundAvoid",
+                  "ap": 101,
+                  "alt": 13.6,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 2,
+                  "state": "groundAvoid",
+                  "ap": 102.3,
+                  "alt": 12.8,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 3,
+                  "state": "groundAvoid",
+                  "ap": 103.7,
+                  "alt": 12.7,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 4,
+                  "state": "groundAvoid",
+                  "ap": 105,
+                  "alt": 13.3,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 5,
+                  "state": "groundAvoid",
+                  "ap": 106.3,
+                  "alt": 14.6,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 6,
+                  "state": "groundAvoid",
+                  "ap": 104.7,
+                  "alt": 16.5,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 7,
+                  "state": "groundAvoid",
+                  "ap": 103,
+                  "alt": 18.8,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 8,
+                  "state": "groundAvoid",
+                  "ap": 102.7,
+                  "alt": 21,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 9,
+                  "state": "groundAvoid",
+                  "ap": 102.3,
+                  "alt": 23.2,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 10,
+                  "state": "heuristicIntercept",
+                  "ap": 102,
+                  "alt": 25.4,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 11,
+                  "state": "heuristicIntercept",
+                  "ap": 101.9,
+                  "alt": 27.5,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 12,
+                  "state": "heuristicIntercept",
+                  "ap": 101.8,
+                  "alt": 29.7,
+                  "cover": -1,
+                  "risk": "low"
+                }
+              ]
+            },
+            {
+              "stageId": "E-ground-recovery",
+              "policyMode": "heuristic",
+              "runIndex": 0,
+              "episodeIndex": 5,
+              "win": false,
+              "survive": true,
+              "crash": false,
+              "crashReason": null,
+              "hpLeft": 91,
+              "enemyHpLeft": 36,
+              "turns": 35,
+              "stallEvents": 0,
+              "avgStallDuration": 0,
+              "gunHits": 1,
+              "missileHits": 2,
+              "minAltitude": 10.4,
+              "lowAltitudeTurns": 7,
+              "minObstacleDistance": -1,
+              "trace": [
+                {
+                  "turn": 1,
+                  "state": "emergencyPullUp",
+                  "ap": 98,
+                  "alt": 11,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 2,
+                  "state": "emergencyPullUp",
+                  "ap": 99.3,
+                  "alt": 10.4,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 3,
+                  "state": "emergencyPullUp",
+                  "ap": 100.7,
+                  "alt": 10.6,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 4,
+                  "state": "emergencyPullUp",
+                  "ap": 102,
+                  "alt": 11.5,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 5,
+                  "state": "groundAvoid",
+                  "ap": 103.3,
+                  "alt": 13.1,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 6,
+                  "state": "groundAvoid",
+                  "ap": 104.7,
+                  "alt": 15.3,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 7,
+                  "state": "groundAvoid",
+                  "ap": 106,
+                  "alt": 17.6,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 8,
+                  "state": "groundAvoid",
+                  "ap": 107.4,
+                  "alt": 19.9,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 9,
+                  "state": "groundAvoid",
+                  "ap": 107,
+                  "alt": 22.2,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 10,
+                  "state": "heuristicIntercept",
+                  "ap": 106.7,
+                  "alt": 24.4,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 11,
+                  "state": "heuristicIntercept",
+                  "ap": 106.5,
+                  "alt": 26.7,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 12,
+                  "state": "heuristicIntercept",
+                  "ap": 106.4,
+                  "alt": 29,
+                  "cover": -1,
+                  "risk": "low"
+                }
+              ]
+            },
+            {
+              "stageId": "E-ground-recovery",
+              "policyMode": "heuristic",
+              "runIndex": 0,
+              "episodeIndex": 0,
+              "win": false,
+              "survive": true,
+              "crash": false,
+              "crashReason": null,
+              "hpLeft": 92,
+              "enemyHpLeft": 58,
+              "turns": 35,
+              "stallEvents": 0,
+              "avgStallDuration": 0,
+              "gunHits": 1,
+              "missileHits": 1,
+              "minAltitude": 8.5,
+              "lowAltitudeTurns": 5,
+              "minObstacleDistance": -1,
+              "trace": [
+                {
+                  "turn": 1,
+                  "state": "emergencyPullUp",
+                  "ap": 126,
+                  "alt": 8.5,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 2,
+                  "state": "emergencyPullUp",
+                  "ap": 127.3,
+                  "alt": 9.3,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 3,
+                  "state": "emergencyPullUp",
+                  "ap": 128.7,
+                  "alt": 10.7,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 4,
+                  "state": "groundAvoid",
+                  "ap": 130,
+                  "alt": 12.8,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 5,
+                  "state": "groundAvoid",
+                  "ap": 131.3,
+                  "alt": 15.5,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 6,
+                  "state": "groundAvoid",
+                  "ap": 132.7,
+                  "alt": 18.2,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 7,
+                  "state": "groundAvoid",
+                  "ap": 135.3,
+                  "alt": 21,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 8,
+                  "state": "groundAvoid",
+                  "ap": 135,
+                  "alt": 23.8,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 9,
+                  "state": "heuristicIntercept",
+                  "ap": 134.6,
+                  "alt": 26.6,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 10,
+                  "state": "heuristicIntercept",
+                  "ap": 134.6,
+                  "alt": 29.4,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 11,
+                  "state": "heuristicIntercept",
+                  "ap": 134.5,
+                  "alt": 32.2,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 12,
+                  "state": "heuristicIntercept",
+                  "ap": 135.6,
+                  "alt": 35,
+                  "cover": -1,
+                  "risk": "low"
+                }
+              ]
+            },
+            {
+              "stageId": "E-ground-recovery",
+              "policyMode": "heuristic",
+              "runIndex": 0,
+              "episodeIndex": 11,
+              "win": false,
+              "survive": true,
+              "crash": false,
+              "crashReason": null,
+              "hpLeft": 95,
+              "enemyHpLeft": 100,
+              "turns": 35,
+              "stallEvents": 0,
+              "avgStallDuration": 0,
+              "gunHits": 0,
+              "missileHits": 0,
+              "minAltitude": 12.6,
+              "lowAltitudeTurns": 5,
+              "minObstacleDistance": -1,
+              "trace": [
+                {
+                  "turn": 1,
+                  "state": "groundAvoid",
+                  "ap": 102,
+                  "alt": 12.7,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 2,
+                  "state": "groundAvoid",
+                  "ap": 103.3,
+                  "alt": 12.6,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 3,
+                  "state": "groundAvoid",
+                  "ap": 104.7,
+                  "alt": 13.2,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 4,
+                  "state": "groundAvoid",
+                  "ap": 106,
+                  "alt": 14.5,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 5,
+                  "state": "groundAvoid",
+                  "ap": 107.3,
+                  "alt": 16.4,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 6,
+                  "state": "groundAvoid",
+                  "ap": 105.7,
+                  "alt": 18.7,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 7,
+                  "state": "groundAvoid",
+                  "ap": 105.3,
+                  "alt": 20.9,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 8,
+                  "state": "groundAvoid",
+                  "ap": 105,
+                  "alt": 23.2,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 9,
+                  "state": "heuristicIntercept",
+                  "ap": 104.6,
+                  "alt": 25.4,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 10,
+                  "state": "heuristicIntercept",
+                  "ap": 104.3,
+                  "alt": 27.7,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 11,
+                  "state": "heuristicIntercept",
+                  "ap": 104,
+                  "alt": 29.9,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 12,
+                  "state": "heuristicIntercept",
+                  "ap": 103.7,
+                  "alt": 32.1,
+                  "cover": -1,
+                  "risk": "low"
+                }
+              ]
+            }
+          ]
+        },
+        "hybrid": {
+          "metrics": {
+            "episodes": 12,
+            "winRate": 0,
+            "surviveRate": 1,
+            "crashRate": 0,
+            "stallEventsPerEpisode": 0,
+            "avgStallRecoveryTurns": 0,
+            "avgHitsGun": 0.25,
+            "avgHitsMissile": 0.083,
+            "avgHpLeft": 98,
+            "avgEnemyHpLeft": 94.75,
+            "avgTurns": 35,
+            "minAltitude": 4,
+            "avgLowAltitudeTurns": 5.75,
+            "buildingCollisionRate": 0
+          },
+          "passed": true,
+          "safetyPassed": true,
+          "failedGates": [],
+          "failedSafetyGates": [],
+          "worstEpisodes": [
+            {
+              "stageId": "E-ground-recovery",
+              "policyMode": "hybrid",
+              "runIndex": 0,
+              "episodeIndex": 4,
+              "win": false,
+              "survive": true,
+              "crash": false,
+              "crashReason": null,
+              "hpLeft": 89,
+              "enemyHpLeft": 78,
+              "turns": 35,
+              "stallEvents": 0,
+              "avgStallDuration": 0,
+              "gunHits": 0,
+              "missileHits": 1,
+              "minAltitude": 4,
+              "lowAltitudeTurns": 8,
+              "minObstacleDistance": -1,
+              "trace": [
+                {
+                  "turn": 1,
+                  "state": "emergencyPullUp",
+                  "ap": 102,
+                  "alt": 4,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 2,
+                  "state": "emergencyPullUp",
+                  "ap": 103.3,
+                  "alt": 4.3,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 3,
+                  "state": "emergencyPullUp",
+                  "ap": 104.7,
+                  "alt": 5.3,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 4,
+                  "state": "emergencyPullUp",
+                  "ap": 106,
+                  "alt": 7,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 5,
+                  "state": "emergencyPullUp",
+                  "ap": 107.3,
+                  "alt": 9.3,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 6,
+                  "state": "emergencyPullUp",
+                  "ap": 108.7,
+                  "alt": 11.6,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 7,
+                  "state": "groundAvoid",
+                  "ap": 107,
+                  "alt": 13.9,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 8,
+                  "state": "groundAvoid",
+                  "ap": 105.4,
+                  "alt": 16.2,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 9,
+                  "state": "groundAvoid",
+                  "ap": 103.7,
+                  "alt": 18.4,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 10,
+                  "state": "groundAvoid",
+                  "ap": 103.3,
+                  "alt": 20.6,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 11,
+                  "state": "groundAvoid",
+                  "ap": 103,
+                  "alt": 22.8,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 12,
+                  "state": "hybridIntercept",
+                  "ap": 102.7,
+                  "alt": 25,
+                  "cover": -1,
+                  "risk": "low"
+                }
+              ]
+            },
+            {
+              "stageId": "E-ground-recovery",
+              "policyMode": "hybrid",
+              "runIndex": 0,
+              "episodeIndex": 0,
+              "win": false,
+              "survive": true,
+              "crash": false,
+              "crashReason": null,
+              "hpLeft": 95,
+              "enemyHpLeft": 70,
+              "turns": 35,
+              "stallEvents": 0,
+              "avgStallDuration": 0,
+              "gunHits": 2,
+              "missileHits": 0,
+              "minAltitude": 6.7,
+              "lowAltitudeTurns": 8,
+              "minObstacleDistance": -1,
+              "trace": [
+                {
+                  "turn": 1,
+                  "state": "emergencyPullUp",
+                  "ap": 98,
+                  "alt": 7.2,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 2,
+                  "state": "emergencyPullUp",
+                  "ap": 99.3,
+                  "alt": 6.7,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 3,
+                  "state": "emergencyPullUp",
+                  "ap": 100.7,
+                  "alt": 6.9,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 4,
+                  "state": "emergencyPullUp",
+                  "ap": 102,
+                  "alt": 7.9,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 5,
+                  "state": "emergencyPullUp",
+                  "ap": 103.3,
+                  "alt": 9.5,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 6,
+                  "state": "emergencyPullUp",
+                  "ap": 104.7,
+                  "alt": 11.7,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 7,
+                  "state": "groundAvoid",
+                  "ap": 103,
+                  "alt": 13.9,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 8,
+                  "state": "groundAvoid",
+                  "ap": 101.4,
+                  "alt": 16.1,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 9,
+                  "state": "groundAvoid",
+                  "ap": 99.7,
+                  "alt": 18.3,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 10,
+                  "state": "groundAvoid",
+                  "ap": 99.3,
+                  "alt": 20.4,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 11,
+                  "state": "groundAvoid",
+                  "ap": 99,
+                  "alt": 22.5,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 12,
+                  "state": "hybridIntercept",
+                  "ap": 98.7,
+                  "alt": 24.7,
+                  "cover": -1,
+                  "risk": "low"
+                }
+              ]
+            },
+            {
+              "stageId": "E-ground-recovery",
+              "policyMode": "hybrid",
+              "runIndex": 0,
+              "episodeIndex": 3,
+              "win": false,
+              "survive": true,
+              "crash": false,
+              "crashReason": null,
+              "hpLeft": 96,
+              "enemyHpLeft": 89,
+              "turns": 35,
+              "stallEvents": 0,
+              "avgStallDuration": 0,
+              "gunHits": 1,
+              "missileHits": 0,
+              "minAltitude": 14.2,
+              "lowAltitudeTurns": 4,
+              "minObstacleDistance": -1,
+              "trace": [
+                {
+                  "turn": 1,
+                  "state": "groundAvoid",
+                  "ap": 126,
+                  "alt": 14.3,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 2,
+                  "state": "groundAvoid",
+                  "ap": 127.3,
+                  "alt": 14.2,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 3,
+                  "state": "groundAvoid",
+                  "ap": 128.7,
+                  "alt": 14.8,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 4,
+                  "state": "groundAvoid",
+                  "ap": 130,
+                  "alt": 16.1,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 5,
+                  "state": "groundAvoid",
+                  "ap": 131.3,
+                  "alt": 18.1,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 6,
+                  "state": "groundAvoid",
+                  "ap": 131,
+                  "alt": 20.6,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 7,
+                  "state": "groundAvoid",
+                  "ap": 130.7,
+                  "alt": 23.3,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 8,
+                  "state": "hybridIntercept",
+                  "ap": 130.3,
+                  "alt": 26,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 9,
+                  "state": "hybridIntercept",
+                  "ap": 130.2,
+                  "alt": 28.7,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 10,
+                  "state": "hybridIntercept",
+                  "ap": 130,
+                  "alt": 31.4,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 11,
+                  "state": "missileAttack",
+                  "ap": 131.1,
+                  "alt": 34.1,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 12,
+                  "state": "missileAttack",
+                  "ap": 132.2,
+                  "alt": 36.8,
+                  "cover": -1,
+                  "risk": "low"
+                }
+              ]
+            },
+            {
+              "stageId": "E-ground-recovery",
+              "policyMode": "hybrid",
+              "runIndex": 0,
+              "episodeIndex": 8,
+              "win": false,
+              "survive": true,
+              "crash": false,
+              "crashReason": null,
+              "hpLeft": 96,
+              "enemyHpLeft": 100,
+              "turns": 35,
+              "stallEvents": 0,
+              "avgStallDuration": 0,
+              "gunHits": 0,
+              "missileHits": 0,
+              "minAltitude": 16.8,
+              "lowAltitudeTurns": 2,
+              "minObstacleDistance": -1,
+              "trace": [
+                {
+                  "turn": 1,
+                  "state": "groundAvoid",
+                  "ap": 118,
+                  "alt": 16.8,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 2,
+                  "state": "groundAvoid",
+                  "ap": 119.3,
+                  "alt": 17.2,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 3,
+                  "state": "groundAvoid",
+                  "ap": 120.7,
+                  "alt": 18.2,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 4,
+                  "state": "groundAvoid",
+                  "ap": 123.3,
+                  "alt": 19.8,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 5,
+                  "state": "groundAvoid",
+                  "ap": 126,
+                  "alt": 22,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 6,
+                  "state": "hybridIntercept",
+                  "ap": 128.6,
+                  "alt": 24.7,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 7,
+                  "state": "hybridIntercept",
+                  "ap": 128.1,
+                  "alt": 27.3,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 8,
+                  "state": "hybridIntercept",
+                  "ap": 127.5,
+                  "alt": 30,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 9,
+                  "state": "hybridIntercept",
+                  "ap": 126.8,
+                  "alt": 32.6,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 10,
+                  "state": "hybridIntercept",
+                  "ap": 127.4,
+                  "alt": 35.3,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 11,
+                  "state": "hybridIntercept",
+                  "ap": 131,
+                  "alt": 38,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 12,
+                  "state": "hybridIntercept",
+                  "ap": 131.5,
+                  "alt": 40.6,
+                  "cover": -1,
+                  "risk": "low"
+                }
+              ]
+            },
+            {
+              "stageId": "E-ground-recovery",
+              "policyMode": "hybrid",
+              "runIndex": 0,
+              "episodeIndex": 1,
+              "win": false,
+              "survive": true,
+              "crash": false,
+              "crashReason": null,
+              "hpLeft": 100,
+              "enemyHpLeft": 100,
+              "turns": 35,
+              "stallEvents": 0,
+              "avgStallDuration": 0,
+              "gunHits": 0,
+              "missileHits": 0,
+              "minAltitude": 17.5,
+              "lowAltitudeTurns": 2,
+              "minObstacleDistance": -1,
+              "trace": [
+                {
+                  "turn": 1,
+                  "state": "groundAvoid",
+                  "ap": 98,
+                  "alt": 17.6,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 2,
+                  "state": "groundAvoid",
+                  "ap": 99.3,
+                  "alt": 17.5,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 3,
+                  "state": "groundAvoid",
+                  "ap": 100.7,
+                  "alt": 18.1,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 4,
+                  "state": "groundAvoid",
+                  "ap": 103.3,
+                  "alt": 19.3,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 5,
+                  "state": "groundAvoid",
+                  "ap": 106,
+                  "alt": 21.1,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 6,
+                  "state": "groundAvoid",
+                  "ap": 105.6,
+                  "alt": 23.3,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 7,
+                  "state": "hybridIntercept",
+                  "ap": 105.3,
+                  "alt": 25.6,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 8,
+                  "state": "hybridIntercept",
+                  "ap": 104.7,
+                  "alt": 27.8,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 9,
+                  "state": "hybridIntercept",
+                  "ap": 104.2,
+                  "alt": 30.1,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 10,
+                  "state": "hybridIntercept",
+                  "ap": 104.8,
+                  "alt": 32.3,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 11,
+                  "state": "hybridIntercept",
+                  "ap": 105.3,
+                  "alt": 34.5,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 12,
+                  "state": "hybridIntercept",
+                  "ap": 105.9,
+                  "alt": 36.8,
+                  "cover": -1,
+                  "risk": "low"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "passed": true,
+      "safetyPassed": true
+    }
+  ],
+  "notes": [
+    "Fast deterministic regression surrogate; use for before/after AI checks.",
+    "A pass here should be followed by in-game validation for full Three.js collision behavior."
+  ]
+}

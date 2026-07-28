@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="icon" href="data:," />
+  <title>AI Tuning Dashboard</title>
+  <style>
+    body { font-family: Consolas, monospace; margin: 20px; background: #0f141b; color: #d8e0ea; }
+    h1, h2 { margin: 0 0 12px; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .card { background: #121a24; border: 1px solid #344253; border-radius: 8px; padding: 12px; }
+    .kv { display: grid; grid-template-columns: 180px 1fr; gap: 8px; align-items: center; margin: 6px 0; }
+    input[type="number"], select { width: 100%; background: #0d131d; color: #d8e0ea; border: 1px solid #41546a; border-radius: 4px; padding: 4px 6px; }
+    button { background: #1e2b3c; color: #e3efff; border: 1px solid #476385; border-radius: 4px; padding: 6px 10px; cursor: pointer; margin-right: 8px; }
+    pre { white-space: pre-wrap; background: #0b111a; border: 1px solid #2f3e50; border-radius: 6px; padding: 10px; max-height: 280px; overflow: auto; }
+    .small { color: #98acc2; font-size: 12px; }
+    .ok { color: #7df0a8; }
+    .warn { color: #ffd58a; }
+    .full { grid-column: 1 / -1; }
+    .hl-red { color: #ff7b85; font-weight: 700; }
+    .hl-blue { color: #6ab6ff; font-weight: 700; }
+    .compare { margin: 8px 0 12px; }
+    .compare-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+    .compare-card { background: #0b111a; border: 1px solid #2f3e50; border-radius: 6px; padding: 8px; }
+    .compare-title { margin-bottom: 6px; font-weight: 700; color: #ff7b85; }
+    .compare-row { display: flex; justify-content: space-between; gap: 8px; margin: 2px 0; }
+    .compare-key { color: #98acc2; }
+    .compare-val { color: #6ab6ff; font-weight: 700; }
+    .compare-note { color: #98acc2; font-size: 12px; margin-top: 4px; }
+  </style>
+</head>
+<body>
+  <h1>AI Tuning Dashboard</h1>
+  <div class="small">本地調參、pipeline 執行與報告檢視</div>
+
+  <div class="row" style="margin-top: 12px;">
+    <div class="card">
+      <h2>目前 Tuning</h2>
+      <div id="tuningMeta" class="small"></div>
+      <div id="tuningForm"></div>
+      <div style="margin-top: 10px;">
+        <button id="btnReloadTuning">重載</button>
+        <button id="btnSaveTuning">儲存到 pilot-tuning.local.js</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Pipeline</h2>
+      <div class="small">autotune -> merge -> apply</div>
+      <div class="kv" style="margin-top: 10px;">
+        <label for="scenarioSelect">壓力模式</label>
+        <select id="scenarioSelect">
+          <option value="normal">normal（正常）</option>
+          <option value="low-altitude">low-altitude（低空）</option>
+          <option value="low-energy">low-energy（低能量/失速邊緣）</option>
+          <option value="high-threat">high-threat（高壓近距離）</option>
+          <option value="mixed-stress">mixed-stress（混合壓力）</option>
+        </select>
+      </div>
+      <div class="kv">
+        <label for="objectiveSelect">調參目標</label>
+        <select id="objectiveSelect">
+          <option value="safety-first">Safety First（失事/失速優先壓低）</option>
+          <option value="balanced" selected>Balanced（平衡）</option>
+          <option value="aggressive">Aggressive（勝率/命中優先）</option>
+        </select>
+      </div>
+      <div style="margin-top: 10px;">
+        <button id="btnRunPipeline">執行 pipeline</button>
+        <button id="btnRefreshReports">刷新報告</button>
+      </div>
+      <div id="jobStatus" class="small" style="margin-top:8px;">尚未執行</div>
+      <pre id="jobLogs"></pre>
+    </div>
+
+    <div class="card full">
+      <h2>Curriculum</h2>
+      <pre id="curriculumView"></pre>
+    </div>
+
+    <div class="card full">
+      <h2>Latest Reports</h2>
+      <div id="reportMeta" class="small"></div>
+      <div id="reportCompare" class="compare"></div>
+      <pre id="reportView"></pre>
+    </div>
+  </div>
+
+  <script>
+    const TUNING_KEYS = [
+      'energyCriticalAp','lowAp','stallPitchThreshold','minRecoverAlt','stallRecoverBonus','climbPenalty',
+      'gunRange','gunAngle','missileMinRange','missileMaxRange','missileAngle','interceptTurnGain',
+      'recoverPitchBias','hybridAggression'
+    ];
+    let currentJobId = null;
+    let pollingTimer = null;
+    const btnRunPipeline = document.getElementById('btnRunPipeline');
+    const scenarioSelect = document.getElementById('scenarioSelect');
+    const objectiveSelect = document.getElementById('objectiveSelect');
+
+    function fmt(v) {
+      return (typeof v === 'number' && Number.isFinite(v)) ? v : '';
+    }
+
+    async function api(path, options) {
+      const res = await fetch(path, options);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      return data;
+    }
+
+    function buildForm(params) {
+      const root = document.getElementById('tuningForm');
+      root.innerHTML = '';
+      TUNING_KEYS.forEach((k) => {
+        const wrap = document.createElement('div');
+        wrap.className = 'kv';
+        const label = document.createElement('label');
+        label.textContent = k;
+        const input = document.createElement('input');
+        input.type = 'number';
+        input.step = '0.000001';
+        input.id = `inp-${k}`;
+        input.value = fmt(params[k]);
+        wrap.appendChild(label);
+        wrap.appendChild(input);
+        root.appendChild(wrap);
+      });
+    }
+
+    async function loadTuning() {
+      const data = await api('/api/tuning');
+      buildForm(data.params || {});
+      const meta = data.meta || {};
+      document.getElementById('tuningMeta').textContent =
+        `source=${meta.source || '-'}  generated=${meta.generatedAt || '-'}`;
+    }
+
+    async function saveTuning() {
+      const params = {};
+      TUNING_KEYS.forEach((k) => {
+        const raw = document.getElementById(`inp-${k}`).value;
+        const num = Number(raw);
+        if (Number.isFinite(num)) params[k] = num;
+      });
+      await api('/api/tuning', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ params })
+      });
+      await loadTuning();
+      alert('已寫入 pilot-tuning.local.js');
+    }
+
+    async function loadCurriculum() {
+      const data = await api('/api/curriculum');
+      document.getElementById('curriculumView').textContent =
+        JSON.stringify(data.curriculum || {}, null, 2);
+    }
+
+    async function loadReports() {
+      const scenario = scenarioSelect.value;
+      const objective = objectiveSelect.value;
+      const data = await api(`/api/reports/latest?scenario=${encodeURIComponent(scenario)}&objective=${encodeURIComponent(objective)}`);
+      const m = `scenario=${data.scenario || scenario} | objective=${data.objective || objective} | autotune=${data.latestAutotunePath || '-'} | merged=${data.latestMergedPath || '-'}`;
+      document.getElementById('reportMeta').textContent = m;
+      const reportPayload = {
+        mergedBest: data.latestMerged && data.latestMerged.selectedStableTop ? data.latestMerged.selectedStableTop[0] : null,
+        mergedConsensus: data.latestMerged ? data.latestMerged.consensusParams : null,
+        autotuneBest: data.latestAutotune ? data.latestAutotune.best : null
+      };
+      document.getElementById('reportCompare').innerHTML = buildReportCompare(data, reportPayload);
+      document.getElementById('reportView').innerHTML = renderReportHighlight(reportPayload);
+    }
+
+    function escapeHtml(text) {
+      return String(text)
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;');
+    }
+
+    function renderReportHighlight(payload) {
+      let content = escapeHtml(JSON.stringify(payload, null, 2));
+      const redKeys = ['mergedBest', 'mergedConsensus', 'autotuneBest'];
+      const blueKeys = ['hybrid.score', 'delta.score', 'crashRate', 'avgStallEvents', 'avgStallDuration', 'winRate', 'avgHpLeft', 'stressScore', 'stressCrashRate', 'stressWinRate'];
+
+      redKeys.forEach((k) => {
+        const pattern = new RegExp(`"${k}"`, 'g');
+        content = content.replace(pattern, `<span class="hl-red">"${k}"</span>`);
+      });
+      blueKeys.forEach((k) => {
+        const key = k.split('.').pop();
+        const pattern = new RegExp(`"${key}"`, 'g');
+        content = content.replace(pattern, `<span class="hl-blue">"${key}"</span>`);
+      });
+      return content;
+    }
+
+    function fmtMetric(v, digits = 3) {
+      return (typeof v === 'number' && Number.isFinite(v)) ? v.toFixed(digits) : '-';
+    }
+
+    function metricRow(label, value, digits = 3) {
+      return `<div class="compare-row"><span class="compare-key">${label}</span><span class="compare-val">${fmtMetric(value, digits)}</span></div>`;
+    }
+
+    function buildReportCompare(data, payload) {
+      const mergedBest = payload.mergedBest || {};
+      const autotuneBest = payload.autotuneBest || {};
+      const hybrid = autotuneBest.hybrid || {};
+      const delta = autotuneBest.delta || {};
+      const stress = autotuneBest.stress || {};
+      const objective = (data && data.objective) || objectiveSelect.value;
+
+      const mergedBestHtml = `
+        <div class="compare-card">
+          <div class="compare-title">mergedBest</div>
+          ${metricRow('hybrid.score', mergedBest.avgHybridScore)}
+          ${metricRow('delta.score', mergedBest.avgDeltaScore)}
+          ${metricRow('stressScore', mergedBest.avgStressScore)}
+          ${metricRow('stressCrashRate', mergedBest.avgStressCrashRate, 4)}
+          ${metricRow('crashRate', mergedBest.hybrid && mergedBest.hybrid.crashRate, 4)}
+          ${metricRow('avgStallEvents', mergedBest.hybrid && mergedBest.hybrid.avgStallEvents, 3)}
+          ${metricRow('avgStallDuration', mergedBest.hybrid && mergedBest.hybrid.avgStallDuration, 3)}
+          ${metricRow('winRate', mergedBest.hybrid && mergedBest.hybrid.winRate, 4)}
+          ${metricRow('avgHpLeft', mergedBest.hybrid && mergedBest.hybrid.avgHpLeft, 2)}
+          <div class="compare-note">objective=${objective} | appearances=${mergedBest.appearances || '-'}</div>
+        </div>
+      `;
+
+      const mergedConsensusHtml = `
+        <div class="compare-card">
+          <div class="compare-title">mergedConsensus</div>
+          ${metricRow('hybrid.score', null)}
+          ${metricRow('delta.score', null)}
+          ${metricRow('stressScore', null)}
+          ${metricRow('stressCrashRate', null)}
+          ${metricRow('crashRate', null)}
+          ${metricRow('avgStallEvents', null)}
+          ${metricRow('avgStallDuration', null)}
+          ${metricRow('winRate', null)}
+          ${metricRow('avgHpLeft', null)}
+          <div class="compare-note">objective=${objective} | consensus params only</div>
+        </div>
+      `;
+
+      const autotuneBestHtml = `
+        <div class="compare-card">
+          <div class="compare-title">autotuneBest</div>
+          ${metricRow('hybrid.score', hybrid.score)}
+          ${metricRow('delta.score', delta.score)}
+          ${metricRow('stressScore', stress.stressScore)}
+          ${metricRow('stressCrashRate', stress.stressCrashRate, 4)}
+          ${metricRow('crashRate', hybrid.crashRate, 4)}
+          ${metricRow('avgStallEvents', hybrid.avgStallEvents, 3)}
+          ${metricRow('avgStallDuration', hybrid.avgStallDuration, 3)}
+          ${metricRow('winRate', hybrid.winRate, 4)}
+          ${metricRow('avgHpLeft', hybrid.avgHpLeft, 2)}
+          <div class="compare-note">objective=${objective} | from latest autotune report</div>
+        </div>
+      `;
+
+      return `<div class="compare-grid">${mergedBestHtml}${mergedConsensusHtml}${autotuneBestHtml}</div>`;
+    }
+
+    async function pollJob() {
+      if (!currentJobId) return;
+      try {
+        const job = await api(`/api/jobs/${currentJobId}`);
+        const statusEl = document.getElementById('jobStatus');
+        statusEl.textContent = `job=${job.id} status=${job.status} started=${job.startedAt} exit=${job.exitCode}`;
+        statusEl.className = `small ${job.status === 'succeeded' ? 'ok' : (job.status === 'failed' ? 'warn' : '')}`;
+        document.getElementById('jobLogs').textContent = job.logs || '';
+        if (job.status !== 'running') {
+          clearInterval(pollingTimer);
+          pollingTimer = null;
+          btnRunPipeline.disabled = false;
+          await loadReports();
+          await loadTuning();
+        }
+      } catch (err) {
+        document.getElementById('jobStatus').textContent = `poll error: ${err.message}`;
+        btnRunPipeline.disabled = false;
+      }
+    }
+
+    async function runPipeline() {
+      btnRunPipeline.disabled = true;
+      const res = await fetch('/api/jobs/pipeline', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scenario: scenarioSelect.value, objective: objectiveSelect.value })
+      });
+      const started = await res.json();
+      if (res.status === 202) {
+        currentJobId = started.jobId;
+      } else if (res.status === 409 && started.jobId) {
+        currentJobId = started.jobId;
+        document.getElementById('jobStatus').textContent = `已有工作執行中，接管追蹤：${currentJobId}`;
+      } else {
+        btnRunPipeline.disabled = false;
+        throw new Error(started.error || `HTTP ${res.status}`);
+      }
+      if (pollingTimer) clearInterval(pollingTimer);
+      pollingTimer = setInterval(pollJob, 1200);
+      await pollJob();
+    }
+
+    async function resumeActiveJobIfAny() {
+      const data = await api('/api/jobs/active');
+      if (!data || !data.activeJobId) return;
+      currentJobId = data.activeJobId;
+      btnRunPipeline.disabled = true;
+      if (pollingTimer) clearInterval(pollingTimer);
+      pollingTimer = setInterval(pollJob, 1200);
+      await pollJob();
+    }
+
+    document.getElementById('btnReloadTuning').addEventListener('click', loadTuning);
+    document.getElementById('btnSaveTuning').addEventListener('click', saveTuning);
+    btnRunPipeline.addEventListener('click', runPipeline);
+    document.getElementById('btnRefreshReports').addEventListener('click', loadReports);
+    scenarioSelect.addEventListener('change', loadReports);
+    objectiveSelect.addEventListener('change', loadReports);
+
+    (async () => {
+      await loadTuning();
+      await loadCurriculum();
+      await loadReports();
+      await resumeActiveJobIfAny();
+    })();
+  </script>
+</body>
+</html>

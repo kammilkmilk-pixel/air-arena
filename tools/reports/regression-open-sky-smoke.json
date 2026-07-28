@@ -1,0 +1,1267 @@
+{
+  "generatedAt": "2026-07-07T15:00:32.945Z",
+  "config": {
+    "seed": 20260707,
+    "runs": 1,
+    "episodesPerRun": 8,
+    "maxTurns": 80,
+    "stage": "A-open-sky",
+    "policyModes": [
+      "heuristic",
+      "hybrid"
+    ]
+  },
+  "tuning": {
+    "source": "js\\ai\\pilot-tuning.local.js",
+    "params": {
+      "energyCriticalAp": 57,
+      "lowAp": 66,
+      "stallPitchThreshold": 0.215241,
+      "minRecoverAlt": 25,
+      "stallRecoverBonus": 6.164014,
+      "climbPenalty": 6.591119,
+      "gunRange": 48,
+      "gunAngle": 27,
+      "missileMinRange": 29,
+      "missileMaxRange": 91,
+      "missileAngle": 21,
+      "interceptTurnGain": 0.270246,
+      "recoverPitchBias": -0.293639,
+      "hybridAggression": 0.421478
+    }
+  },
+  "passed": false,
+  "stages": [
+    {
+      "id": "A-open-sky",
+      "name": "Open Sky Baseline",
+      "environment": {
+        "building_density": "none",
+        "building_count": 0,
+        "building_layout": "disabled",
+        "spawn_profile": "default"
+      },
+      "gates": {
+        "crash_rate_max": 0.04,
+        "stall_events_per_episode_max": 0.4,
+        "avg_stall_recovery_turns_max": 2,
+        "avg_enemy_hp_left_max": 62,
+        "notes": "All gates must pass before advancing to the next stage."
+      },
+      "policies": {
+        "heuristic": {
+          "metrics": {
+            "episodes": 8,
+            "winRate": 0,
+            "surviveRate": 1,
+            "crashRate": 0,
+            "stallEventsPerEpisode": 0,
+            "avgStallRecoveryTurns": 0,
+            "avgHitsGun": 0.5,
+            "avgHitsMissile": 1.25,
+            "avgHpLeft": 93,
+            "avgEnemyHpLeft": 59.75,
+            "avgTurns": 80,
+            "buildingCollisionRate": 0
+          },
+          "passed": true,
+          "failedGates": [],
+          "worstEpisodes": [
+            {
+              "stageId": "A-open-sky",
+              "policyMode": "heuristic",
+              "runIndex": 0,
+              "episodeIndex": 3,
+              "win": false,
+              "survive": true,
+              "crash": false,
+              "crashReason": null,
+              "hpLeft": 81,
+              "enemyHpLeft": 88,
+              "turns": 80,
+              "stallEvents": 0,
+              "avgStallDuration": 0,
+              "gunHits": 1,
+              "missileHits": 0,
+              "minObstacleDistance": -1,
+              "trace": [
+                {
+                  "turn": 1,
+                  "state": "heuristicIntercept",
+                  "ap": 116,
+                  "alt": 44.5,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 2,
+                  "state": "heuristicIntercept",
+                  "ap": 120.4,
+                  "alt": 45,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 3,
+                  "state": "heuristicIntercept",
+                  "ap": 124.7,
+                  "alt": 45.6,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 4,
+                  "state": "heuristicIntercept",
+                  "ap": 129.1,
+                  "alt": 46.3,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 5,
+                  "state": "heuristicIntercept",
+                  "ap": 133.5,
+                  "alt": 47.1,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 6,
+                  "state": "heuristicIntercept",
+                  "ap": 137.8,
+                  "alt": 47.9,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 7,
+                  "state": "heuristicIntercept",
+                  "ap": 142.2,
+                  "alt": 48.8,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 8,
+                  "state": "heuristicIntercept",
+                  "ap": 145,
+                  "alt": 49.8,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 9,
+                  "state": "heuristicIntercept",
+                  "ap": 145,
+                  "alt": 50.8,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 10,
+                  "state": "heuristicIntercept",
+                  "ap": 145,
+                  "alt": 51.7,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 11,
+                  "state": "heuristicIntercept",
+                  "ap": 145,
+                  "alt": 52.7,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 12,
+                  "state": "heuristicIntercept",
+                  "ap": 145,
+                  "alt": 53.7,
+                  "cover": -1,
+                  "risk": "low"
+                }
+              ]
+            },
+            {
+              "stageId": "A-open-sky",
+              "policyMode": "heuristic",
+              "runIndex": 0,
+              "episodeIndex": 0,
+              "win": false,
+              "survive": true,
+              "crash": false,
+              "crashReason": null,
+              "hpLeft": 84,
+              "enemyHpLeft": 100,
+              "turns": 80,
+              "stallEvents": 0,
+              "avgStallDuration": 0,
+              "gunHits": 0,
+              "missileHits": 0,
+              "minObstacleDistance": -1,
+              "trace": [
+                {
+                  "turn": 1,
+                  "state": "heuristicIntercept",
+                  "ap": 121,
+                  "alt": 43.7,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 2,
+                  "state": "heuristicIntercept",
+                  "ap": 125.1,
+                  "alt": 44.9,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 3,
+                  "state": "heuristicIntercept",
+                  "ap": 129.3,
+                  "alt": 46.1,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 4,
+                  "state": "heuristicIntercept",
+                  "ap": 133.4,
+                  "alt": 47.4,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 5,
+                  "state": "heuristicIntercept",
+                  "ap": 137.5,
+                  "alt": 48.8,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 6,
+                  "state": "heuristicIntercept",
+                  "ap": 141.7,
+                  "alt": 50.2,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 7,
+                  "state": "heuristicIntercept",
+                  "ap": 145,
+                  "alt": 51.8,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 8,
+                  "state": "heuristicIntercept",
+                  "ap": 145,
+                  "alt": 53.3,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 9,
+                  "state": "heuristicIntercept",
+                  "ap": 145,
+                  "alt": 54.8,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 10,
+                  "state": "heuristicIntercept",
+                  "ap": 145,
+                  "alt": 56.3,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 11,
+                  "state": "heuristicIntercept",
+                  "ap": 145,
+                  "alt": 57.8,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 12,
+                  "state": "heuristicIntercept",
+                  "ap": 145,
+                  "alt": 59.3,
+                  "cover": -1,
+                  "risk": "low"
+                }
+              ]
+            },
+            {
+              "stageId": "A-open-sky",
+              "policyMode": "heuristic",
+              "runIndex": 0,
+              "episodeIndex": 6,
+              "win": false,
+              "survive": true,
+              "crash": false,
+              "crashReason": null,
+              "hpLeft": 84,
+              "enemyHpLeft": 62,
+              "turns": 80,
+              "stallEvents": 0,
+              "avgStallDuration": 0,
+              "gunHits": 1,
+              "missileHits": 1,
+              "minObstacleDistance": -1,
+              "trace": [
+                {
+                  "turn": 1,
+                  "state": "heuristicIntercept",
+                  "ap": 97,
+                  "alt": 46.9,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 2,
+                  "state": "heuristicIntercept",
+                  "ap": 101.4,
+                  "alt": 47.3,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 3,
+                  "state": "heuristicIntercept",
+                  "ap": 105.7,
+                  "alt": 47.9,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 4,
+                  "state": "heuristicIntercept",
+                  "ap": 110.1,
+                  "alt": 48.5,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 5,
+                  "state": "heuristicIntercept",
+                  "ap": 114.4,
+                  "alt": 49.2,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 6,
+                  "state": "heuristicIntercept",
+                  "ap": 118.8,
+                  "alt": 49.9,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 7,
+                  "state": "heuristicIntercept",
+                  "ap": 123.1,
+                  "alt": 50.8,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 8,
+                  "state": "heuristicIntercept",
+                  "ap": 127.5,
+                  "alt": 51.7,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 9,
+                  "state": "heuristicIntercept",
+                  "ap": 131.8,
+                  "alt": 52.7,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 10,
+                  "state": "heuristicIntercept",
+                  "ap": 136.2,
+                  "alt": 53.8,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 11,
+                  "state": "heuristicIntercept",
+                  "ap": 140.5,
+                  "alt": 55,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 12,
+                  "state": "heuristicIntercept",
+                  "ap": 144.9,
+                  "alt": 56.2,
+                  "cover": -1,
+                  "risk": "low"
+                }
+              ]
+            },
+            {
+              "stageId": "A-open-sky",
+              "policyMode": "heuristic",
+              "runIndex": 0,
+              "episodeIndex": 1,
+              "win": false,
+              "survive": true,
+              "crash": false,
+              "crashReason": null,
+              "hpLeft": 95,
+              "enemyHpLeft": 37,
+              "turns": 80,
+              "stallEvents": 0,
+              "avgStallDuration": 0,
+              "gunHits": 1,
+              "missileHits": 2,
+              "minObstacleDistance": -1,
+              "trace": [
+                {
+                  "turn": 1,
+                  "state": "heuristicIntercept",
+                  "ap": 119,
+                  "alt": 56.6,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 2,
+                  "state": "heuristicIntercept",
+                  "ap": 123.4,
+                  "alt": 57.8,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 3,
+                  "state": "heuristicIntercept",
+                  "ap": 127.8,
+                  "alt": 59,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 4,
+                  "state": "heuristicIntercept",
+                  "ap": 132.2,
+                  "alt": 60.3,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 5,
+                  "state": "heuristicIntercept",
+                  "ap": 136.6,
+                  "alt": 61.7,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 6,
+                  "state": "heuristicIntercept",
+                  "ap": 140.9,
+                  "alt": 63.2,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 7,
+                  "state": "heuristicIntercept",
+                  "ap": 145,
+                  "alt": 64.8,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 8,
+                  "state": "heuristicIntercept",
+                  "ap": 145,
+                  "alt": 66.3,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 9,
+                  "state": "heuristicIntercept",
+                  "ap": 145,
+                  "alt": 67.9,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 10,
+                  "state": "heuristicIntercept",
+                  "ap": 145,
+                  "alt": 69.4,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 11,
+                  "state": "missileAttack",
+                  "ap": 145,
+                  "alt": 71,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 12,
+                  "state": "missileAttack",
+                  "ap": 145,
+                  "alt": 72.5,
+                  "cover": -1,
+                  "risk": "low"
+                }
+              ]
+            },
+            {
+              "stageId": "A-open-sky",
+              "policyMode": "heuristic",
+              "runIndex": 0,
+              "episodeIndex": 2,
+              "win": false,
+              "survive": true,
+              "crash": false,
+              "crashReason": null,
+              "hpLeft": 100,
+              "enemyHpLeft": 74,
+              "turns": 80,
+              "stallEvents": 0,
+              "avgStallDuration": 0,
+              "gunHits": 0,
+              "missileHits": 1,
+              "minObstacleDistance": -1,
+              "trace": [
+                {
+                  "turn": 1,
+                  "state": "heuristicIntercept",
+                  "ap": 93,
+                  "alt": 53.3,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 2,
+                  "state": "heuristicIntercept",
+                  "ap": 97.3,
+                  "alt": 53.7,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 3,
+                  "state": "heuristicIntercept",
+                  "ap": 101.6,
+                  "alt": 54.3,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 4,
+                  "state": "heuristicIntercept",
+                  "ap": 105.9,
+                  "alt": 54.9,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 5,
+                  "state": "heuristicIntercept",
+                  "ap": 110.2,
+                  "alt": 55.6,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 6,
+                  "state": "heuristicIntercept",
+                  "ap": 114.5,
+                  "alt": 56.4,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 7,
+                  "state": "heuristicIntercept",
+                  "ap": 118.8,
+                  "alt": 57.2,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 8,
+                  "state": "heuristicIntercept",
+                  "ap": 123,
+                  "alt": 58.1,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 9,
+                  "state": "heuristicIntercept",
+                  "ap": 127.3,
+                  "alt": 59.1,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 10,
+                  "state": "heuristicIntercept",
+                  "ap": 131.6,
+                  "alt": 60.2,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 11,
+                  "state": "heuristicIntercept",
+                  "ap": 135.8,
+                  "alt": 61.4,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 12,
+                  "state": "heuristicIntercept",
+                  "ap": 140.1,
+                  "alt": 62.6,
+                  "cover": -1,
+                  "risk": "low"
+                }
+              ]
+            }
+          ]
+        },
+        "hybrid": {
+          "metrics": {
+            "episodes": 8,
+            "winRate": 0,
+            "surviveRate": 1,
+            "crashRate": 0,
+            "stallEventsPerEpisode": 0,
+            "avgStallRecoveryTurns": 0,
+            "avgHitsGun": 0.125,
+            "avgHitsMissile": 0.875,
+            "avgHpLeft": 89.5,
+            "avgEnemyHpLeft": 74.5,
+            "avgTurns": 80,
+            "buildingCollisionRate": 0
+          },
+          "passed": false,
+          "failedGates": [
+            {
+              "gate": "avg_enemy_hp_left_max",
+              "metric": "avgEnemyHpLeft",
+              "actual": 74.5,
+              "limit": 62
+            }
+          ],
+          "worstEpisodes": [
+            {
+              "stageId": "A-open-sky",
+              "policyMode": "hybrid",
+              "runIndex": 0,
+              "episodeIndex": 4,
+              "win": false,
+              "survive": true,
+              "crash": false,
+              "crashReason": null,
+              "hpLeft": 62,
+              "enemyHpLeft": 57,
+              "turns": 80,
+              "stallEvents": 0,
+              "avgStallDuration": 0,
+              "gunHits": 0,
+              "missileHits": 2,
+              "minObstacleDistance": -1,
+              "trace": [
+                {
+                  "turn": 1,
+                  "state": "hybridIntercept",
+                  "ap": 102,
+                  "alt": 34.9,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 2,
+                  "state": "hybridIntercept",
+                  "ap": 106.3,
+                  "alt": 35.8,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 3,
+                  "state": "hybridIntercept",
+                  "ap": 110.7,
+                  "alt": 36.6,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 4,
+                  "state": "hybridIntercept",
+                  "ap": 115,
+                  "alt": 37.6,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 5,
+                  "state": "hybridIntercept",
+                  "ap": 119.3,
+                  "alt": 38.6,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 6,
+                  "state": "hybridIntercept",
+                  "ap": 123.6,
+                  "alt": 39.7,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 7,
+                  "state": "hybridIntercept",
+                  "ap": 127.9,
+                  "alt": 40.8,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 8,
+                  "state": "hybridIntercept",
+                  "ap": 132.3,
+                  "alt": 42,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 9,
+                  "state": "hybridIntercept",
+                  "ap": 136.6,
+                  "alt": 43.3,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 10,
+                  "state": "hybridIntercept",
+                  "ap": 140.9,
+                  "alt": 44.6,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 11,
+                  "state": "hybridIntercept",
+                  "ap": 145,
+                  "alt": 46,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 12,
+                  "state": "missileAttack",
+                  "ap": 145,
+                  "alt": 47.4,
+                  "cover": -1,
+                  "risk": "low"
+                }
+              ]
+            },
+            {
+              "stageId": "A-open-sky",
+              "policyMode": "hybrid",
+              "runIndex": 0,
+              "episodeIndex": 2,
+              "win": false,
+              "survive": true,
+              "crash": false,
+              "crashReason": null,
+              "hpLeft": 70,
+              "enemyHpLeft": 55,
+              "turns": 80,
+              "stallEvents": 0,
+              "avgStallDuration": 0,
+              "gunHits": 1,
+              "missileHits": 1,
+              "minObstacleDistance": -1,
+              "trace": [
+                {
+                  "turn": 1,
+                  "state": "hybridIntercept",
+                  "ap": 113,
+                  "alt": 36.2,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 2,
+                  "state": "hybridIntercept",
+                  "ap": 117.3,
+                  "alt": 36.9,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 3,
+                  "state": "hybridIntercept",
+                  "ap": 121.6,
+                  "alt": 37.6,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 4,
+                  "state": "hybridIntercept",
+                  "ap": 125.9,
+                  "alt": 38.4,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 5,
+                  "state": "hybridIntercept",
+                  "ap": 130.2,
+                  "alt": 39.3,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 6,
+                  "state": "hybridIntercept",
+                  "ap": 134.5,
+                  "alt": 40.2,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 7,
+                  "state": "hybridIntercept",
+                  "ap": 138.8,
+                  "alt": 41.2,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 8,
+                  "state": "hybridIntercept",
+                  "ap": 143.1,
+                  "alt": 42.3,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 9,
+                  "state": "hybridIntercept",
+                  "ap": 145,
+                  "alt": 43.4,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 10,
+                  "state": "hybridIntercept",
+                  "ap": 145,
+                  "alt": 44.4,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 11,
+                  "state": "hybridIntercept",
+                  "ap": 145,
+                  "alt": 45.5,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 12,
+                  "state": "missileAttack",
+                  "ap": 145,
+                  "alt": 46.5,
+                  "cover": -1,
+                  "risk": "low"
+                }
+              ]
+            },
+            {
+              "stageId": "A-open-sky",
+              "policyMode": "hybrid",
+              "runIndex": 0,
+              "episodeIndex": 1,
+              "win": false,
+              "survive": true,
+              "crash": false,
+              "crashReason": null,
+              "hpLeft": 89,
+              "enemyHpLeft": 68,
+              "turns": 80,
+              "stallEvents": 0,
+              "avgStallDuration": 0,
+              "gunHits": 0,
+              "missileHits": 1,
+              "minObstacleDistance": -1,
+              "trace": [
+                {
+                  "turn": 1,
+                  "state": "hybridIntercept",
+                  "ap": 99,
+                  "alt": 61.2,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 2,
+                  "state": "hybridIntercept",
+                  "ap": 103.3,
+                  "alt": 61.7,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 3,
+                  "state": "hybridIntercept",
+                  "ap": 107.5,
+                  "alt": 62.3,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 4,
+                  "state": "hybridIntercept",
+                  "ap": 111.8,
+                  "alt": 63,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 5,
+                  "state": "hybridIntercept",
+                  "ap": 116,
+                  "alt": 63.7,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 6,
+                  "state": "hybridIntercept",
+                  "ap": 120.3,
+                  "alt": 64.5,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 7,
+                  "state": "hybridIntercept",
+                  "ap": 124.5,
+                  "alt": 65.4,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 8,
+                  "state": "hybridIntercept",
+                  "ap": 128.8,
+                  "alt": 66.3,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 9,
+                  "state": "hybridIntercept",
+                  "ap": 133,
+                  "alt": 67.3,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 10,
+                  "state": "hybridIntercept",
+                  "ap": 137.2,
+                  "alt": 68.4,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 11,
+                  "state": "hybridIntercept",
+                  "ap": 141.4,
+                  "alt": 69.5,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 12,
+                  "state": "hybridIntercept",
+                  "ap": 145,
+                  "alt": 70.6,
+                  "cover": -1,
+                  "risk": "low"
+                }
+              ]
+            },
+            {
+              "stageId": "A-open-sky",
+              "policyMode": "hybrid",
+              "runIndex": 0,
+              "episodeIndex": 6,
+              "win": false,
+              "survive": true,
+              "crash": false,
+              "crashReason": null,
+              "hpLeft": 95,
+              "enemyHpLeft": 100,
+              "turns": 80,
+              "stallEvents": 0,
+              "avgStallDuration": 0,
+              "gunHits": 0,
+              "missileHits": 0,
+              "minObstacleDistance": -1,
+              "trace": [
+                {
+                  "turn": 1,
+                  "state": "hybridIntercept",
+                  "ap": 118,
+                  "alt": 57.8,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 2,
+                  "state": "hybridIntercept",
+                  "ap": 122.2,
+                  "alt": 58.6,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 3,
+                  "state": "hybridIntercept",
+                  "ap": 126.4,
+                  "alt": 59.5,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 4,
+                  "state": "hybridIntercept",
+                  "ap": 130.6,
+                  "alt": 60.4,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 5,
+                  "state": "hybridIntercept",
+                  "ap": 134.8,
+                  "alt": 61.4,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 6,
+                  "state": "hybridIntercept",
+                  "ap": 139,
+                  "alt": 62.4,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 7,
+                  "state": "hybridIntercept",
+                  "ap": 143.2,
+                  "alt": 63.5,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 8,
+                  "state": "hybridIntercept",
+                  "ap": 145,
+                  "alt": 64.6,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 9,
+                  "state": "hybridIntercept",
+                  "ap": 145,
+                  "alt": 65.7,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 10,
+                  "state": "hybridIntercept",
+                  "ap": 145,
+                  "alt": 66.8,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 11,
+                  "state": "hybridIntercept",
+                  "ap": 145,
+                  "alt": 67.9,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 12,
+                  "state": "hybridIntercept",
+                  "ap": 145,
+                  "alt": 69,
+                  "cover": -1,
+                  "risk": "low"
+                }
+              ]
+            },
+            {
+              "stageId": "A-open-sky",
+              "policyMode": "hybrid",
+              "runIndex": 0,
+              "episodeIndex": 0,
+              "win": false,
+              "survive": true,
+              "crash": false,
+              "crashReason": null,
+              "hpLeft": 100,
+              "enemyHpLeft": 100,
+              "turns": 80,
+              "stallEvents": 0,
+              "avgStallDuration": 0,
+              "gunHits": 0,
+              "missileHits": 0,
+              "minObstacleDistance": -1,
+              "trace": [
+                {
+                  "turn": 1,
+                  "state": "hybridIntercept",
+                  "ap": 99,
+                  "alt": 41.1,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 2,
+                  "state": "hybridIntercept",
+                  "ap": 102.9,
+                  "alt": 41.4,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 3,
+                  "state": "hybridIntercept",
+                  "ap": 106.8,
+                  "alt": 41.7,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 4,
+                  "state": "hybridIntercept",
+                  "ap": 110.7,
+                  "alt": 42.1,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 5,
+                  "state": "hybridIntercept",
+                  "ap": 114.6,
+                  "alt": 42.5,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 6,
+                  "state": "hybridIntercept",
+                  "ap": 118.4,
+                  "alt": 43,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 7,
+                  "state": "hybridIntercept",
+                  "ap": 122.2,
+                  "alt": 43.6,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 8,
+                  "state": "hybridIntercept",
+                  "ap": 126,
+                  "alt": 44.2,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 9,
+                  "state": "hybridIntercept",
+                  "ap": 129.8,
+                  "alt": 44.8,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 10,
+                  "state": "hybridIntercept",
+                  "ap": 133.5,
+                  "alt": 45.6,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 11,
+                  "state": "hybridIntercept",
+                  "ap": 137.2,
+                  "alt": 46.3,
+                  "cover": -1,
+                  "risk": "low"
+                },
+                {
+                  "turn": 12,
+                  "state": "hybridIntercept",
+                  "ap": 140.8,
+                  "alt": 47.1,
+                  "cover": -1,
+                  "risk": "low"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "passed": false
+    }
+  ],
+  "notes": [
+    "Fast deterministic regression surrogate; use for before/after AI checks.",
+    "A pass here should be followed by in-game validation for full Three.js collision behavior."
+  ]
+}
