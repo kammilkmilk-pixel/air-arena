@@ -21,7 +21,7 @@ body { margin: 0; padding: 0; overflow: hidden; background-color: #0c0c0c; font-
     position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
     background: rgba(12, 14, 18, 0.48); border: 1px solid rgba(120, 130, 145, 0.35); border-radius: 10px;
     padding: 6px 16px 8px; display: flex; flex-direction: column; gap: 4px;
-    z-index: 9999; box-shadow: 0 8px 28px rgba(0,0,0,0.28); color: #fff;
+    z-index: 10050; box-shadow: 0 8px 28px rgba(0,0,0,0.28); color: #fff;
     width: min(1040px, 98vw); box-sizing: border-box; pointer-events: auto;
     backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
 }
@@ -269,17 +269,32 @@ body { margin: 0; padding: 0; overflow: hidden; background-color: #0c0c0c; font-
 .alt-label { position: absolute; font-size: 11px; font-weight: bold; color: #fff; text-shadow: 1px 1px 2px #000; pointer-events: none; display: none; z-index: 15; }
 
 #startup-screen {
-    position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+    position: fixed; top: 0; left: 0; width: 100%;
+    height: 100dvh; height: 100vh;
     background-color: #050505; z-index: 99999;
-    display: flex; justify-content: center; align-items: flex-start;
     color: #fff; font-family: 'Courier New', monospace; text-align: center;
     pointer-events: auto; transition: opacity 1.2s ease-in-out;
-    overflow-y: auto;
     overflow-x: hidden;
+    overflow-y: hidden;
+    overscroll-behavior: none;
+    touch-action: pan-y;
     -webkit-overflow-scrolling: touch;
     scrollbar-gutter: stable;
     scrollbar-width: thin;
     scrollbar-color: rgba(140, 160, 180, 0.55) rgba(20, 24, 28, 0.9);
+}
+/* ENTERING：置中、鎖捲動 */
+#startup-screen.is-entering {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    overflow: hidden;
+}
+/* SETUP：改 block 捲動，避免 flex 置中造成拉到底回彈 */
+#startup-screen.is-setup {
+    display: block;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
 }
 #startup-screen::-webkit-scrollbar { width: 10px; }
 #startup-screen::-webkit-scrollbar-track {
@@ -298,20 +313,33 @@ body { margin: 0; padding: 0; overflow: hidden; background-color: #0c0c0c; font-
     display: flex; flex-direction: column; align-items: center; gap: 16px;
     max-width: min(560px, 92vw);
     width: 100%;
-    margin: min(6vh, 48px) auto min(8vh, 56px);
-    padding: 12px;
+    margin: 0 auto;
+    padding: 12px 12px calc(88px + env(safe-area-inset-bottom, 0px));
     box-sizing: border-box;
+}
+#startup-screen.is-setup #startup-shell {
+    margin-top: min(4vh, 28px);
+    min-height: min-content;
 }
 #startup-text {
     font-size: clamp(18px, 3.2vw, 28px); font-weight: bold; letter-spacing: 4px;
     text-shadow: 0 0 10px rgba(255, 255, 255, 0.5);
     animation: pulseText 1.5s infinite alternate;
+    transition: opacity 0.55s ease;
 }
 #startup-text .startup-sub {
     display: inline-block; margin-top: 8px; color: #ff0055;
     font-size: clamp(14px, 2.4vw, 22px); letter-spacing: 6px;
 }
-#startup-screen.is-setup #startup-text { display: none; }
+#startup-screen.is-setup #startup-text {
+    position: absolute;
+    width: 1px; height: 1px;
+    margin: -1px; padding: 0; overflow: hidden;
+    clip: rect(0, 0, 0, 0); border: 0;
+    opacity: 0;
+    pointer-events: none;
+    animation: none;
+}
 
 #match-setup-panel {
     width: 100%; box-sizing: border-box;
@@ -320,8 +348,15 @@ body { margin: 0; padding: 0; overflow: hidden; background-color: #0c0c0c; font-
     box-shadow: 0 0 28px rgba(0, 0, 0, 0.75);
     padding: 18px 18px 16px;
     text-align: left;
+    opacity: 0;
+    transform: translateY(10px);
+    transition: opacity 0.55s ease, transform 0.55s ease;
 }
 #match-setup-panel[hidden] { display: none !important; }
+#startup-screen.is-setup #match-setup-panel {
+    opacity: 1;
+    transform: translateY(0);
+}
 .match-setup-title {
     font-size: 15px; font-weight: bold; letter-spacing: 3px;
     color: #e6e6e6; margin-bottom: 14px; text-align: center;
@@ -420,6 +455,7 @@ body { margin: 0; padding: 0; overflow: hidden; background-color: #0c0c0c; font-
     padding: 12px 10px; cursor: pointer;
     color: #0a0a0a; background: #ff0055; border: 1px solid #ff4477;
     box-shadow: 0 0 16px rgba(255, 0, 85, 0.35);
+    scroll-margin-bottom: calc(28px + env(safe-area-inset-bottom, 0px));
 }
 .match-engage-btn:hover { filter: brightness(1.08); }
 .match-engage-btn:disabled { opacity: 0.5; cursor: wait; }
@@ -683,16 +719,18 @@ body { margin: 0; padding: 0; overflow: hidden; background-color: #0c0c0c; font-
     #combat-hud-mobile { width: 620px !important; height: 190px !important; } 
     #u-shape-panel { background-image: url('../assets/interface/ui_l.png') !important; } 
 }
-/* 手機基準（以 iPhone 14 Plus 428×926 校準）：儀表＋SMS 約佔底部 ~20–22% 可視高度 */
+/* 手機基準（iPhone 14 Plus）：放大溫度／搖桿／AP，側翼與 SMS 保留小空隙 */
 @media (max-width: 768px) { 
     :root {
-        --edge-dist: 3%;
-        --joy-size: 56px;
-        --dial-spread: 24.5%;
+        --edge-dist: 3.5%;
+        --joy-size: 68px;
+        --dial-spread: 24%;
         --center-t: 16%;
         --sms-w: clamp(236px, 68vw, 292px);
-        --sms-b: calc(100% - 6px);
-        --hud-h-mobile: clamp(138px, 34vw, 158px);
+        /* SMS 底邊貼近圓圈上緣：34%≈圓心距底，再加半徑與 8px 空隙 */
+        --sms-gap: 8px;
+        --sms-b: calc(34% + (var(--joy-size) / 2) + var(--sms-gap));
+        --hud-h-mobile: clamp(152px, 38vw, 176px);
     }
     #combat-hud-mobile {
         width: 100vw !important;
@@ -906,7 +944,7 @@ body:not(:has(#replay-team-roster)) .team-seat-row {
     border: 1px solid rgba(90, 110, 130, 0.4);
     border-radius: 10px;
     box-shadow: 0 10px 32px rgba(0, 0, 0, 0.35);
-    z-index: 9999;
+    z-index: 9990;
     color: #d4dde6;
     font-family: 'Courier New', monospace;
     backdrop-filter: blur(8px);
@@ -1170,13 +1208,12 @@ body:not(:has(#replay-team-roster)) .team-seat-row {
         font-size: min(10px, 2.8vw) !important;
     }
     .ai-debug-panel {
-        top: max(120px, 16vh) !important;
+        /* top/max-height come from uiPositionAIDebugPanel — do not !important override */
         width: min(94vw, 480px);
-        max-height: min(76vh, 680px);
+        left: 50%;
     }
     .ai-debug-body {
         grid-template-columns: 1fr;
-        max-height: min(58vh, 520px);
     }
     .temp-score-panel {
         right: 8px;
@@ -1201,7 +1238,7 @@ body:not(:has(#replay-team-roster)) .team-seat-row {
         align-items: center;
     }
 
-    /* TACTICAL SYS：卡在 U 型儀表上緣，寬度與內部間距跟儀表同比例縮小 */
+    /* TACTICAL SYS：盡量下移，底邊與溫度／搖桿／AP 圓圈保留 --sms-gap */
     #tactical-computer-module {
         position: absolute !important;
         bottom: var(--sms-b) !important;
@@ -1212,7 +1249,7 @@ body:not(:has(#replay-team-roster)) .team-seat-row {
         background: rgba(10, 10, 10, 0.95) !important;
         border: 1px solid #444 !important;
         padding: 3px 4px !important;
-        border-radius: 6px 6px 0 0;
+        border-radius: 6px;
         box-shadow: 0 -3px 12px rgba(0, 0, 0, 0.75);
         transition: width 0.2s ease, bottom 0.2s ease;
     }
@@ -1269,13 +1306,19 @@ body:not(:has(#replay-team-roster)) .team-seat-row {
         font-size: 8px !important;
     }
 
-    /* 儀表／油門刻度跟著縮，避免 34vw 高度時顯得擁擠 */
+    /* 儀表放大後外圈／讀數微調；側翼油門與 HP 略讓出空間 */
     #roll-ring {
-        border-width: 7px !important;
+        border-width: 8px !important;
     }
     .digital-val {
-        font-size: 9px !important;
-        padding: 1px 4px !important;
+        font-size: 10px !important;
+        padding: 1px 5px !important;
+    }
+    #left-arm-throttle,
+    #right-arm-hp {
+        width: 9% !important;
+        top: 14% !important;
+        height: 68% !important;
     }
     .thr-mark {
         font-size: 8px !important;

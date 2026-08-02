@@ -434,10 +434,16 @@ function uiShowMatchSetup() {
     uiSyncSpawnSelects(uiMatchSetupState.spawnAltitude, uiMatchSetupState.spawnSeparation);
     uiRenderMatchSeatList();
     panel.hidden = false;
-    screen.classList.add('is-setup');
-    screen.style.display = 'flex';
+    screen.classList.remove('is-entering');
+    screen.style.display = '';
     screen.style.opacity = '1';
     screen.style.pointerEvents = 'auto';
+    screen.scrollTop = 0;
+    // Two-frame swap so opacity/transform fade runs after ENTERING splash.
+    requestAnimationFrame(() => {
+        screen.classList.add('is-setup');
+        screen.scrollTop = 0;
+    });
     return true;
 }
 
@@ -447,7 +453,7 @@ function uiDismissStartupScreen() {
     startup.style.opacity = '0';
     setTimeout(() => {
         startup.style.display = 'none';
-        startup.classList.remove('is-setup');
+        startup.classList.remove('is-setup', 'is-entering');
     }, 1200);
 }
 
@@ -543,7 +549,18 @@ function uiBeginMatchOrShowSetup() {
         uiDismissStartupScreen();
         return;
     }
-    uiShowMatchSetup();
+    const screen = document.getElementById('startup-screen');
+    if (screen) {
+        screen.classList.add('is-entering');
+        screen.classList.remove('is-setup');
+        screen.style.display = '';
+        screen.style.opacity = '1';
+        screen.style.pointerEvents = 'auto';
+    }
+    // Keep ENTERING splash ~1s after boot, then fade into Match Setup.
+    setTimeout(() => {
+        uiShowMatchSetup();
+    }, 1000);
 }
 
 window.uiShowMatchSetup = uiShowMatchSetup;
@@ -1758,24 +1775,53 @@ function uiFormatAIDebug(teamId) {
 }
 function uiPositionAIDebugPanel(teamId) {
     const panel = document.getElementById('ai-debug-panel');
-    const anchor = document.getElementById(`btn-engage-${teamId}`);
     const bar = document.getElementById('replay-control-bar');
+    const body = document.getElementById('ai-debug-body');
     if (!panel) return;
-    const panelWidth = panel.offsetWidth || 420;
+
     const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const isMobile = viewportWidth <= 768;
+    const panelWidth = panel.offsetWidth || Math.min(isMobile ? viewportWidth * 0.94 : 480, viewportWidth - 16);
+
     let left = (viewportWidth - panelWidth) / 2;
     let top = 140;
-    if (anchor && anchor.getClientRects().length) {
-        const rect = anchor.getBoundingClientRect();
-        left = rect.left + (rect.width / 2) - (panelWidth / 2);
-        top = rect.bottom + 8;
-    } else if (bar) {
+
+    // Always clear the whole replay/seat bar so 待機中／規劃中 stay clickable.
+    if (bar && bar.getClientRects().length) {
         const barRect = bar.getBoundingClientRect();
-        top = barRect.bottom + 10;
+        top = Math.ceil(barRect.bottom + 8);
+        left = barRect.left + (barRect.width / 2) - (panelWidth / 2);
     }
+
+    // Desktop: nudge horizontally toward the clicked seat button, still under the bar.
+    if (!isMobile && teamId) {
+        const anchor = document.getElementById(`btn-engage-${teamId}`);
+        if (anchor && anchor.getClientRects().length) {
+            const rect = anchor.getBoundingClientRect();
+            left = rect.left + (rect.width / 2) - (panelWidth / 2);
+        }
+    }
+
     left = Math.max(8, Math.min(viewportWidth - panelWidth - 8, left));
-    panel.style.left = `${left}px`;
-    panel.style.top = `${top}px`;
+
+    // Reserve bottom cockpit HUD on phones so the tree doesn't swallow the screen.
+    const bottomReserve = isMobile
+        ? Math.max(150, Math.round(viewportHeight * 0.2))
+        : 28;
+    const maxH = Math.max(140, viewportHeight - top - bottomReserve);
+    panel.style.left = `${Math.round(left)}px`;
+    panel.style.top = `${Math.round(top)}px`;
+    panel.style.maxHeight = `${Math.round(maxH)}px`;
+
+    if (body) {
+        const header = panel.querySelector('.ai-debug-header');
+        const wing = document.getElementById('ai-debug-wingman');
+        const chrome = (header ? header.offsetHeight : 36)
+            + (wing && !wing.hidden ? wing.offsetHeight + 8 : 0)
+            + 16;
+        body.style.maxHeight = `${Math.max(96, Math.round(maxH - chrome))}px`;
+    }
 }
 function uiRefreshAIDebugPanel() {
     const panel = document.getElementById('ai-debug-panel');
