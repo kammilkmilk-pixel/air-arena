@@ -447,12 +447,36 @@ function updateLcosGunHeatRing(team, coneCx = 50, coneCy = 50, coneR = 37.4, vis
         else if (typeof updateDashboardUI === 'function') updateDashboardUI(t);
     }
 
+    function setOrbitLockedForLcosDrag(locked) {
+        if (typeof controls === 'undefined' || !controls) return;
+        if (!controls.userData) controls.userData = {};
+        if (locked) {
+            if (!controls.userData._lcosOrbitBackup) {
+                controls.userData._lcosOrbitBackup = {
+                    enableZoom: controls.enableZoom,
+                    enablePan: controls.enablePan,
+                    enableRotate: controls.enableRotate
+                };
+            }
+            controls.enableZoom = false;
+            controls.enablePan = false;
+            controls.enableRotate = false;
+        } else if (controls.userData._lcosOrbitBackup) {
+            const b = controls.userData._lcosOrbitBackup;
+            controls.enableZoom = b.enableZoom !== false;
+            controls.enablePan = b.enablePan !== false;
+            controls.enableRotate = b.enableRotate !== false;
+            controls.userData._lcosOrbitBackup = null;
+        }
+    }
+
     function endDrag(e) {
         if (!window.isDraggingLcosRing) return;
         if (e && activePointerId != null && e.pointerId !== activePointerId) return;
         const wasDrag = dragMoved;
         window.isDraggingLcosRing = false;
         activePointerId = null;
+        setOrbitLockedForLcosDrag(false);
         const grab = document.getElementById('lcos-grab-ring');
         if (grab) grab.style.cursor = 'grab';
         const pipper = document.getElementById('lcos-pipper');
@@ -501,16 +525,17 @@ function updateLcosGunHeatRing(team, coneCx = 50, coneCy = 50, coneR = 37.4, vis
 
             window.isDraggingLcosRing = true;
             activePointerId = e.pointerId;
+            setOrbitLockedForLcosDrag(true);
             try { grab.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
             grab.style.cursor = 'grabbing';
             pipper.classList.add('lcos-dragging');
             const cone = document.getElementById('lcos-cone-circle');
             if (cone) cone.setAttribute('stroke-width', '3.4');
 
-            e.preventDefault();
+            if (e.cancelable) e.preventDefault();
             e.stopPropagation();
             syncJoystickHandle(startJoyX, startJoyY);
-        });
+        }, { passive: false });
 
         grab.addEventListener('pointermove', (e) => {
             if (!window.isDraggingLcosRing) return;
@@ -518,10 +543,10 @@ function updateLcosGunHeatRing(team, coneCx = 50, coneCy = 50, coneR = 37.4, vis
             const dx = e.clientX - dragStartX;
             const dy = e.clientY - dragStartY;
             if (!dragMoved && Math.hypot(dx, dy) >= TAP_MOVE_PX) dragMoved = true;
-            e.preventDefault();
+            if (e.cancelable) e.preventDefault();
             e.stopPropagation();
             applyNoseFromPointer(e.clientX, e.clientY);
-        });
+        }, { passive: false });
 
         grab.addEventListener('pointerup', endDrag);
         grab.addEventListener('pointercancel', endDrag);

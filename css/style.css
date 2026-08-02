@@ -4,9 +4,9 @@
 
 body { margin: 0; padding: 0; overflow: hidden; background-color: #0c0c0c; font-family: 'Courier New', monospace; user-select: none; }
 
-/* 3D 畫布鋪滿底層 */
-#canvas-container { position: fixed !important; top: 0; left: 0; right: 0; bottom: 0; z-index: 0; pointer-events: auto !important; }
-#canvas-container canvas { display: block; width: 100vw; height: 100vh; cursor: grab; }
+/* 3D 畫布鋪滿底層 — 禁止瀏覽器手勢縮放／捲動搶觸控 */
+#canvas-container { position: fixed !important; top: 0; left: 0; right: 0; bottom: 0; z-index: 0; pointer-events: auto !important; touch-action: none; }
+#canvas-container canvas { display: block; width: 100vw; height: 100vh; cursor: grab; touch-action: none; }
 #canvas-container canvas:active { cursor: grabbing; }
 
 /* 舊版殘留組件防崩潰隱藏 */
@@ -271,13 +271,36 @@ body { margin: 0; padding: 0; overflow: hidden; background-color: #0c0c0c; font-
 #startup-screen {
     position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
     background-color: #050505; z-index: 99999;
-    display: flex; justify-content: center; align-items: center;
+    display: flex; justify-content: center; align-items: flex-start;
     color: #fff; font-family: 'Courier New', monospace; text-align: center;
     pointer-events: auto; transition: opacity 1.2s ease-in-out;
+    overflow-y: auto;
+    overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-gutter: stable;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(140, 160, 180, 0.55) rgba(20, 24, 28, 0.9);
+}
+#startup-screen::-webkit-scrollbar { width: 10px; }
+#startup-screen::-webkit-scrollbar-track {
+    background: rgba(20, 24, 28, 0.95);
+    border-left: 1px solid rgba(60, 70, 80, 0.5);
+}
+#startup-screen::-webkit-scrollbar-thumb {
+    background: rgba(120, 140, 160, 0.55);
+    border-radius: 6px;
+    border: 2px solid rgba(20, 24, 28, 0.95);
+}
+#startup-screen::-webkit-scrollbar-thumb:hover {
+    background: rgba(160, 185, 210, 0.75);
 }
 #startup-shell {
-    display: flex; flex-direction: column; align-items: center; gap: 28px;
-    max-width: min(560px, 92vw); padding: 12px;
+    display: flex; flex-direction: column; align-items: center; gap: 16px;
+    max-width: min(560px, 92vw);
+    width: 100%;
+    margin: min(6vh, 48px) auto min(8vh, 56px);
+    padding: 12px;
+    box-sizing: border-box;
 }
 #startup-text {
     font-size: clamp(18px, 3.2vw, 28px); font-weight: bold; letter-spacing: 4px;
@@ -288,8 +311,7 @@ body { margin: 0; padding: 0; overflow: hidden; background-color: #0c0c0c; font-
     display: inline-block; margin-top: 8px; color: #ff0055;
     font-size: clamp(14px, 2.4vw, 22px); letter-spacing: 6px;
 }
-#startup-screen.is-setup #startup-text { animation: none; opacity: 0.85; font-size: clamp(14px, 2.4vw, 20px); letter-spacing: 3px; }
-#startup-screen.is-setup #startup-text .startup-sub { font-size: clamp(12px, 2vw, 16px); letter-spacing: 4px; }
+#startup-screen.is-setup #startup-text { display: none; }
 
 #match-setup-panel {
     width: 100%; box-sizing: border-box;
@@ -320,8 +342,8 @@ body { margin: 0; padding: 0; overflow: hidden; background-color: #0c0c0c; font-
     color: #0c0c0c; background: #d8d8d8; border-color: #f0f0f0;
 }
 .match-setup-hint {
-    margin-top: 8px; font-size: 10px; line-height: 1.4; color: #777;
-    letter-spacing: 0.5px;
+    margin-top: 8px; font-size: 11px; line-height: 1.55; color: #9aa3ad;
+    letter-spacing: 0.3px;
 }
 .match-setup-hint.is-hidden { display: none; }
 .match-map-row {
@@ -406,8 +428,16 @@ body { margin: 0; padding: 0; overflow: hidden; background-color: #0c0c0c; font-
 
 /* HUD 戰術鎖定系統 */
 #dynamic-hud { position: fixed; top: 0; left: 0; pointer-events: auto; cursor: crosshair; z-index: 8000; transform: translate(-50%, -50%); display: none; }
-/* LCOS 準星：外環可拖曳調機頭 */
-#lcos-pipper { touch-action: none; }
+/* LCOS 準星：外環可拖曳調機頭（手機邊緣拖曳勿觸發頁面／鏡頭縮放） */
+#lcos-pipper {
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+}
+#lcos-pipper svg,
+#lcos-grab-ring {
+    touch-action: none;
+}
 #lcos-pipper.lcos-dragging #lcos-cone-circle { opacity: 1; filter: drop-shadow(0 0 4px rgba(255, 255, 255, 0.85)); }
 #lcos-grab-ring:hover { fill: rgba(255, 255, 255, 0.12) !important; }
 #hud-shape { position: absolute; top: -20px; left: -20px; width: 40px; height: 40px; box-sizing: border-box; }
@@ -653,9 +683,23 @@ body { margin: 0; padding: 0; overflow: hidden; background-color: #0c0c0c; font-
     #combat-hud-mobile { width: 620px !important; height: 190px !important; } 
     #u-shape-panel { background-image: url('../assets/interface/ui_l.png') !important; } 
 }
+/* 手機基準（以 iPhone 14 Plus 428×926 校準）：儀表＋SMS 約佔底部 ~20–22% 可視高度 */
 @media (max-width: 768px) { 
-    :root { --edge-dist: 2%; --joy-size: 65px; --dial-spread: 26%; --sms-w: 95vw; --sms-b: 100%; }
-    #combat-hud-mobile { width: 100vw !important; height: 48vw !important; } 
+    :root {
+        --edge-dist: 3%;
+        --joy-size: 56px;
+        --dial-spread: 24.5%;
+        --center-t: 16%;
+        --sms-w: clamp(236px, 68vw, 292px);
+        --sms-b: calc(100% - 6px);
+        --hud-h-mobile: clamp(138px, 34vw, 158px);
+    }
+    #combat-hud-mobile {
+        width: 100vw !important;
+        height: var(--hud-h-mobile) !important;
+        padding-bottom: env(safe-area-inset-bottom, 0px);
+        box-sizing: border-box !important;
+    }
     #u-shape-panel { background-image: url('../assets/interface/ui_s.png') !important; } 
 }
 /* 1. 讓滾轉環本體變成 10px 超厚深灰外圈，精確填滿與 75% 搖桿之間的空隙 */
@@ -1157,57 +1201,98 @@ body:not(:has(#replay-team-roster)) .team-seat-row {
         align-items: center;
     }
 
-    /* 2. TACTICAL SYS 操作版面：採用高度百分比，動態懸浮於下方儀表板之上 */
+    /* TACTICAL SYS：卡在 U 型儀表上緣，寬度與內部間距跟儀表同比例縮小 */
     #tactical-computer-module {
         position: absolute !important;
-        /* 動態高度：距離底部約 22% 的螢幕高度，這樣無論手機螢幕多長多短，都會剛好卡在操縱桿上方 */
-        bottom: max(150px, 12vh) !important; 
+        bottom: var(--sms-b) !important;
         left: 50% !important;
         transform: translateX(-50%) !important;
-        
-        /* 動態寬度：佔據螢幕寬度的 55%，但設定最大和最小值以防變形 */
-        width: clamp(220px, 85vw, 320px) !important;   
-        
+        width: var(--sms-w) !important;
         z-index: 100 !important;
-        background: rgba(10, 10, 10, 0.95) !important; 
+        background: rgba(10, 10, 10, 0.95) !important;
         border: 1px solid #444 !important;
-        padding: 1vh !important;
-        border-radius: 6px;
-        box-shadow: 0 0 15px rgba(0, 0, 0, 0.85);
-        transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+        padding: 3px 4px !important;
+        border-radius: 6px 6px 0 0;
+        box-shadow: 0 -3px 12px rgba(0, 0, 0, 0.75);
+        transition: width 0.2s ease, bottom 0.2s ease;
     }
 
-    /* 🎯 精細收縮 TACTICAL SYS 內部組件與掛架按鈕，使其呈高整合軍規姿態 */
     #sms-header {
-        height: 22px !important;
-        font-size: 10px !important;
-        line-height: 22px !important;
+        height: 18px !important;
+        font-size: 9px !important;
+        line-height: 18px !important;
+        padding: 0 4px !important;
+        margin-bottom: 2px !important;
+    }
+    #sms-title {
+        font-size: 9px !important;
+        letter-spacing: 1px !important;
     }
     .sms-top-btn {
         padding: 1px 5px !important;
-        font-size: 9px !important;
+        font-size: 8px !important;
     }
     #pylon-weapons-bay {
-        gap: 4px !important;
-        padding: 3px 0 !important;
+        gap: 10px !important;
+        padding: 1px 6px !important;
+        margin-bottom: 2px !important;
     }
     .pylon-switch-wrapper {
-        min-width: 38px !important;
+        min-width: 34px !important;
+        gap: 2px !important;
     }
     .pylon-label {
-        font-size: 8px !important;
-        transform: scale(0.9);
+        font-size: 7px !important;
+        transform: scale(0.95);
     }
     .pylon-stick {
-        height: 12px !important;
+        height: 10px !important;
+        width: 5px !important;
+    }
+    .pylon-lamp {
         width: 6px !important;
+        height: 6px !important;
     }
     #sms-display-screen {
-        height: 22px !important;
+        height: 20px !important;
+        padding: 2px 6px !important;
         font-size: 10px !important;
     }
+    #sms-text-content,
+    #sms-lock-warn {
+        font-size: 11px !important;
+    }
     #sms-enter-btn {
-        padding: 1px 6px !important;
+        width: 36px !important;
+        height: 18px !important;
+        padding: 0 !important;
+        font-size: 8px !important;
+    }
+
+    /* 儀表／油門刻度跟著縮，避免 34vw 高度時顯得擁擠 */
+    #roll-ring {
+        border-width: 7px !important;
+    }
+    .digital-val {
         font-size: 9px !important;
+        padding: 1px 4px !important;
+    }
+    .thr-mark {
+        font-size: 8px !important;
+        left: 14px !important;
+    }
+    #throttle-track {
+        width: 11px !important;
+    }
+    #throttle-handle {
+        width: 30px !important;
+        height: 16px !important;
+        left: -10px !important;
+    }
+    .hp-track-vertical {
+        width: 11px !important;
+    }
+    .hp-text-label {
+        font-size: 8px !important;
     }
 }

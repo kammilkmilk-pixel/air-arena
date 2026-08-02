@@ -2,7 +2,7 @@
 <html lang="zh-Hant">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect fill='%2300bcd4' width='16' height='16'/%3E%3C/svg%3E">
     <title>垂直空域 (Vertical Airspace) - 側翼 MFD 完全體</title>
     <link rel="stylesheet" href="css/style.css">
@@ -11,10 +11,6 @@
     <!-- 1. 開場授權黑幕 + 對戰設定 -->
     <div id="startup-screen">
         <div id="startup-shell">
-            <div id="startup-text">
-                ENTERING COMBAT AIRSPACE...<br>
-                <span class="startup-sub">ENGAGEMENT AUTHORIZED</span>
-            </div>
             <div id="match-setup-panel" hidden>
                 <div class="match-setup-title">MATCH SETUP</div>
                 <div class="match-setup-section">
@@ -23,9 +19,9 @@
                         <button type="button" class="match-mode-btn is-active" data-mode="1v1">1 vs 1</button>
                         <button type="button" class="match-mode-btn" data-mode="2v2">2 vs 2</button>
                     </div>
-                    <div id="match-mode-hint" class="match-setup-hint">2v2：翼機可收僚機令（跟隨／攻擊我的目標／掩護／脫離）。建議 RED-1 人工、RED-2 AI 測合作。</div>
+                    <div id="match-mode-hint" class="match-setup-hint">1v1：紅藍各一架，適合單挑與練習武器／箔條。僅 RED-1 與 BLUE-1 參戰。</div>
                 </div>
-            <div class="match-setup-section">
+                <div class="match-setup-section">
                     <div class="match-setup-label">選擇地圖</div>
                     <div class="match-map-row">
                         <select id="match-map-select" aria-label="選擇地圖"></select>
@@ -53,7 +49,7 @@
                             </select>
                         </label>
                     </div>
-                    <div id="match-map-hint" class="match-setup-hint">原版／內建地圖可直接選。自訂地圖請先用 Map Editor 匯出 JSON，再按「加入」。起飛高度／距離在 ENGAGE 時套用。</div>
+                    <div id="match-map-hint" class="match-setup-hint">內建地圖可直接選用（含預烘焙 AI 摘要）。自訂圖：先用 Map Editor 匯出 JSON，再按「加入」；僅存於本機瀏覽器。起始高度／相對距離在 ENGAGE 時套用雙方起飛位置。</div>
                 </div>
                 <div class="match-setup-section">
                     <div class="match-setup-label">機組配置</div>

@@ -279,7 +279,16 @@ function uiRenderMatchSeatList() {
         `;
     }).join('');
     const hint = document.getElementById('match-mode-hint');
-    if (hint) hint.classList.toggle('is-hidden', mode !== '2v2');
+    if (hint) {
+        hint.classList.remove('is-hidden');
+        if (mode === '2v2') {
+            hint.textContent =
+                '2v2：紅藍各兩架（RED-1/2、BLUE-1/2）。翼機可收僚機令——跟隨、攻擊我的目標、主動進攻、掩護、脫離。建議 RED-1 人工、RED-2 AI 測編隊；兩席皆可設 AI 對打。';
+        } else {
+            hint.textContent =
+                '1v1：紅藍各一架，適合單挑與練習武器／箔條。僅 RED-1 與 BLUE-1 參戰。';
+        }
+    }
 }
 
 function uiBindMatchSetupOnce() {
