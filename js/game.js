@@ -69,7 +69,7 @@ function setupModel(gltfOrScene, x, z, yRot) {
     wrapper.add(exhaust.group);         
     wrapper.userData.exhaust = exhaust; 
 
-    wrapper.position.set(x, 38, z); wrapper.rotation.y = yRot; wrapper.userData.logicalQuat = wrapper.quaternion.clone(); scene.add(wrapper); 
+    wrapper.position.set(x, 45, z); wrapper.rotation.y = yRot; wrapper.userData.logicalQuat = wrapper.quaternion.clone(); scene.add(wrapper); 
     return wrapper;
 }
 
@@ -98,10 +98,10 @@ async function bootGame() {
         ]);
         await GameContext.vfxReadyPromise;
 
-        GameContext.registerTeamWrapper('red', setupModel(redGltf, 10, -30, 0));
-        GameContext.registerTeamWrapper('red2', setupModel(redGltf, 18, -34, 0));
-        GameContext.registerTeamWrapper('blue', setupModel(blueGltf, 10, 70, Math.PI));
-        GameContext.registerTeamWrapper('blue2', setupModel(blueGltf, 18, 74, Math.PI));
+        GameContext.registerTeamWrapper('red', setupModel(redGltf, 10, -50, 0));
+        GameContext.registerTeamWrapper('red2', setupModel(redGltf, 18, -54, 0));
+        GameContext.registerTeamWrapper('blue', setupModel(blueGltf, 10, 50, Math.PI));
+        GameContext.registerTeamWrapper('blue2', setupModel(blueGltf, 18, 54, Math.PI));
         // Wings stay invisible until Match Setup selects 2v2.
         ['red2', 'blue2'].forEach((id) => {
             const t = GameContext.getTeam(id);
@@ -183,15 +183,62 @@ function zoomToAircraft(teamId) {
         if (elapsed > 1) elapsed = 1;
         // Re-read live position so combat-anim clicks track the moving jet.
         const live = GameContext.getTeam(teamId);
-        const livePos = (live && live.wrapper) ? live.wrapper.position : t.wrapper.position;
-        const liveCam = livePos.clone().add(
-            new THREE.Vector3(0, 3.5, -10).applyQuaternion((live && live.wrapper) ? live.wrapper.quaternion : t.wrapper.quaternion)
-        );
-        camera.position.lerpVectors(startCamPos, liveCam, elapsed);
-        controls.target.lerpVectors(startTarget, livePos, elapsed);
+        if (!live || !live.wrapper) return;
+        const look = resolveChaseLookTeam(live);
+        const pose = getAircraftChaseCamPose(live, look);
+        camera.position.lerpVectors(startCamPos, pose.camPos, elapsed);
+        controls.target.lerpVectors(startTarget, pose.targetPos, elapsed);
         if (elapsed < 1) requestAnimationFrame(doLerp);
     }
     requestAnimationFrame(doLerp);
+}
+
+/** Predetermined chase distance from selected aircraft (world units). */
+const CHASE_CAM_DIST = 8;
+const _chaseAway = new THREE.Vector3();
+
+/** Prefer explicit camera override, else the selected aircraft's locked target. */
+function resolveChaseLookTeam(host) {
+    if (!host) return null;
+    const overrideId = GameContext.state.cameraFollowOverrideId;
+    if (overrideId) {
+        const ov = GameContext.getTeam(overrideId);
+        if (ov && ov.wrapper && !ov.isDestroyed && ov.matchActive !== false) return ov;
+    }
+    const lockId = host.lockedTargetId;
+    if (lockId) {
+        const lk = GameContext.getTeam(lockId);
+        if (lk && lk.wrapper && !lk.isDestroyed && lk.matchActive !== false) return lk;
+    }
+    return null;
+}
+
+/**
+ * Camera CHASE_CAM_DIST from selected aircraft; when a lock exists, sit on the aircraft→target axis
+ * (aircraft as pivot) and aim at the locked target.
+ */
+function getAircraftChaseCamPose(host, lookTeam) {
+    const hostPos = host.wrapper.position;
+    const quat = host.wrapper.quaternion;
+    let targetPos;
+    if (lookTeam && lookTeam.wrapper) {
+        targetPos = lookTeam.wrapper.position.clone();
+        _chaseAway.subVectors(hostPos, targetPos);
+        if (_chaseAway.lengthSq() < 1e-4) {
+            _chaseAway.set(0, 0.2, -1).applyQuaternion(quat);
+        }
+    } else {
+        // No lock: behind the nose, orbit pivot on the aircraft.
+        _chaseAway.set(0, 0.22, -1).applyQuaternion(quat);
+        targetPos = hostPos.clone();
+    }
+    _chaseAway.normalize();
+    // Mild elevation, then re-normalize so distance stays exactly CHASE_CAM_DIST.
+    _chaseAway.y += 0.16;
+    if (_chaseAway.lengthSq() < 1e-6) _chaseAway.set(0, 0.35, -1).applyQuaternion(quat);
+    _chaseAway.normalize();
+    const camPos = hostPos.clone().addScaledVector(_chaseAway, CHASE_CAM_DIST);
+    return { camPos, targetPos };
 }
 
 /** Keep chase-cam on host aircraft, but aim look-at toward another unit (e.g. locked enemy). */
@@ -211,11 +258,9 @@ function lookAtFromAircraft(hostId, lookAtId) {
         const h = GameContext.getTeam(hostId);
         const l = GameContext.getTeam(lookAtId);
         if (!h || !h.wrapper || !l || !l.wrapper) return;
-        const camPos = h.wrapper.position.clone().add(
-            new THREE.Vector3(0, 3.5, -10).applyQuaternion(h.wrapper.quaternion)
-        );
-        camera.position.lerpVectors(startCamPos, camPos, elapsed);
-        controls.target.lerpVectors(startTarget, l.wrapper.position, elapsed);
+        const pose = getAircraftChaseCamPose(h, l);
+        camera.position.lerpVectors(startCamPos, pose.camPos, elapsed);
+        controls.target.lerpVectors(startTarget, pose.targetPos, elapsed);
         if (elapsed < 1) requestAnimationFrame(doLerp);
     }
     requestAnimationFrame(doLerp);
@@ -270,24 +315,18 @@ function lockHostileTarget(hostileId) {
 function updateSoftCameraFollow() {
     if (!GameContext.state.cameraSoftFollow) return;
     if (GameContext.isReplayMode()) return;
-    if (!GameContext.isAnimating()) return;
+    const lockFollow = !!GameContext.state.cameraFollowOverrideId;
+    // Chase during combat playback, or while lock-aim mode is active in planning.
+    if (!GameContext.isAnimating() && !lockFollow) return;
     if (typeof camera === 'undefined' || typeof controls === 'undefined') return;
     if (performance.now() < (GameContext.state.cameraZoomUntil || 0)) return;
     const hostId = GameContext.getActiveTeamId();
     const host = GameContext.getTeam(hostId);
     if (!host || !host.wrapper) return;
-    const lookId = GameContext.state.cameraFollowOverrideId;
-    const look = lookId ? GameContext.getTeam(lookId) : null;
-    // Chase-cam always rides the active (own) jet.
-    const desiredCam = host.wrapper.position.clone().add(
-        new THREE.Vector3(0, 3.5, -10).applyQuaternion(host.wrapper.quaternion)
-    );
-    camera.position.lerp(desiredCam, 0.14);
-    if (look && look.wrapper && !look.isDestroyed) {
-        controls.target.lerp(look.wrapper.position, 0.18);
-    } else {
-        controls.target.lerp(host.wrapper.position, 0.18);
-    }
+    const look = resolveChaseLookTeam(host);
+    const pose = getAircraftChaseCamPose(host, look);
+    camera.position.lerp(pose.camPos, 0.16);
+    controls.target.lerp(pose.targetPos, 0.2);
 }
 
 function initAircraftPickClick() {
@@ -365,8 +404,9 @@ function checkInit() {
             bootIds.forEach(id => {
                 let t = teams[id];
                 if (!t || !t.wrapper) return;
-                t.ap = 107;   
-                t.heat = 0;  
+                t.ap = (CONFIG.aircrafts[t.type || 'mig21'] && CONFIG.aircrafts[t.type || 'mig21'].baseAp) || 165;   
+                t.heat = 0;
+                t.gunHeat = 0;
                 t.hp = 100;  
                 t.chain = [{yaw:0, pitch:0, roll:0, throttle:t.throttle, fire:'none'}];
                 let res = simulateFlight(t, t.chain); t.pathPoints = res.points; t.pathQuats = res.quats;
@@ -419,6 +459,7 @@ window.updateTacticalPreview = function(teamObj) {
 
     if (!GameContext.isAnimating() && !GameContext.isReplayMode()) {
         GameContext.callService('drawStaticFlares');
+        GameContext.callService('drawStaticChaff');
 
         previewIds.forEach(id => {
             if (teams[id].pylons) {
@@ -462,7 +503,9 @@ window.updateTacticalPreview = function(teamObj) {
             currentPitch = Math.max(-acConfig.maxPitch, Math.min(-acConfig.maxPitch * 0.88, currentPitch));
             const recoveryThrottle = stallAlt < 18 ? Math.min(teamObj.throttle || 4, 3) : Math.min(teamObj.throttle || 4, 4);
             const recoveryStats = acConfig.throttleStats[recoveryThrottle] || { heat: 0 };
-            teamObj.chain = [{ yaw: currentYaw, pitch: currentPitch, roll: currentRoll, throttle: recoveryThrottle, heatDelta: recoveryStats.heat, fire: teamObj.queuedAction || 'none' }];
+            let fireAct = teamObj.queuedAction || 'none';
+            if (fireAct === 'gun' && GameContext.stateMachine.isGunOverheated(teamObj.id)) fireAct = 'none';
+            teamObj.chain = [{ yaw: currentYaw, pitch: currentPitch, roll: currentRoll, throttle: recoveryThrottle, heatDelta: recoveryStats.heat, fire: fireAct }];
         } else {
             // 失速物理反饋：操縱靈敏度剩餘 15%，機頭自動下垂
             currentYaw *= 0.15; currentRoll *= 0.15;
@@ -475,7 +518,9 @@ window.updateTacticalPreview = function(teamObj) {
             currentPitch = Math.max(-acConfig.maxPitch, Math.min(acConfig.maxPitch, currentPitch)); 
             currentRoll = Math.max(-acConfig.maxRoll, Math.min(acConfig.maxRoll, currentRoll)); 
         }
-        teamObj.chain = [{ yaw: currentYaw, pitch: currentPitch, roll: currentRoll, throttle: teamObj.throttle, heatDelta: stats.heat, fire: teamObj.queuedAction || 'none' }];
+        let fireAct = teamObj.queuedAction || 'none';
+        if (fireAct === 'gun' && GameContext.stateMachine.isGunOverheated(teamObj.id)) fireAct = 'none';
+        teamObj.chain = [{ yaw: currentYaw, pitch: currentPitch, roll: currentRoll, throttle: teamObj.throttle, heatDelta: stats.heat, fire: fireAct }];
     }   
        
     // 呼叫物理引擎
@@ -658,24 +703,28 @@ function animate() {
     // ==========================================
     // 🌟 統一的尾焰物理動畫
     // ==========================================
-    ['red', 'blue'].forEach(id => {
+    const exhaustIds = (GameContext.getActiveMatchIds && GameContext.getActiveMatchIds()) || ['red', 'blue'];
+    exhaustIds.forEach(id => {
         let t = teams[id];
-        if (t.wrapper && t.wrapper.userData && t.wrapper.userData.exhaust && !t.isDestroyed) {
-            let exhaust = t.wrapper.userData.exhaust;
-            let throttle = t.throttle || 2; 
-            
-            exhaust.machTex.offset.y -= 0.02 * throttle;
-            exhaust.outerTex.offset.y -= 0.03 * throttle;
-            let flicker = Math.sin(now * 0.05) * 0.02 * throttle;
+        if (!t || !t.wrapper || !t.wrapper.userData || !t.wrapper.userData.exhaust || t.isDestroyed) return;
+        let exhaust = t.wrapper.userData.exhaust;
+        let throttle = t.throttle || 2;
 
-            let scaleX = 0.5 * (0.8 + throttle * 0.1);
-            let scaleY = 0.5 * (0.8 + throttle * 0.1);
-            let scaleZ = 0.5 * (throttle * 0.45) + flicker; 
+        exhaust.machTex.offset.y -= 0.02 * throttle;
+        exhaust.outerTex.offset.y -= 0.03 * throttle;
+        let flicker = Math.sin(now * 0.05) * 0.02 * throttle;
 
-            exhaust.group.scale.set(scaleX, scaleY, scaleZ);
+        let scaleX = 0.5 * (0.8 + throttle * 0.1);
+        let scaleY = 0.5 * (0.8 + throttle * 0.1);
+        let scaleZ = 0.5 * (throttle * 0.45) + flicker;
 
-            let targetOpacity = 0.05 + (throttle * 0.30);
+        exhaust.group.scale.set(scaleX, scaleY, scaleZ);
+
+        let targetOpacity = 0.05 + (throttle * 0.30);
+        if (exhaust.group.children[0] && exhaust.group.children[0].material) {
             exhaust.group.children[0].material.opacity = targetOpacity;
+        }
+        if (exhaust.group.children[1] && exhaust.group.children[1].material) {
             exhaust.group.children[1].material.opacity = Math.min(1.0, targetOpacity * 1.2);
         }
     });
@@ -771,6 +820,9 @@ function animate() {
             console.error("戰鬥播放崩潰，已強制跳轉:", err); 
             if(typeof finishTurnSimultaneously === 'function') finishTurnSimultaneously(); 
         }
+    } else if (!GameContext.isReplayMode()) {
+        // Keep chaff sparkles flickering while planning between turns
+        GameContext.callService('drawStaticChaff');
     }
     renderer.render(scene, camera);
 }
@@ -823,6 +875,21 @@ function exitReplayMode() {
 
     let sld = document.getElementById('replay-slider');
     if (sld) sld.value = sld.max; 
+
+    // Restore live visibility after ACMI may have re-shown historically-alive wrecks.
+    ['red', 'red2', 'blue', 'blue2'].forEach((id) => {
+        const t = teams[id];
+        if (!t || !t.wrapper) return;
+        if (t.matchActive === false) {
+            t.wrapper.visible = false;
+            return;
+        }
+        const gone = t.isDestroyed && t.wreckPhase !== 'falling';
+        t.wrapper.visible = !gone;
+        if (t.wrapper.userData.exhaust) {
+            t.wrapper.userData.exhaust.group.visible = !t.isDestroyed;
+        }
+    });
     
     const currentTeam = GameContext.getActiveTeamId();
     if (GameContext.getTeam(currentTeam)) GameContext.callService('updateTacticalPreview', GameContext.getTeam(currentTeam));

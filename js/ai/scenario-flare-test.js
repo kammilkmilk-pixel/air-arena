@@ -38,6 +38,7 @@
         if (!ai) return;
         ai.lowAltRecoveryMemory = {};
         ai.postGroundRecoveryMemory = {};
+        ai.navIntentMemory = {};
         ai.weaponRangeMemory = {};
         ai.urbanAvoidMemory = {};
         ai.loopMemory = {};

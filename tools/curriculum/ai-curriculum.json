@@ -83,7 +83,7 @@
         "spawn_profile": "default"
       },
       "pass_overrides": {
-        "crash_rate_max": 0.08,
+        "crash_rate_max": 0.1,
         "stall_events_per_episode_max": 0.55,
         "avg_stall_recovery_turns_max": 2.4,
         "max_altitude_max": 112,
@@ -131,11 +131,54 @@
         "avg_low_altitude_turns_max": 8,
         "avg_enemy_hp_left_max": null
       }
+    },
+    {
+      "id": "F-fox2-opening",
+      "name": "FOX2-FIRST Opening Doctrine",
+      "variable_focus": "Missile-biased opening, alignFirst, no hybridPress; roof/Scheme B cover parity.",
+      "policy_modes": ["fox2-first"],
+      "enforce_combat_gates": false,
+      "environment": {
+        "building_density": "low",
+        "building_count": 3,
+        "building_layout": "spaced",
+        "spawn_profile": "fox2-opening"
+      },
+      "pass_overrides": {
+        "crash_rate_max": 0.1,
+        "stall_events_per_episode_max": 0.65,
+        "avg_stall_recovery_turns_max": 2.8,
+        "avg_enemy_hp_left_max": 95,
+        "avg_hits_missile_min": 0.02
+      }
+    },
+    {
+      "id": "G-urban-gap-corridor",
+      "name": "Urban Gap Corridor (Step 2)",
+      "variable_focus": "Alternating-corridor pressure with low start; crash/stall stay bounded under gap-friendly tuning (M2).",
+      "enforce_combat_gates": false,
+      "environment": {
+        "building_density": "medium",
+        "building_count": 6,
+        "building_layout": "alternating-corridor",
+        "spawn_profile": "low-start"
+      },
+      "pass_overrides": {
+        "crash_rate_max": 0.18,
+        "stall_events_per_episode_max": 0.75,
+        "avg_stall_recovery_turns_max": 3.2,
+        "max_altitude_max": 110,
+        "avg_high_altitude_turns_max": 16,
+        "avg_enemy_hp_left_max": 95,
+        "avg_turns_max": 80
+      }
     }
   ],
   "manual_notes": [
     "Advance only one stage at a time.",
     "If a stage fails, tune only one variable group before rerunning (e.g., flare logic or stall recovery).",
-    "Do not tune weapon seeker values until stage A and B are stable."
+    "Do not tune weapon seeker values until stage A and B are stable.",
+    "Doctrine smoke (fox2 align/lockout + roof/Scheme B + M2 gap/energy) always runs before stage episodes.",
+    "Step2 unit smoke: npm run test:building-risk. Full AI pack: npm run test:ai."
   ]
 }

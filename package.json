@@ -10,7 +10,15 @@
     "autotune:merge": "node tools/ai-autotune-merge.js --top 3 --stableN 3",
     "autotune:apply": "node tools/ai-apply-tuning.js --source consensus",
     "autotune:pipeline": "npm run autotune && npm run autotune:merge && npm run autotune:apply",
-    "test:ai": "node tools/ai-regression.js",
+    "test:ai": "node tools/decide-gate-smoke.js && node tools/building-risk-smoke.js && node tools/weapon-envelope-smoke.js && node tools/munition-doctrine-smoke.js && node tools/sarh-support-smoke.js && node tools/ai-map-smoke.js && node tools/ai-regression.js",
+    "test:decide-gates": "node tools/decide-gate-smoke.js",
+    "test:building-risk": "node tools/building-risk-smoke.js",
+    "test:weapon-envelope": "node tools/weapon-envelope-smoke.js",
+    "test:munition-doctrine": "node tools/munition-doctrine-smoke.js",
+    "test:sarh-support": "node tools/sarh-support-smoke.js",
+    "test:ai-map": "node tools/ai-map-smoke.js",
+    "bake:ai-map": "node tools/ai-map-smoke.js --write",
+    "test:ai:gap": "node tools/building-risk-smoke.js && node tools/ai-regression.js --stage G-urban-gap-corridor --runs 2 --episodes 20",
     "tuning:dashboard": "node tools/tuning-dashboard-server.js"
   },
   "devDependencies": {

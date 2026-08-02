@@ -15,21 +15,25 @@ const GUN_DAMAGE = CONFIG.weapons['gun'].damage;
 const GUN_RANGE = CONFIG.weapons['gun'].range;
 const GUN_ANGLE = CONFIG.weapons['gun'].angle;
 const BULLET_SPEED = 4.0;
-const DYNAMIC_GUN_RANGE = 70;
+/** @deprecated Use GUN_RANGE — kept as alias for old call sites. */
+const DYNAMIC_GUN_RANGE = GUN_RANGE;
 
-const MISSILE_DAMAGE = CONFIG.weapons['fox2'].damage;
-const MISSILE_SCALE = CONFIG.weapons['fox2'].model.scale;
-const MISSILE_ROT_X = CONFIG.weapons['fox2'].model.rotX;
-const MISSILE_ROT_Y = CONFIG.weapons['fox2'].model.rotY;
-const MISSILE_ROT_Z = CONFIG.weapons['fox2'].model.rotZ;
-const MISSILE_MAX_AP = CONFIG.weapons['fox2'].maxAp;
-const SEEKER_RANGE = CONFIG.weapons['fox2'].seekerRange;
-const SEEKER_ANGLE = CONFIG.weapons['fox2'].seekerAngle;
-const SEEKER_MIN_HEAT = CONFIG.weapons['fox2'].seekerMinHeat;
+// Legacy module globals mirror FOX-2 (IR default). Prefer getMissileWeaponConfig(type)
+// or AirArenaWeaponEnvelope.getMissileCombatEnvelope(type) for typed munitions.
+const _FOX2_WPN = CONFIG.weapons.fox2;
+const MISSILE_DAMAGE = _FOX2_WPN.damage;
+const MISSILE_SCALE = _FOX2_WPN.model.scale;
+const MISSILE_ROT_X = _FOX2_WPN.model.rotX;
+const MISSILE_ROT_Y = _FOX2_WPN.model.rotY;
+const MISSILE_ROT_Z = _FOX2_WPN.model.rotZ;
+const MISSILE_MAX_AP = _FOX2_WPN.maxAp;
+const SEEKER_RANGE = _FOX2_WPN.seekerRange;
+const SEEKER_ANGLE = _FOX2_WPN.seekerAngle;
+const SEEKER_MIN_HEAT = _FOX2_WPN.seekerMinHeat;
 
-const MISSILE_SPEED = CONFIG.weapons['fox2'].speed;
-const MISSILE_TURN_RATE = CONFIG.weapons['fox2'].turnRate;
-const MISSILE_DRAG = CONFIG.weapons['fox2'].drag;
+const MISSILE_SPEED = _FOX2_WPN.speed;
+const MISSILE_TURN_RATE = _FOX2_WPN.turnRate;
+const MISSILE_DRAG = _FOX2_WPN.drag;
 
 GameContext.constants = {
     MAX_HP, MAX_HEAT, MAX_AP,
@@ -50,9 +54,11 @@ function createTeamState(id, colorMain, matchActive = true) {
         wrapper: null,
         hp: MAX_HP,
         isDestroyed: false,
-        ap: 120,
-        speed: 120,
+        ap: CONFIG.aircrafts['mig21'].baseAp || 165,
+        speed: CONFIG.aircrafts['mig21'].baseAp || 165,
         heat: 0,
+        /** Machine-gun barrel heat 0–1 (overheat blocks fire). */
+        gunHeat: 0,
         flameout: false,
         throttle: 4,
         chain: [],
@@ -61,12 +67,16 @@ function createTeamState(id, colorMain, matchActive = true) {
         weapon: 'gun',
         wpnQueued: false,
         flareAmmo: CONFIG.weapons['flare'].maxAmmo,
+        chaffAmmo: (CONFIG.weapons.chaff && CONFIG.weapons.chaff.maxAmmo) ? CONFIG.weapons.chaff.maxAmmo : 3,
         flaresArmed: false,
+        chaffArmed: false,
+        pendingPylonLoadout: null,
         ready: false,
         aiEnabled: false,
         aiState: 'player',
         aiStatusText: 'PLAYER CONTROL',
         aiLastAction: null,
+        aiPreDeathAction: null,
         aiManualOverride: 'auto',
         aiPolicyMode: 'heuristic',
         aiFox2OpeningAmbush: false,
@@ -74,8 +84,12 @@ function createTeamState(id, colorMain, matchActive = true) {
         aiThreatLastTurn: -1,
         aiThreatActive: false,
         aiLastFlareTurn: -99,
+        aiLastChaffTurn: -99,
         aiDebugTrace: [],
         aiDebugRecording: false,
+        // Always-on compact decision ring buffer (export-all / death forensics).
+        aiDecisionTrail: [],
+        aiDecisionTrailFrozen: false,
         wingmanOrder: 'follow',
         lockedTargetId: null,
         wreckPhase: null,
@@ -92,10 +106,10 @@ function createTeamState(id, colorMain, matchActive = true) {
 }
 
 state.initialPositions = {
-    red: { pos: new THREE.Vector3(10, 25, -30), quat: new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0, 0)) },
-    red2: { pos: new THREE.Vector3(18, 25, -34), quat: new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0, 0)) },
-    blue: { pos: new THREE.Vector3(10, 25, 70), quat: new THREE.Quaternion().setFromEuler(new THREE.Euler(0, Math.PI, 0)) },
-    blue2: { pos: new THREE.Vector3(18, 25, 74), quat: new THREE.Quaternion().setFromEuler(new THREE.Euler(0, Math.PI, 0)) }
+    red: { pos: new THREE.Vector3(10, 45, -50), quat: new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0, 0)) },
+    red2: { pos: new THREE.Vector3(18, 45, -54), quat: new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0, 0)) },
+    blue: { pos: new THREE.Vector3(10, 45, 50), quat: new THREE.Quaternion().setFromEuler(new THREE.Euler(0, Math.PI, 0)) },
+    blue2: { pos: new THREE.Vector3(18, 45, 54), quat: new THREE.Quaternion().setFromEuler(new THREE.Euler(0, Math.PI, 0)) }
 };
 
 state.teams = {

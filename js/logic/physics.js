@@ -71,9 +71,12 @@ function simulateFlight(teamObj, chain) {
             let yawDrag = Math.abs(dYaw * 180 / Math.PI) * FRAMES * 0.6;
             let pitchDrag = Math.abs(dPitch * 180 / Math.PI) * FRAMES * 0.25;
             let gravityDrag = forwardVector.y * 30; // 爬升掉AP，俯衝加AP
-            
+            // Thrust rebuilds AP inside the sim (not again in updateAP — that pinned energy at maxAp).
+            // +10 flat rebuild per command (AP recovery speed +10).
+            let thrustGain = baseThrust * 0.12 + 10;
+
             // 結算當前 AP
-            activeAP = Math.max(-100, Math.min(MAX_AP, activeAP - (yawDrag + pitchDrag + brakeDrag) / FRAMES - gravityDrag / FRAMES));
+            activeAP = Math.max(-100, Math.min(MAX_AP, activeAP + (thrustGain - yawDrag - pitchDrag - brakeDrag) / FRAMES - gravityDrag / FRAMES));
             
             simObj.rotateY(dYaw); 
             simObj.rotateX(dPitch); 
@@ -85,10 +88,9 @@ function simulateFlight(teamObj, chain) {
             
             simObj.translateZ(Math.max(0.01, finalStepDistance)); 
 
-            // 🛠️ 【新增核心邏輯】失速物理沉降：若當前處於失速狀態，強行在世界座標 y 軸扣除高度！
+            // 失速物理沉降：減輕懲罰（原每幀 0.08 → 0.05）
             if (teamObj.stalled) {
-                // 每幀強行向地面墜落 0.08 單位（每回合累積掉巨大高度），模擬升力喪失
-                simObj.position.y -= 0.08; 
+                simObj.position.y -= 0.05;
             }
             
             points.push(simObj.position.clone()); 

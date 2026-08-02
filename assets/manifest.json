@@ -1,6 +1,14 @@
 {
   "version": "2.2",
   "required": {
+    "maps": [
+      { "path": "assets/maps/index.json", "note": "內建地圖目錄；開場「選擇地圖」列出 packaged maps" },
+      { "path": "assets/maps/citymap.json", "fallback": "original city.glb / CONFIG.map.buildings", "editor": "map-editor/", "note": "City Map 內建選項" },
+      { "path": "assets/maps/default.json", "fallback": "original city.glb / CONFIG.map.buildings", "editor": "map-editor/", "note": "編輯器範本；自訂地圖經開場「加入」匯入，不自動覆蓋原版" }
+    ],
+    "sky": [
+      { "path": "assets/sky/", "note": "等距柱狀／橫向全景 JPG 或 PNG，供 map sky.texture 使用" }
+    ],
     "models": [
       { "path": "assets/models/mig21_red.glb", "fallback": "procedural aircraft" },
       { "path": "assets/models/mig21_blue.glb", "fallback": "procedural aircraft" },

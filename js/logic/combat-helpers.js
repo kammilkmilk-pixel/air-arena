@@ -30,17 +30,40 @@ function tryAttachAllPylons() {
         ? GameContext.getRosterIds()
         : ['red', 'blue'];
     if (!missileMeshBase) return;
+    const matchCfg = (typeof GameContext !== 'undefined' && GameContext.getMatchConfig)
+        ? GameContext.getMatchConfig()
+        : null;
     ids.forEach(id => {
         const t = teams[id];
         if (!t || !t.wrapper || t.pylons) return;
         const acConfig = CONFIG.aircrafts[t.type || 'mig21'];
-        t.pylons = acConfig.pylons.map(p => {
+        let loadout = Array.isArray(t.pendingPylonLoadout)
+            ? (typeof sanitizePylonLoadout === 'function' ? sanitizePylonLoadout(t.pendingPylonLoadout) : t.pendingPylonLoadout)
+            : null;
+        if (!loadout && matchCfg && matchCfg.seats) {
+            const seat = Object.values(matchCfg.seats).find((s) => s && s.teamId === id);
+            if (seat && seat.pylons) {
+                loadout = typeof sanitizePylonLoadout === 'function'
+                    ? sanitizePylonLoadout(seat.pylons)
+                    : seat.pylons;
+            }
+        }
+        t.pylons = acConfig.pylons.map((p, idx) => {
             let pMesh = new THREE.Group(); pMesh.add(missileMeshBase.clone());
-            pMesh.position.set(p.position[0], p.position[1], p.position[2]); t.wrapper.add(pMesh); 
-            const pylonState = { id: p.id, localPosition: new THREE.Vector3(p.position[0], p.position[1], p.position[2]), weaponType: p.weapon, state: 'standby' };
+            pMesh.position.set(p.position[0], p.position[1], p.position[2]); t.wrapper.add(pMesh);
+            const weaponType = (loadout && loadout[idx])
+                ? (typeof sanitizePylonWeapon === 'function' ? sanitizePylonWeapon(loadout[idx]) : loadout[idx])
+                : (p.weapon || 'fox2');
+            const pylonState = {
+                id: p.id,
+                localPosition: new THREE.Vector3(p.position[0], p.position[1], p.position[2]),
+                weaponType,
+                state: 'standby'
+            };
             return GameContext.bindPylonView(id, pylonState, { mesh: pMesh, lineMesh: null });
         });
         t.activeMissiles = [];
+        t.pendingPylonLoadout = null;
     });
 }
 

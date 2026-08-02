@@ -25,6 +25,36 @@
                     </div>
                     <div id="match-mode-hint" class="match-setup-hint">2v2：翼機可收僚機令（跟隨／攻擊我的目標／掩護／脫離）。建議 RED-1 人工、RED-2 AI 測合作。</div>
                 </div>
+            <div class="match-setup-section">
+                    <div class="match-setup-label">選擇地圖</div>
+                    <div class="match-map-row">
+                        <select id="match-map-select" aria-label="選擇地圖"></select>
+                        <button type="button" id="btn-map-import" class="match-map-btn" title="匯入編輯器匯出的 JSON">加入</button>
+                        <button type="button" id="btn-map-delete" class="match-map-btn match-map-btn-danger" title="刪除選中的自訂地圖">刪除</button>
+                        <input type="file" id="match-map-file" accept="application/json,.json" hidden>
+                    </div>
+                    <div class="match-spawn-row">
+                        <label class="match-spawn-field" for="match-spawn-alt">
+                            <span>起始高度</span>
+                            <select id="match-spawn-alt" aria-label="起始高度">
+                                <option value="28">28m 街谷</option>
+                                <option value="45" selected>45m 戰鬥帶</option>
+                                <option value="60">60m 高空</option>
+                                <option value="80">80m 屋頂帶</option>
+                            </select>
+                        </label>
+                        <label class="match-spawn-field" for="match-spawn-sep">
+                            <span>相對距離</span>
+                            <select id="match-spawn-sep" aria-label="相對距離">
+                                <option value="60">60m 近</option>
+                                <option value="100" selected>100m 標準</option>
+                                <option value="140">140m 遠</option>
+                                <option value="200">200m 超遠</option>
+                            </select>
+                        </label>
+                    </div>
+                    <div id="match-map-hint" class="match-setup-hint">原版／內建地圖可直接選。自訂地圖請先用 Map Editor 匯出 JSON，再按「加入」。起飛高度／距離在 ENGAGE 時套用。</div>
+                </div>
                 <div class="match-setup-section">
                     <div class="match-setup-label">機組配置</div>
                     <div id="match-seat-list" class="match-seat-list"></div>
@@ -35,18 +65,63 @@
     </div>
     
      
-    <!-- 3. 頂部戰術重播面板 -->
+    <!-- 3. 頂部戰術重播面板 + 席位／規劃按鈕 -->
     <div id="replay-control-bar">
-        <div class="replay-control-main">
-            <span id="replay-status" style="color:#aaa; font-size:12px; font-weight:bold; letter-spacing:1px; margin-right: 15px;">狀態: 戰術規劃中</span>
-            <button id="btn-rep-play" class="replay-btn">▶ 播放</button>
-            <button id="btn-rep-exit" class="replay-btn" style="display:none; color:#ff3355; font-weight:bold; border-color:#ff3355;">↩ 返回座艙</button>
-            <div class="replay-timeline-container">
-                <input type="range" id="replay-slider" min="1" max="1" value="1" step="0.01" disabled>
+        <div class="replay-control-chrome">
+            <div class="replay-control-main" id="replay-control-main">
+                <button id="btn-rep-play" class="replay-btn">▶ 播放</button>
+                <button id="btn-rep-exit" class="replay-btn" style="display:none; color:#ff3355; font-weight:bold; border-color:#ff3355;">↩ 返回座艙</button>
+                <div class="replay-timeline-container">
+                    <input type="range" id="replay-slider" min="1" max="1" value="1" step="0.01" disabled>
+                </div>
+                <button id="btn-ai-debug-export-all" class="replay-btn replay-export-all" type="button" title="複製全機決策文字並下載 JSON（含自動軌跡）">全機決策</button>
             </div>
+            <button id="btn-replay-main-toggle" class="replay-main-toggle" type="button" aria-expanded="true" aria-controls="replay-control-fold" title="收合隊伍／狀態／決策樹" aria-label="收合隊伍／狀態／決策樹">▴</button>
         </div>
-        <div class="replay-debug-row">
-            <button id="btn-ai-debug-export-all" class="replay-btn" type="button" title="複製全機決策文字並下載 JSON">全機決策</button>
+        <div class="replay-control-fold" id="replay-control-fold">
+            <div class="replay-status-row" id="replay-status-row">
+                <span class="replay-status-spinner" id="replay-status-spinner" aria-hidden="true"></span>
+                <span id="replay-status">狀態: 戰術規劃中</span>
+                <span id="compute-lock-sub" class="replay-status-sub" hidden></span>
+            </div>
+            <div id="replay-team-roster" class="replay-team-roster" aria-label="team seats">
+                <div class="team-seat-col" data-team-id="red2" hidden>
+                    <button id="btn-sel-red2" class="team-sel-btn" type="button">RED-2</button>
+                    <div class="team-seat-vitals" data-team-vitals="red2">
+                        <div class="seat-bar seat-bar-hp" title="HP"><span class="seat-bar-fill" id="seat-hp-red2"></span></div>
+                        <div class="seat-bar seat-bar-ap" title="AP"><span class="seat-bar-fill" id="seat-ap-red2"></span></div>
+                        <div class="seat-pylons" id="seat-pylons-red2" title="掛架"></div>
+                    </div>
+                    <button id="btn-engage-red2" class="cockpit-rect-btn" type="button">規劃中</button>
+                </div>
+                <div class="team-seat-col" data-team-id="red">
+                    <button id="btn-sel-red" class="team-sel-btn" type="button">RED-1</button>
+                    <div class="team-seat-vitals" data-team-vitals="red">
+                        <div class="seat-bar seat-bar-hp" title="HP"><span class="seat-bar-fill" id="seat-hp-red"></span></div>
+                        <div class="seat-bar seat-bar-ap" title="AP"><span class="seat-bar-fill" id="seat-ap-red"></span></div>
+                        <div class="seat-pylons" id="seat-pylons-red" title="掛架"></div>
+                    </div>
+                    <button id="btn-engage-red" class="cockpit-rect-btn" type="button">規劃中</button>
+                </div>
+                <div class="team-seat-col" data-team-id="blue">
+                    <button id="btn-sel-blue" class="team-sel-btn" type="button">BLUE-1</button>
+                    <div class="team-seat-vitals" data-team-vitals="blue">
+                        <div class="seat-bar seat-bar-hp" title="HP"><span class="seat-bar-fill" id="seat-hp-blue"></span></div>
+                        <div class="seat-bar seat-bar-ap" title="AP"><span class="seat-bar-fill" id="seat-ap-blue"></span></div>
+                        <div class="seat-pylons" id="seat-pylons-blue" title="掛架"></div>
+                    </div>
+                    <button id="btn-engage-blue" class="cockpit-rect-btn" type="button">規劃中</button>
+                </div>
+                <div class="team-seat-col" data-team-id="blue2" hidden>
+                    <button id="btn-sel-blue2" class="team-sel-btn" type="button">BLUE-2</button>
+                    <div class="team-seat-vitals" data-team-vitals="blue2">
+                        <div class="seat-bar seat-bar-hp" title="HP"><span class="seat-bar-fill" id="seat-hp-blue2"></span></div>
+                        <div class="seat-bar seat-bar-ap" title="AP"><span class="seat-bar-fill" id="seat-ap-blue2"></span></div>
+                        <div class="seat-pylons" id="seat-pylons-blue2" title="掛架"></div>
+                    </div>
+                    <button id="btn-engage-blue2" class="cockpit-rect-btn" type="button">規劃中</button>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -55,7 +130,8 @@
     <div id="stall-screen" style="pointer-events: none;">
         <div id="stall-text">⚠ STALL ⚠<br><span style="font-size:18px;">失速臨界：系統將強制修正航向</span></div>
     </div>
-    <div id="combat-lock-screen"></div>
+    <!-- Transparent input lock while computing; feedback lives in #replay-status-row -->
+    <div id="combat-lock-screen" aria-live="polite" aria-busy="false"></div>
     <div id="phase-banner" style="position: absolute; top: 30%; left: 0; width: 100vw; text-align: center; color: #fff; font-size: 38px; font-weight: bold; letter-spacing: 8px; text-shadow: 0 0 20px #ffeb3b, 0 0 10px #000; pointer-events: none; opacity: 0; transition: opacity 0.4s ease-in-out; z-index: 8500; font-family: 'Courier New', monospace;"></div>
 
     <div id="sensor-panel">
@@ -79,35 +155,14 @@
         <div id="hud-data-tag">
             <span id="hud-tgt-type">MIG21</span><br>
             ALT: <span id="hud-tgt-alt">0</span>m<br>
-            DST: <span id="hud-tgt-dist">0</span>m
+            DST: <span id="hud-tgt-dist">0</span>m<br>
+            <span id="hud-tgt-lock" hidden>LOCK</span>
         </div>
     </div>
 
     <!-- 重播浮動名稱 -->
     <div id="replay-tag-red" class="replay-floating-tag"></div>
     <div id="replay-tag-blue" class="replay-floating-tag"></div>
-
-<div id="panel-red-team" class="team-panel-group layout-top-left">
-    <div class="team-seat-row" data-team-id="red">
-        <button id="btn-sel-red" class="team-sel-btn" type="button">RED-1</button>
-        <button id="btn-engage-red" class="cockpit-rect-btn" type="button">規劃中</button>
-    </div>
-    <div class="team-seat-row" data-team-id="red2" hidden>
-        <button id="btn-sel-red2" class="team-sel-btn" type="button">RED-2</button>
-        <button id="btn-engage-red2" class="cockpit-rect-btn" type="button">規劃中</button>
-    </div>
-</div>
-
-<div id="panel-blue-team" class="team-panel-group layout-top-right">
-    <div class="team-seat-row" data-team-id="blue">
-        <button id="btn-sel-blue" class="team-sel-btn" type="button">BLUE-1</button>
-        <button id="btn-engage-blue" class="cockpit-rect-btn" type="button">規劃中</button>
-    </div>
-    <div class="team-seat-row" data-team-id="blue2" hidden>
-        <button id="btn-sel-blue2" class="team-sel-btn" type="button">BLUE-2</button>
-        <button id="btn-engage-blue2" class="cockpit-rect-btn" type="button">規劃中</button>
-    </div>
-</div>
 
 <div id="wingman-order-hud" hidden>
     <div class="wingman-frame" aria-hidden="true"></div>
@@ -133,40 +188,40 @@
         <option value="dense-urban" selected>密集建築（全部）</option>
         <option value="obstacle-stress">建築壓力測試（顯示/啟用碰撞）</option>
     </select>
+    <label for="arena-spawn-alt">起始高度</label>
+    <select id="arena-spawn-alt" aria-label="起始高度">
+        <option value="28">28m 街谷</option>
+        <option value="45" selected>45m 戰鬥帶</option>
+        <option value="60">60m 高空</option>
+        <option value="80">80m 屋頂帶</option>
+    </select>
+    <label for="arena-spawn-sep">相對距離</label>
+    <select id="arena-spawn-sep" aria-label="相對距離">
+        <option value="60">60m 近</option>
+        <option value="100" selected>100m 標準</option>
+        <option value="140">140m 遠</option>
+        <option value="200">200m 超遠</option>
+    </select>
+    <button type="button" id="btn-arena-apply-spawn" class="arena-spawn-apply">套用起飛位置</button>
     <div id="arena-mode-status">建築物: ON / 碰撞: ON</div>
 </div>
 
 <div id="ai-debug-panel" class="ai-debug-panel">
     <div class="ai-debug-header">
         <span id="ai-debug-title">NPC 決策樹</span>
-        <button id="btn-toggle-ai-debug" class="ai-debug-toggle">隱藏</button>
+    </div>
+    <div id="ai-debug-wingman" class="ai-debug-wingman" hidden>
+        <span class="ai-debug-wingman-label">WINGMAN</span>
+        <div class="ai-debug-wingman-orders" role="group" aria-label="wingman orders">
+            <button type="button" class="ai-debug-wingman-btn" data-order="follow">跟隨</button>
+            <button type="button" class="ai-debug-wingman-btn" data-order="attack">攻擊我的目標</button>
+            <button type="button" class="ai-debug-wingman-btn" data-order="free">主動進攻</button>
+            <button type="button" class="ai-debug-wingman-btn" data-order="cover">掩護</button>
+            <button type="button" class="ai-debug-wingman-btn" data-order="break">脫離</button>
+        </div>
     </div>
     <div id="ai-debug-body" class="ai-debug-body">
         <div id="ai-debug-content" class="ai-debug-team">NPC: 待機中</div>
-        <div class="ai-debug-actions">
-            <button id="btn-ai-debug-copy" class="ai-debug-action-btn" type="button">複製快照</button>
-            <button id="btn-ai-debug-download" class="ai-debug-action-btn" type="button">下載 JSON</button>
-            <button id="btn-ai-debug-record" class="ai-debug-action-btn" type="button">開始錄製</button>
-            <button id="btn-ai-debug-download-trace" class="ai-debug-action-btn" type="button" disabled>下載錄製</button>
-            <span id="ai-debug-record-status" class="ai-debug-record-status">錄製: OFF (0)</span>
-        </div>
-        <div class="ai-debug-control">
-            <label for="ai-override-active">人工干預</label>
-            <select id="ai-override-active">
-                <option value="auto">AUTO</option>
-                <option value="evade">EVADE</option>
-                <option value="gun">FORCE GUN</option>
-                <option value="missile">FORCE MISSILE</option>
-            </select>
-        </div>
-        <div class="ai-debug-control">
-            <label for="ai-policy-mode">策略模式</label>
-            <select id="ai-policy-mode">
-                <option value="heuristic">HEURISTIC（防衛優先）</option>
-                <option value="hybrid">HYBRID（壓制微調）</option>
-                <option value="fox2-first">FOX2-FIRST（開局搶射）</option>
-            </select>
-        </div>
     </div>
 </div>
 
@@ -233,7 +288,12 @@
                 </div>
                 
                 <div id="sms-display-screen">
-                    <div id="sms-text-content">狀態 [就緒] 機砲</div>
+                    <div id="sms-text-wrap">
+                        <div id="sms-text-content">狀態 [就緒] 機砲</div>
+                        <div id="sms-lock-warn" hidden aria-hidden="true">
+                            <span class="sms-lock-marquee">⚠ 被鎖定　⚠ 被鎖定　⚠ 被鎖定　⚠ 被鎖定　⚠ 被鎖定　⚠ 被鎖定　</span>
+                        </div>
+                    </div>
                     <button id="sms-enter-btn">ENT</button>
                 </div>
             </div>
@@ -342,7 +402,14 @@
 
     <!-- 模組化遊戲組件 -->
     <script src="js/core/config.js"></script>
+    <script src="js/ai/weapon-envelope.js"></script>
+    <script src="js/ai/building-risk.js"></script>
+    <script src="js/ai/ai-map.js"></script>
+    <script src="js/ai/urban-avoid-side.js"></script>
+    <script src="js/ai/decide-pipeline.js"></script>
     <script src="js/core/fallbacks.js"></script>
+    <script src="js/core/map-loader.js"></script>
+    <script src="js/core/map-catalog.js"></script>
     <script src="js/core/context.js"></script>
     <script src="js/core/team-state.js"></script>
     <script src="js/core/compat-aliases.js"></script>
@@ -350,6 +417,7 @@
     <script src="js/core/state-machine-wreck.js"></script>
     <script src="js/core/state-machine.js"></script>
     <script src="js/logic/physics.js"></script>
+    <script src="js/logic/sarh.js"></script>
     <script src="js/logic/weapon.js"></script>
     <script src="js/logic/combat-helpers.js"></script>
     <script src="js/logic/combat-pipeline.js"></script>

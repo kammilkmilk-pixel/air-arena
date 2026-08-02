@@ -7,6 +7,7 @@
 // ---------------------------------------------------------------------------
 let battleLog = state.battleLog;
 let globalFlares = state.globalFlares;
+let globalChaff = state.globalChaff;
 let globalBullets = state.globalBullets;
 
 let initialPositions = state.initialPositions;

@@ -7,16 +7,159 @@ function uiCurrentTeam() { return GameContext.getActiveTeam(); }
 function uiRefreshPreview(team) { GameContext.callService('updateTacticalPreview', team); }
 let uiAutoAIBattleTimer = null;
 let uiAutoAIFirstDelayDone = false;
+let uiTurnComputeBusy = false;
+
+/** Yield so the browser can paint the computing overlay before sync AI / resolution. */
+function uiYieldPaint() {
+    return new Promise((resolve) => {
+        if (typeof requestAnimationFrame !== 'function') {
+            setTimeout(resolve, 0);
+            return;
+        }
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => setTimeout(resolve, 0));
+        });
+    });
+}
+
+function uiShowComputingOverlay(subtitle = '戰術結算與 AI 決策') {
+    const lock = document.getElementById('combat-lock-screen');
+    if (lock) {
+        lock.style.display = 'block';
+        lock.classList.add('is-visible');
+        lock.setAttribute('aria-busy', 'true');
+    }
+    const bar = document.getElementById('replay-control-bar');
+    if (bar) bar.classList.add('is-computing');
+    // Status/spinner live in the fold — expand so players can see computing feedback.
+    if (uiIsReplayMainCollapsed()) uiSetReplayMainCollapsed(false);
+    const repStatus = document.getElementById('replay-status');
+    if (repStatus) {
+        repStatus.innerText = '狀態: 運算中';
+        repStatus.style.color = '#ffcc66';
+    }
+    uiSetComputeSub(subtitle);
+    const dashboard = document.getElementById('ui-dashboard');
+    if (dashboard) {
+        dashboard.style.pointerEvents = 'none';
+        dashboard.style.opacity = '0.2';
+    }
+    uiSetControlsVisible(false);
+}
+
+function uiHideComputingOverlay() {
+    const lock = document.getElementById('combat-lock-screen');
+    if (lock) {
+        lock.style.display = 'none';
+        lock.classList.remove('is-visible');
+        lock.setAttribute('aria-busy', 'false');
+    }
+    const bar = document.getElementById('replay-control-bar');
+    if (bar) bar.classList.remove('is-computing');
+    const sub = document.getElementById('compute-lock-sub');
+    if (sub) {
+        sub.textContent = '';
+        sub.hidden = true;
+    }
+}
+
+function uiSetComputeSub(subtitle) {
+    const sub = document.getElementById('compute-lock-sub');
+    if (!sub) return;
+    const text = subtitle != null ? String(subtitle) : '';
+    sub.textContent = text;
+    sub.hidden = !text;
+}
+
+/**
+ * Run pending AI seats (with paint yields), then resolve the turn if everyone is ready.
+ * Shows computing feedback in the top status row (spinner + 狀態) while JS blocks.
+ */
+async function uiRunPendingAIAndMaybeResolve() {
+    if (uiTurnComputeBusy || GameContext.isAnimating() || GameContext.isReplayMode()) return false;
+    uiTurnComputeBusy = true;
+    let handedToTurnExec = false;
+    try {
+        const living = uiLivingTeamIds();
+        const pendingAi = living.filter((id) => {
+            const t = teams[id];
+            return !!(t && t.aiEnabled && !t.ready && !t.isDestroyed && t.matchActive !== false);
+        });
+        const allReadyAlready = !!(GameContext.areAllLivingReady && GameContext.areAllLivingReady());
+        if (!pendingAi.length && !allReadyAlready) return false;
+
+        uiShowComputingOverlay(pendingAi.length ? 'NPC 決策中…' : '戰術結算中…');
+        await uiYieldPaint();
+
+        for (let i = 0; i < pendingAi.length; i++) {
+            const id = pendingAi[i];
+            uiSetComputeSub(`NPC 決策 ${String(id).toUpperCase()} (${i + 1}/${pendingAi.length})…`);
+            uiRunAI(id);
+            await uiYieldPaint();
+        }
+
+        if (GameContext.areAllLivingReady && GameContext.areAllLivingReady()) {
+            uiSetComputeSub('戰術結算中…');
+            await uiYieldPaint();
+            handedToTurnExec = true;
+            if (window.executeTurnSimultaneously) window.executeTurnSimultaneously();
+            return true;
+        }
+        uiHideComputingOverlay();
+        return false;
+    } catch (err) {
+        console.error('回合提交運算失敗：', err);
+        uiHideComputingOverlay();
+        return false;
+    } finally {
+        if (!handedToTurnExec) uiTurnComputeBusy = false;
+        else {
+            // Turn exec owns the lock screen until playing; release busy after schedule.
+            uiTurnComputeBusy = false;
+        }
+    }
+}
+window.uiShowComputingOverlay = uiShowComputingOverlay;
+window.uiHideComputingOverlay = uiHideComputingOverlay;
+window.uiRunPendingAIAndMaybeResolve = uiRunPendingAIAndMaybeResolve;
 let uiMatchSetupState = {
     mode: '1v1',
+    mapId: 'original',
+    spawnAltitude: 45,
+    spawnSeparation: 100,
     seats: {
-        'red-1': { control: 'human', loadout: 'standard' },
-        'red-2': { control: 'ai', loadout: 'standard' },
-        'blue-1': { control: 'ai', loadout: 'standard' },
-        'blue-2': { control: 'ai', loadout: 'standard' }
+        'red-1': { control: 'human', loadout: 'standard', pylons: ['fox1', 'fox2', 'fox2', 'fox1'] },
+        'red-2': { control: 'ai', loadout: 'standard', pylons: ['fox1', 'fox2', 'fox2', 'fox1'] },
+        'blue-1': { control: 'ai', loadout: 'standard', pylons: ['fox1', 'fox2', 'fox2', 'fox1'] },
+        'blue-2': { control: 'ai', loadout: 'standard', pylons: ['fox1', 'fox2', 'fox2', 'fox1'] }
     }
 };
 let uiMatchSetupBound = false;
+
+function uiSanitizeSpawnAltitude(alt) {
+    if (GameContext && GameContext.sanitizeSpawnAltitude) return GameContext.sanitizeSpawnAltitude(alt);
+    const n = Math.round(Number(alt));
+    return [28, 45, 60, 80].includes(n) ? n : 45;
+}
+
+function uiSanitizeSpawnSeparation(sep) {
+    if (GameContext && GameContext.sanitizeSpawnSeparation) return GameContext.sanitizeSpawnSeparation(sep);
+    const n = Math.round(Number(sep));
+    return [60, 100, 140, 200].includes(n) ? n : 100;
+}
+
+function uiSyncSpawnSelects(altitude, separation) {
+    const alt = String(uiSanitizeSpawnAltitude(altitude));
+    const sep = String(uiSanitizeSpawnSeparation(separation));
+    ['match-spawn-alt', 'arena-spawn-alt'].forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) el.value = alt;
+    });
+    ['match-spawn-sep', 'arena-spawn-sep'].forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) el.value = sep;
+    });
+}
 
 function uiMatchSeatDefs(mode) {
     if (mode === '2v2') {
@@ -33,24 +176,69 @@ function uiMatchSeatDefs(mode) {
     ];
 }
 
+function uiRefreshMapSelect() {
+    const select = document.getElementById('match-map-select');
+    if (!select || !window.MapCatalog) return;
+    const paint = () => {
+        const selected = window.MapCatalog.getSelectedId();
+        const items = window.MapCatalog.list();
+        select.innerHTML = '';
+        items.forEach((item) => {
+            const opt = document.createElement('option');
+            opt.value = item.id;
+            if (item.kind === 'custom') opt.textContent = `${item.name} (自訂)`;
+            else opt.textContent = item.name;
+            select.appendChild(opt);
+        });
+        const exists = items.some((i) => i.id === selected);
+        select.value = exists ? selected : window.MapCatalog.ORIGINAL_ID;
+        uiMatchSetupState.mapId = select.value;
+        uiUpdateMapDeleteButton();
+    };
+    paint();
+    if (typeof window.MapCatalog.init === 'function') {
+        window.MapCatalog.init().then(paint).catch(() => paint());
+    }
+}
+
+function uiUpdateMapDeleteButton() {
+    const btn = document.getElementById('btn-map-delete');
+    const select = document.getElementById('match-map-select');
+    if (!btn || !select || !window.MapCatalog) return;
+    const item = window.MapCatalog.list().find((m) => m.id === select.value);
+    btn.disabled = !(item && item.removable);
+}
+
 function uiReadMatchSetupFromDom() {
     const modeBtn = document.querySelector('.match-mode-btn.is-active');
     const mode = (modeBtn && modeBtn.getAttribute('data-mode') === '2v2') ? '2v2' : '1v1';
+    const mapSelect = document.getElementById('match-map-select');
+    const mapId = (mapSelect && mapSelect.value) || (window.MapCatalog && window.MapCatalog.ORIGINAL_ID) || 'original';
+    const altEl = document.getElementById('match-spawn-alt');
+    const sepEl = document.getElementById('match-spawn-sep');
+    const spawnAltitude = uiSanitizeSpawnAltitude(altEl ? altEl.value : uiMatchSetupState.spawnAltitude);
+    const spawnSeparation = uiSanitizeSpawnSeparation(sepEl ? sepEl.value : uiMatchSetupState.spawnSeparation);
     const seats = {
-        'red-1': { control: 'human', loadout: 'standard' },
-        'red-2': { control: 'ai', loadout: 'standard' },
-        'blue-1': { control: 'ai', loadout: 'standard' },
-        'blue-2': { control: 'ai', loadout: 'standard' }
+        'red-1': { control: 'human', loadout: 'standard', pylons: ['fox1', 'fox2', 'fox2', 'fox1'] },
+        'red-2': { control: 'ai', loadout: 'standard', pylons: ['fox1', 'fox2', 'fox2', 'fox1'] },
+        'blue-1': { control: 'ai', loadout: 'standard', pylons: ['fox1', 'fox2', 'fox2', 'fox1'] },
+        'blue-2': { control: 'ai', loadout: 'standard', pylons: ['fox1', 'fox2', 'fox2', 'fox1'] }
     };
     uiMatchSeatDefs(mode).forEach((def) => {
         const controlEl = document.getElementById(`match-control-${def.id}`);
         const loadoutEl = document.getElementById(`match-loadout-${def.id}`);
         seats[def.id] = {
             control: (controlEl && controlEl.value === 'ai') ? 'ai' : 'human',
-            loadout: (loadoutEl && loadoutEl.value) || 'standard'
+            loadout: (loadoutEl && loadoutEl.value) || 'standard',
+            pylons: [1, 2, 3, 4].map((n) => {
+                const el = document.getElementById(`match-pylon-${def.id}-${n}`);
+                const v = el && el.value === 'fox1' ? 'fox1' : 'fox2';
+                return v;
+            })
         };
     });
-    uiMatchSetupState = { mode, seats };
+    uiMatchSetupState = { mode, mapId, spawnAltitude, spawnSeparation, seats };
+    uiSyncSpawnSelects(spawnAltitude, spawnSeparation);
     return uiMatchSetupState;
 }
 
@@ -60,9 +248,19 @@ function uiRenderMatchSeatList() {
     const mode = uiMatchSetupState.mode;
     const defs = uiMatchSeatDefs(mode);
     list.innerHTML = defs.map((def) => {
-        const seat = uiMatchSetupState.seats[def.id] || { control: 'ai', loadout: 'standard' };
+        const seat = uiMatchSetupState.seats[def.id] || { control: 'ai', loadout: 'standard', pylons: ['fox1', 'fox2', 'fox2', 'fox1'] };
+        const pylons = (typeof sanitizePylonLoadout === 'function')
+            ? sanitizePylonLoadout(seat.pylons)
+            : (seat.pylons || ['fox1', 'fox2', 'fox2', 'fox1']);
         const disabled = def.live ? '' : ' is-disabled';
         const note = def.live ? '' : ' title="此座位尚未啟用"';
+        const pylonSelects = [0, 1, 2, 3].map((i) => {
+            const w = pylons[i] === 'fox1' ? 'fox1' : 'fox2';
+            return `<select id="match-pylon-${def.id}-${i + 1}" class="match-pylon-select" aria-label="${def.label} pylon ${i + 1}"${def.live ? '' : ' disabled'}>
+                <option value="fox2"${w === 'fox2' ? ' selected' : ''}>P${i + 1} FOX-2</option>
+                <option value="fox1"${w === 'fox1' ? ' selected' : ''}>P${i + 1} FOX-1</option>
+            </select>`;
+        }).join('');
         return `
             <div class="match-seat-row${disabled}" data-seat="${def.id}"${note}>
                 <div class="match-seat-name ${def.faction}">${def.label}</div>
@@ -71,10 +269,12 @@ function uiRenderMatchSeatList() {
                     <option value="ai"${seat.control === 'ai' ? ' selected' : ''}>AI</option>
                 </select>
                 <select id="match-loadout-${def.id}" aria-label="${def.label} loadout"${def.live ? '' : ' disabled'}>
-                    <option value="standard"${seat.loadout === 'standard' ? ' selected' : ''}>標準 (Gun+FOX-2)</option>
+                    <option value="standard"${seat.loadout === 'standard' ? ' selected' : ''}>標準 (2×F1+2×F2+Gun)</option>
                     <option value="gun-priority"${seat.loadout === 'gun-priority' ? ' selected' : ''}>機砲優先</option>
                     <option value="fox2-priority"${seat.loadout === 'fox2-priority' ? ' selected' : ''}>FOX-2 優先</option>
+                    <option value="fox1-priority"${seat.loadout === 'fox1-priority' ? ' selected' : ''}>FOX-1 優先</option>
                 </select>
+                <div class="match-pylon-row">${pylonSelects}</div>
             </div>
         `;
     }).join('');
@@ -100,9 +300,96 @@ function uiBindMatchSetupOnce() {
     });
 
     panel.addEventListener('change', (e) => {
+        if (e.target && e.target.id === 'match-map-select') {
+            const id = e.target.value;
+            if (window.MapCatalog) window.MapCatalog.setSelectedId(id);
+            uiMatchSetupState.mapId = id;
+            uiUpdateMapDeleteButton();
+            return;
+        }
+        if (e.target && (e.target.id === 'match-spawn-alt' || e.target.id === 'match-spawn-sep')) {
+            uiReadMatchSetupFromDom();
+            return;
+        }
         if (!e.target.closest('#match-seat-list')) return;
+        // Loadout presets: fill pylons when switching doctrine dropdown.
+        if (e.target && String(e.target.id || '').indexOf('match-loadout-') === 0) {
+            const seatId = String(e.target.id).replace('match-loadout-', '');
+            const preset = e.target.value;
+            const applyPylons = (types) => {
+                [1, 2, 3, 4].forEach((n) => {
+                    const el = document.getElementById(`match-pylon-${seatId}-${n}`);
+                    if (el) el.value = types[n - 1] || 'fox2';
+                });
+            };
+            if (preset === 'standard') {
+                applyPylons(
+                    (typeof defaultPylonLoadout === 'function')
+                        ? defaultPylonLoadout()
+                        : ['fox1', 'fox2', 'fox2', 'fox1']
+                );
+            } else if (preset === 'fox1-priority') {
+                const vals = [1, 2, 3, 4].map((n) => {
+                    const el = document.getElementById(`match-pylon-${seatId}-${n}`);
+                    return el ? el.value : 'fox2';
+                });
+                if (vals.every((v) => v !== 'fox1')) applyPylons(['fox1', 'fox1', 'fox1', 'fox1']);
+            } else if (preset === 'fox2-priority') {
+                const vals = [1, 2, 3, 4].map((n) => {
+                    const el = document.getElementById(`match-pylon-${seatId}-${n}`);
+                    return el ? el.value : 'fox2';
+                });
+                if (vals.every((v) => v !== 'fox2')) applyPylons(['fox2', 'fox2', 'fox2', 'fox2']);
+            }
+        }
         uiReadMatchSetupFromDom();
     });
+
+    const importBtn = document.getElementById('btn-map-import');
+    const fileInput = document.getElementById('match-map-file');
+    const deleteBtn = document.getElementById('btn-map-delete');
+    if (importBtn && fileInput) {
+        importBtn.addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', () => {
+            const file = fileInput.files && fileInput.files[0];
+            if (!file || !window.MapCatalog) return;
+            const reader = new FileReader();
+            reader.onload = () => {
+                try {
+                    const json = JSON.parse(String(reader.result));
+                    const doc = window.MapLoader ? window.MapLoader.normalizeDoc(json) : json;
+                    const entry = window.MapCatalog.addMap(doc);
+                    uiRefreshMapSelect();
+                    const select = document.getElementById('match-map-select');
+                    if (select) select.value = entry.id;
+                    uiMatchSetupState.mapId = entry.id;
+                    uiUpdateMapDeleteButton();
+                    if (typeof showSMSAlert === 'function') {
+                        showSMSAlert(`地圖已加入: ${entry.name}`, '#00ff88');
+                    }
+                } catch (err) {
+                    console.warn('[MapCatalog] 匯入失敗', err);
+                    if (typeof showSMSAlert === 'function') {
+                        showSMSAlert('地圖匯入失敗', '#ff3355');
+                    }
+                }
+            };
+            reader.readAsText(file);
+            fileInput.value = '';
+        });
+    }
+    if (deleteBtn) {
+        deleteBtn.addEventListener('click', () => {
+            const select = document.getElementById('match-map-select');
+            if (!select || !window.MapCatalog) return;
+            const id = select.value;
+            const item = window.MapCatalog.list().find((m) => m.id === id);
+            if (!item || !item.removable) return;
+            if (!window.confirm(`刪除自訂地圖「${item.name}」？`)) return;
+            window.MapCatalog.removeMap(id);
+            uiRefreshMapSelect();
+        });
+    }
 
     const engage = document.getElementById('btn-match-engage');
     if (engage) {
@@ -120,6 +407,9 @@ function uiShowMatchSetup() {
     if (!uiMatchSetupState.seats) {
         uiMatchSetupState = {
             mode: '1v1',
+            mapId: (window.MapCatalog && window.MapCatalog.getSelectedId()) || 'original',
+            spawnAltitude: 45,
+            spawnSeparation: 100,
             seats: {
                 'red-1': { control: 'human', loadout: 'standard' },
                 'red-2': { control: 'ai', loadout: 'standard' },
@@ -131,6 +421,8 @@ function uiShowMatchSetup() {
     document.querySelectorAll('.match-mode-btn').forEach((btn) => {
         btn.classList.toggle('is-active', btn.getAttribute('data-mode') === uiMatchSetupState.mode);
     });
+    uiRefreshMapSelect();
+    uiSyncSpawnSelects(uiMatchSetupState.spawnAltitude, uiMatchSetupState.spawnSeparation);
     uiRenderMatchSeatList();
     panel.hidden = false;
     screen.classList.add('is-setup');
@@ -154,47 +446,70 @@ function uiConfirmMatchSetup() {
     const engage = document.getElementById('btn-match-engage');
     if (engage) engage.disabled = true;
     const draft = uiReadMatchSetupFromDom();
-    const cfg = GameContext.stateMachine.applyMatchConfig(draft);
-    uiRefreshTeamModeButtons();
-    uiRefreshAIDebugPanel();
+    if (window.MapCatalog) window.MapCatalog.setSelectedId(draft.mapId);
 
-    let activeId = 'red';
-    const seatPick = [
-        ['red-1', 'red'],
-        ['red-2', 'red2'],
-        ['blue-1', 'blue'],
-        ['blue-2', 'blue2']
-    ];
-    for (let i = 0; i < seatPick.length; i++) {
-        const seatId = seatPick[i][0];
-        const teamId = seatPick[i][1];
-        if (cfg.seats[seatId] && cfg.seats[seatId].control === 'human' && teams[teamId] && teams[teamId].matchActive !== false) {
-            activeId = teamId;
-            break;
+    const finishEngage = () => {
+        const cfg = GameContext.stateMachine.applyMatchConfig(draft);
+        uiRefreshTeamModeButtons();
+        uiRefreshAIDebugPanel();
+
+        let activeId = 'red';
+        const seatPick = [
+            ['red-1', 'red'],
+            ['red-2', 'red2'],
+            ['blue-1', 'blue'],
+            ['blue-2', 'blue2']
+        ];
+        for (let i = 0; i < seatPick.length; i++) {
+            const seatId = seatPick[i][0];
+            const teamId = seatPick[i][1];
+            if (cfg.seats[seatId] && cfg.seats[seatId].control === 'human' && teams[teamId] && teams[teamId].matchActive !== false) {
+                activeId = teamId;
+                break;
+            }
         }
-    }
-    if (teams[activeId] && teams[activeId].aiEnabled) {
-        const living = (GameContext.getLivingTeamIds && GameContext.getLivingTeamIds()) || ['red', 'blue'];
-        const human = living.find((id) => teams[id] && !teams[id].aiEnabled);
-        if (human) activeId = human;
-    }
+        if (teams[activeId] && teams[activeId].aiEnabled) {
+            const living = (GameContext.getLivingTeamIds && GameContext.getLivingTeamIds()) || ['red', 'blue'];
+            const human = living.find((id) => teams[id] && !teams[id].aiEnabled);
+            if (human) activeId = human;
+        }
 
-    if (typeof window.selectTeam === 'function') window.selectTeam(activeId);
-    else {
-        updateDashboardUI(teams[activeId]);
-        uiSyncSelectionChrome(activeId);
-    }
-    uiRefreshTeamModeButtons();
+        if (typeof window.selectTeam === 'function') window.selectTeam(activeId);
+        else {
+            updateDashboardUI(teams[activeId]);
+            uiSyncSelectionChrome(activeId);
+        }
+        uiRefreshTeamModeButtons();
 
-    if (typeof uiAreBothTeamsAI === 'function' && uiAreBothTeamsAI() && typeof uiScheduleBothAITurn === 'function') {
-        uiScheduleBothAITurn();
-    }
+        if (typeof uiAreBothTeamsAI === 'function' && uiAreBothTeamsAI() && typeof uiScheduleBothAITurn === 'function') {
+            uiScheduleBothAITurn();
+        }
 
-    if (typeof showSMSAlert === 'function') {
-        const modeLabel = cfg.mode === '2v2' ? '2v2' : '1v1';
-        showSMSAlert(`MATCH LOCKED: ${modeLabel}`, '#00ff88');
-    }
-    uiDismissStartupScreen();
+        if (typeof showSMSAlert === 'function') {
+            const modeLabel = cfg.mode === '2v2' ? '2v2' : '1v1';
+            let mapLabel = '原版';
+            if (window.MapCatalog) {
+                const found = window.MapCatalog.list().find((m) => m.id === draft.mapId);
+                if (found) mapLabel = found.name;
+            }
+            showSMSAlert(
+                `MATCH LOCKED: ${modeLabel} · ${mapLabel} · ALT ${cfg.spawnAltitude}m · SEP ${cfg.spawnSeparation}m`,
+                '#00ff88'
+            );
+        }
+        uiDismissStartupScreen();
+    };
+
+    const applyMap = (typeof applySelectedMap === 'function')
+        ? applySelectedMap
+        : (GameContext.callService ? (id) => GameContext.callService('applySelectedMap', id) : null);
+
+    const mapPromise = applyMap ? Promise.resolve(applyMap(draft.mapId)) : Promise.resolve();
+    mapPromise
+        .catch((err) => console.warn('[MatchSetup] 地圖套用失敗', err))
+        .finally(() => {
+            finishEngage();
+        });
 }
 
 function uiShouldSkipMatchSetup() {
@@ -263,6 +578,10 @@ function uiAreBothTeamsAI() {
     const living = uiLivingTeamIds();
     return living.length > 0 && living.every((id) => teams[id] && teams[id].aiEnabled);
 }
+/** Strip leading "NPC:" from seat status labels (keep AI internals unchanged). */
+function uiStripNpcStatusPrefix(text) {
+    return String(text || '').replace(/^NPC[:：]\s*/i, '').trim() || '待機中';
+}
 function uiScheduleBothAITurn() {
     uiClearAutoAIBattleTimer();
     if (!uiAreBothTeamsAI() || GameContext.isAnimating() || GameContext.isReplayMode()) return;
@@ -271,7 +590,7 @@ function uiScheduleBothAITurn() {
         uiAutoAIFirstDelayDone = false;
     }
     const delayMs = uiAutoAIFirstDelayDone ? 0 : 3000;
-    const statusText = delayMs > 0 ? 'NPC: 3秒後自動提交' : 'NPC: 自動提交中';
+    const statusText = delayMs > 0 ? '3秒後自動提交' : '自動提交中';
     const living = uiLivingTeamIds();
 
     living.forEach((id) => GameContext.stateMachine.setAIStatus(id, 'autoplan', statusText));
@@ -281,10 +600,7 @@ function uiScheduleBothAITurn() {
         uiAutoAIBattleTimer = null;
         if (!uiAutoAIFirstDelayDone) uiAutoAIFirstDelayDone = true;
         if (!uiAreBothTeamsAI() || GameContext.isAnimating() || GameContext.isReplayMode()) return;
-        living.forEach((id) => uiRunAI(id));
-        if (GameContext.areAllLivingReady && GameContext.areAllLivingReady()) {
-            if (window.executeTurnSimultaneously) window.executeTurnSimultaneously();
-        }
+        uiRunPendingAIAndMaybeResolve();
     }, delayMs);
 }
 /** Kick both-AI loop from scenario boot / external tools (resets first-turn delay). */
@@ -301,11 +617,19 @@ function uiFactionHasHuman(faction) {
         return t && !t.aiEnabled && (GameContext.getFaction ? GameContext.getFaction(id) : id) === faction;
     });
 }
+/**
+ * Wingman orders: only for AI seats whose faction already has a human.
+ * Enemy-faction wingman stays closed unless someone switches that other team to human control.
+ */
 function uiIsNpcWingman(teamId) {
     const t = teams[teamId];
     if (!t || !t.aiEnabled || t.isDestroyed || t.matchActive === false) return false;
     const faction = GameContext.getFaction ? GameContext.getFaction(teamId) : teamId;
     return uiFactionHasHuman(faction);
+}
+/** Player may issue wingman UI for this AI seat (own side, or other side only after human takeover). */
+function uiCanCommandWingman(teamId) {
+    return uiIsNpcWingman(teamId) && !GameContext.isReplayMode();
 }
 function uiSetControlsVisible(visible) {
     const wrap = document.getElementById('ui-wrapper');
@@ -327,7 +651,7 @@ function uiRefreshWingmanOrderButtons(teamId) {
     const hud = document.getElementById('wingman-order-hud');
     if (!hud) return;
     const id = teamId || uiCurrentTeamId();
-    const show = uiIsNpcWingman(id) && !GameContext.isReplayMode();
+    const show = uiCanCommandWingman(id);
     hud.hidden = !show;
     if (!show) return;
     const t = teams[id];
@@ -342,7 +666,7 @@ function uiUpdateWingmanHud() {
     if (typeof camera === 'undefined' || !camera) return;
     const id = uiCurrentTeamId();
     const t = teams[id];
-    if (!t || !t.wrapper || !uiIsNpcWingman(id)) {
+    if (!t || !t.wrapper || !uiCanCommandWingman(id)) {
         hud.hidden = true;
         return;
     }
@@ -366,22 +690,52 @@ function uiUpdateWingmanHud() {
         orders.style.top = `${y}px`;
     }
 }
-function uiSetWingmanOrder(order) {
-    const id = uiCurrentTeamId();
-    if (!uiIsNpcWingman(id)) return;
+function uiSetWingmanOrder(order, teamId = null) {
+    const id = teamId || uiCurrentTeamId();
+    const t = teams[id];
+    if (!t || !t.aiEnabled || t.isDestroyed) return;
+    // Enemy wingman stays closed until that faction has a human seat.
+    if (!uiCanCommandWingman(id)) return;
     if (!GameContext.stateMachine.setWingmanOrder(id, order)) return;
     uiRefreshWingmanOrderButtons(id);
+    uiRefreshAIDebugWingmanOrders(id);
     const labels = { follow: '跟隨', attack: '攻擊我的目標', free: '主動進攻', cover: '掩護', break: '脫離' };
     if (typeof showSMSAlert === 'function') {
         showSMSAlert(`${id.toUpperCase()} 指令: ${labels[order] || order}`, '#ffffff');
     }
     // Apply immediately so status/path reflect the new order (don't wait for human Ready).
-    const t = teams[id];
-    if (t && t.aiEnabled && !t.ready && !t.isDestroyed) {
+    if (t.aiEnabled && !t.ready && !t.isDestroyed) {
         uiRunAI(id);
     } else {
         updateDashboardUI(t || teams[uiCurrentTeamId()]);
     }
+}
+function uiRefreshAIDebugWingmanOrders(teamId) {
+    const wrap = document.getElementById('ai-debug-wingman');
+    if (!wrap) return;
+    const id = teamId || uiAIDebugExpandedTeam;
+    const t = id ? teams[id] : null;
+    const show = !!(t && uiCanCommandWingman(id));
+    wrap.hidden = !show;
+    if (!show) return;
+    const order = t.wingmanOrder || 'follow';
+    wrap.querySelectorAll('.ai-debug-wingman-btn').forEach((btn) => {
+        btn.classList.toggle('is-active', btn.getAttribute('data-order') === order);
+    });
+}
+function uiBindAIDebugWingmanOnce() {
+    const wrap = document.getElementById('ai-debug-wingman');
+    if (!wrap || wrap.dataset.bound) return;
+    wrap.dataset.bound = '1';
+    wrap.addEventListener('click', (e) => {
+        const btn = e.target.closest('.ai-debug-wingman-btn');
+        if (!btn) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const id = uiAIDebugExpandedTeam;
+        if (!id) return;
+        uiSetWingmanOrder(btn.getAttribute('data-order'), id);
+    });
 }
 function uiBindWingmanOrderHudOnce() {
     const hud = document.getElementById('wingman-order-hud');
@@ -398,6 +752,112 @@ function uiBindWingmanOrderHudOnce() {
 window.uiSyncSelectionChrome = uiSyncSelectionChrome;
 window.uiUpdateWingmanHud = uiUpdateWingmanHud;
 window.uiSetWingmanOrder = uiSetWingmanOrder;
+
+const UI_REPLAY_MAIN_COLLAPSE_KEY = 'airarena.replayMainCollapsed';
+function uiIsReplayMainCollapsed() {
+    const bar = document.getElementById('replay-control-bar');
+    return !!(bar && bar.classList.contains('is-main-collapsed'));
+}
+function uiSetReplayMainCollapsed(collapsed) {
+    const bar = document.getElementById('replay-control-bar');
+    const btn = document.getElementById('btn-replay-main-toggle');
+    if (!bar || !btn) return;
+    const on = !!collapsed;
+    bar.classList.toggle('is-main-collapsed', on);
+    btn.setAttribute('aria-expanded', on ? 'false' : 'true');
+    btn.textContent = on ? '▾' : '▴';
+    btn.title = on ? '展開隊伍／狀態／決策樹' : '收合隊伍／狀態／決策樹';
+    btn.setAttribute('aria-label', btn.title);
+    const aiPanel = document.getElementById('ai-debug-panel');
+    if (aiPanel) aiPanel.classList.toggle('is-bar-collapsed', on);
+    try { localStorage.setItem(UI_REPLAY_MAIN_COLLAPSE_KEY, on ? '1' : '0'); } catch (_) { /* ignore */ }
+    if (!on && uiAIDebugExpandedTeam) uiPositionAIDebugPanel(uiAIDebugExpandedTeam);
+}
+function uiToggleReplayMainCollapsed() {
+    uiSetReplayMainCollapsed(!uiIsReplayMainCollapsed());
+}
+function uiBindReplayMainCollapseOnce() {
+    const btn = document.getElementById('btn-replay-main-toggle');
+    if (!btn || btn.dataset.bound) return;
+    btn.dataset.bound = '1';
+    btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        uiToggleReplayMainCollapsed();
+    });
+    let preferCollapsed = false;
+    try { preferCollapsed = localStorage.getItem(UI_REPLAY_MAIN_COLLAPSE_KEY) === '1'; } catch (_) { /* ignore */ }
+    uiSetReplayMainCollapsed(preferCollapsed);
+}
+
+function uiPylonTypeLabel(p) {
+    const type = (typeof pylonWeaponType === 'function')
+        ? pylonWeaponType(p)
+        : (p && (p.weaponType || p.weapon)) || 'fox2';
+    if (type === 'fox1') return 'F1';
+    if (type === 'fox2') return 'F2';
+    return String(type || '?').slice(0, 2).toUpperCase();
+}
+function uiRefreshSeatVitals() {
+    const maxHp = (typeof MAX_HP === 'number' && MAX_HP > 0) ? MAX_HP : 100;
+    const maxAp = (typeof MAX_AP === 'number' && MAX_AP > 0) ? MAX_AP : 300;
+    uiSeatIds().forEach((id) => {
+        const t = teams[id];
+        const live = uiIsSeatLive(id);
+        const hpFill = document.getElementById(`seat-hp-${id}`);
+        const apFill = document.getElementById(`seat-ap-${id}`);
+        const hpBar = hpFill && hpFill.parentElement;
+        const apBar = apFill && apFill.parentElement;
+        const pylonsEl = document.getElementById(`seat-pylons-${id}`);
+        if (!live || !t) {
+            if (hpFill) hpFill.style.transform = 'scaleX(0)';
+            if (apFill) apFill.style.transform = 'scaleX(0)';
+            if (hpBar) {
+                hpBar.classList.remove('is-low');
+                hpBar.title = 'HP';
+            }
+            if (apBar) {
+                apBar.classList.remove('is-low');
+                apBar.title = 'AP';
+            }
+            if (pylonsEl) pylonsEl.innerHTML = '';
+            return;
+        }
+        const hp = (typeof t.hp === 'number' && !isNaN(t.hp)) ? t.hp : maxHp;
+        const ap = (typeof t.ap === 'number' && !isNaN(t.ap)) ? t.ap : 0;
+        const hpPct = Math.max(0, Math.min(1, hp / maxHp));
+        const apPct = Math.max(0, Math.min(1, ap / maxAp));
+        if (hpFill) hpFill.style.transform = `scaleX(${hpPct})`;
+        if (apFill) apFill.style.transform = `scaleX(${apPct})`;
+        if (hpBar) {
+            hpBar.classList.toggle('is-low', hpPct < 0.3);
+            hpBar.title = `HP ${Math.round(hp)}/${maxHp}`;
+        }
+        if (apBar) {
+            apBar.classList.toggle('is-low', apPct < 0.25);
+            apBar.title = `AP ${Math.round(ap)}/${maxAp}`;
+        }
+        if (!pylonsEl) return;
+        const pylons = Array.isArray(t.pylons) ? t.pylons : [];
+        const liveCount = pylons.filter((p) => p && p.state && p.state !== 'empty').length;
+        const armedCount = pylons.filter((p) => p && p.state === 'armed').length;
+        const poweringCount = pylons.filter((p) => p && p.state === 'powering').length;
+        let statusWord = '空';
+        if (armedCount > 0) statusWord = 'ARM';
+        else if (poweringCount > 0) statusWord = 'PWR';
+        else if (liveCount > 0) statusWord = 'STBY';
+        const slots = pylons.map((p) => {
+            const state = (p && p.state) || 'empty';
+            const type = (typeof pylonWeaponType === 'function')
+                ? pylonWeaponType(p)
+                : (p && (p.weaponType || p.weapon)) || 'fox2';
+            const label = uiPylonTypeLabel(p);
+            return `<span class="seat-pylon-slot is-${state}" data-type="${type}" title="${label} ${state}"></span>`;
+        }).join('');
+        pylonsEl.innerHTML =
+            `<span class="seat-pylon-meta">${liveCount}/${pylons.length || 0} ${statusWord}</span>${slots}`;
+        pylonsEl.title = `掛架 ${liveCount}/${pylons.length || 0}｜ARM ${armedCount}｜PWR ${poweringCount}`;
+    });
+}
 
 function uiTeamLabel(teamId) {
     const t = teams[teamId];
@@ -418,13 +878,21 @@ function uiSelectSeat(teamId) {
     uiRefreshTeamModeButtons();
     uiRenderTempScorePanel();
 }
+function uiSeatRowEl(teamId) {
+    return document.querySelector(`.team-seat-col[data-team-id="${teamId}"], .team-seat-row[data-team-id="${teamId}"]`);
+}
 function uiRefreshTeamModeButtons() {
     const activeId = uiCurrentTeamId();
     uiSeatIds().forEach((id) => {
-        const row = document.querySelector(`.team-seat-row[data-team-id="${id}"]`);
+        const row = uiSeatRowEl(id);
         const btn = document.getElementById(`btn-sel-${id}`);
         const live = uiIsSeatLive(id);
-        if (row) row.hidden = !live;
+        if (row) {
+            // New roster uses [hidden] but still occupies a grid cell via CSS.
+            // Legacy seat rows toggle display when there is no #replay-team-roster.
+            if (row.classList.contains('team-seat-col')) row.hidden = !live;
+            else row.style.display = live ? '' : 'none';
+        }
         if (!btn) return;
         const faction = (GameContext.getFaction && GameContext.getFaction(id)) || id;
         btn.classList.toggle('faction-red', faction === 'red');
@@ -476,20 +944,17 @@ function toggleReadyState(teamId) {
     updateDashboardUI(teams[uiCurrentTeamId()]);
 
     if (nextReady) {
-        uiLivingTeamIds().forEach((id) => {
-            const ot = teams[id];
-            if (ot && ot.aiEnabled && !ot.ready && !ot.isDestroyed) uiRunAI(id);
+        // Async: show 運算中, yield paint, then AI + turn resolve (keeps spinner alive during freeze).
+        uiRunPendingAIAndMaybeResolve().then((resolved) => {
+            if (resolved) return;
+            if (uiCurrentTeamId() === teamId) {
+                const nextHuman = uiLivingTeamIds().find((id) =>
+                    teams[id] && !teams[id].aiEnabled && !teams[id].ready && !teams[id].isDestroyed && id !== teamId
+                );
+                if (nextHuman && window.selectTeam) window.selectTeam(nextHuman);
+            }
         });
-        if (GameContext.areAllLivingReady && GameContext.areAllLivingReady()) {
-            if (window.executeTurnSimultaneously) window.executeTurnSimultaneously();
-            return;
-        }
-        if (uiCurrentTeamId() === teamId) {
-            const nextHuman = uiLivingTeamIds().find((id) =>
-                teams[id] && !teams[id].aiEnabled && !teams[id].ready && !teams[id].isDestroyed && id !== teamId
-            );
-            if (nextHuman && window.selectTeam) window.selectTeam(nextHuman);
-        }
+        return;
     }
 }
 function uiToggleAI(teamId) {
@@ -499,6 +964,7 @@ function uiToggleAI(teamId) {
     if (!t.aiEnabled && uiAIDebugExpandedTeam === teamId) uiAIDebugExpandedTeam = null;
     uiClearAutoAIBattleTimer();
     uiRefreshTeamModeButtons();
+    uiSyncSelectionChrome(uiCurrentTeamId());
     updateDashboardUI(t);
     uiRefreshPreview(t);
     uiRefreshAIDebugPanel();
@@ -514,6 +980,7 @@ function uiRunAI(teamId) {
     if (!t || !t.aiEnabled || t.ready || t.isDestroyed || GameContext.isAnimating() || GameContext.isReplayMode()) return false;
     if (!window.AirArenaAI) return false;
     const action = window.AirArenaAI.run(teamId);
+    uiAppendAIDecisionTrail(teamId, action);
     uiAppendAIDebugTrace(teamId, action);
     updateDashboardUI(t);
     if (!t.ready) uiRefreshPreview(t);
@@ -523,15 +990,10 @@ function uiRunAI(teamId) {
 function uiMaybeRunAIAndResolve(teamId) {
     const t = teams[teamId];
     if (!t || !t.aiEnabled || t.ready || t.isDestroyed) return false;
-    const didRun = uiRunAI(teamId);
-    if (!didRun) return false;
-    if (GameContext.areAllLivingReady && GameContext.areAllLivingReady()) {
-        if (window.executeTurnSimultaneously) window.executeTurnSimultaneously();
-    }
+    uiRunPendingAIAndMaybeResolve();
     return true;
 }
 
-let uiAIDebugVisible = true;
 let uiAIDebugExpandedTeam = null;
 const uiTempScoreStorageKey = 'airarena_temp_score_v1';
 let uiTempScore = {
@@ -639,6 +1101,116 @@ function uiRoundVec3(pos) {
     return { x: Number(pos.x.toFixed(2)), y: Number(pos.y.toFixed(2)), z: Number(pos.z.toFixed(2)) };
 }
 
+/** Always-on compact decision ring buffer length (export-all / death forensics). */
+const AI_DECISION_TRAIL_MAX = 40;
+
+function uiGetAircraftForward(team) {
+    if (!team || !team.wrapper || !team.wrapper.quaternion || typeof THREE === 'undefined') {
+        return { forward: null, fwdY: null };
+    }
+    const f = new THREE.Vector3(0, 0, 1).applyQuaternion(team.wrapper.quaternion).normalize();
+    return {
+        forward: {
+            x: Number(f.x.toFixed(3)),
+            y: Number(f.y.toFixed(3)),
+            z: Number(f.z.toFixed(3))
+        },
+        fwdY: Number(f.y.toFixed(3))
+    };
+}
+
+function uiParseAltitudeLaneFromTree(tree) {
+    if (!Array.isArray(tree)) return {};
+    let line = null;
+    for (let i = tree.length - 1; i >= 0; i--) {
+        if (String(tree[i] || '').indexOf('altitudeLane:') === 0) {
+            line = String(tree[i]);
+            break;
+        }
+    }
+    if (!line) return {};
+    const get = (key) => {
+        const m = line.match(new RegExp(`${key}=([^\\s]+)`));
+        return m ? m[1] : null;
+    };
+    const numOrNull = (v) => (v == null || v === 'n/a' ? null : Number(v));
+    return {
+        lane: get('lane'),
+        roofExit: numOrNull(get('roofExit')),
+        straightClimb: numOrNull(get('straightClimb')),
+        sky: numOrNull(get('sky')),
+        facade: numOrNull(get('facade'))
+    };
+}
+
+function uiBuildCompactDecisionFrame(teamId, action) {
+    const team = uiGetAIDebugTeam(teamId);
+    if (!team || !action) return null;
+    const turn = Number((GameContext && GameContext.state && GameContext.state.currentTurn) || 0);
+    const dbg = action.debug || {};
+    const tree = Array.isArray(dbg.tree) ? dbg.tree : [];
+    const pos = team.wrapper && team.wrapper.position ? team.wrapper.position : null;
+    const fwdInfo = uiGetAircraftForward(team);
+    const ur = action.urbanRoute || dbg.urbanRoute || null;
+    const laneInfo = uiParseAltitudeLaneFromTree(tree);
+    return {
+        turn,
+        state: action.state || null,
+        thr: typeof action.throttle === 'number' ? action.throttle : null,
+        joyX: typeof action.joyX === 'number' ? Number(action.joyX.toFixed(2)) : null,
+        joyY: typeof action.joyY === 'number' ? Number(action.joyY.toFixed(2)) : null,
+        ap: typeof team.ap === 'number' ? Number(team.ap.toFixed(1)) : null,
+        alt: pos ? Number(pos.y.toFixed(1)) : null,
+        pos: uiRoundVec3(pos),
+        forward: fwdInfo.forward,
+        fwdY: fwdInfo.fwdY,
+        enemyDist: dbg.distance != null ? Number(dbg.distance) : null,
+        coverDist: dbg.coverDistance != null ? Number(dbg.coverDistance) : null,
+        coverFwd: dbg.coverForwardDistance != null ? Number(dbg.coverForwardDistance) : null,
+        roof: dbg.roofClearance != null ? Number(dbg.roofClearance) : null,
+        headroom: dbg.headroom != null ? Number(dbg.headroom) : null,
+        risk: dbg.collisionRisk || null,
+        gate: dbg.decideGate || null,
+        lane: (ur && ur.lane) || laneInfo.lane || null,
+        roofExit: ur && ur.roofExit != null ? ur.roofExit : laneInfo.roofExit,
+        straightClimb: ur && ur.straightClimb != null ? ur.straightClimb : laneInfo.straightClimb,
+        sky: laneInfo.sky,
+        facade: ur && ur.facadeClosing != null ? ur.facadeClosing : laneInfo.facade,
+        urbanSrc: ur && ur.source ? ur.source : null,
+        urbanScore: ur && ur.score != null ? ur.score : null,
+        queue: action.queueAction || 'none',
+        chaff: dbg.shouldChaffNow ? 1 : 0,
+        flare: dbg.shouldFlareNow ? 1 : (dbg.flare ? 1 : 0),
+        chaffAmmo: dbg.chaffReserve != null ? dbg.chaffReserve : (team.chaffAmmo != null ? team.chaffAmmo : null),
+        reason: action.reason || null
+    };
+}
+
+function uiAppendAIDecisionTrail(teamId, action) {
+    const team = uiGetAIDebugTeam(teamId);
+    if (!team || !team.aiEnabled || !action) return;
+    if (team.aiDecisionTrailFrozen || team.isDestroyed) return;
+    if (action.state === 'destroyed') return;
+    if (!Array.isArray(team.aiDecisionTrail)) team.aiDecisionTrail = [];
+    const frame = uiBuildCompactDecisionFrame(teamId, action);
+    if (!frame) return;
+    const last = team.aiDecisionTrail[team.aiDecisionTrail.length - 1];
+    if (last && last.turn === frame.turn) {
+        team.aiDecisionTrail[team.aiDecisionTrail.length - 1] = frame;
+    } else {
+        team.aiDecisionTrail.push(frame);
+    }
+    if (team.aiDecisionTrail.length > AI_DECISION_TRAIL_MAX) {
+        team.aiDecisionTrail.splice(0, team.aiDecisionTrail.length - AI_DECISION_TRAIL_MAX);
+    }
+}
+
+function uiGetAIDecisionTrail(teamId) {
+    const team = uiGetAIDebugTeam(teamId);
+    if (!team || !Array.isArray(team.aiDecisionTrail)) return [];
+    return team.aiDecisionTrail.slice();
+}
+
 function uiBuildAIDebugSnapshot(teamId, opts = {}) {
     const team = uiGetAIDebugTeam(teamId);
     if (!team) return null;
@@ -652,6 +1224,7 @@ function uiBuildAIDebugSnapshot(teamId, opts = {}) {
         || (String(teamId).startsWith('blue') ? 'blue' : 'red');
     const control = team.aiEnabled ? 'ai' : 'human';
     const pos = team.wrapper && team.wrapper.position ? team.wrapper.position : null;
+    const fwdInfo = uiGetAircraftForward(team);
     const lockedTargetId = team.lockedTargetId || null;
     const targetId = (GameContext.getTargetId && GameContext.getTargetId(teamId))
         || (GameContext.getNearestHostileId && GameContext.getNearestHostileId(teamId))
@@ -720,6 +1293,7 @@ function uiBuildAIDebugSnapshot(teamId, opts = {}) {
         statusText: team.aiStatusText || null,
         ready: !!team.ready,
         isDestroyed: !!team.isDestroyed,
+        deathCause: team.deathCause || (action && action.deathCause) || null,
         matchActive: team.matchActive !== false,
         aircraft: {
             type: team.type || 'mig21',
@@ -731,7 +1305,10 @@ function uiBuildAIDebugSnapshot(teamId, opts = {}) {
             weapon: team.weapon,
             queuedAction: team.queuedAction || 'none',
             flareAmmo: team.flareAmmo,
-            position: uiRoundVec3(pos)
+            chaffAmmo: team.chaffAmmo != null ? team.chaffAmmo : 0,
+            position: uiRoundVec3(pos),
+            forward: fwdInfo.forward,
+            fwdY: fwdInfo.fwdY
         },
         enemy: enemy ? {
             hp: enemy.hp,
@@ -745,6 +1322,10 @@ function uiBuildAIDebugSnapshot(teamId, opts = {}) {
             state: action.state || null,
             statusText: action.statusText || null,
             reason: action.reason || null,
+            deathCause: action.deathCause || team.deathCause || null,
+            deathStalled: action.deathStalled != null ? action.deathStalled : (team.deathStalled ? 1 : 0),
+            lastAliveState: action.lastAliveState || null,
+            lastAliveStatusText: action.lastAliveStatusText || null,
             throttle: action.throttle,
             joyX: action.joyX,
             joyY: action.joyY,
@@ -758,7 +1339,29 @@ function uiBuildAIDebugSnapshot(teamId, opts = {}) {
         } : null,
         debug: dbg ? JSON.parse(JSON.stringify(dbg)) : null,
         tree: dbg && Array.isArray(dbg.tree) ? dbg.tree.slice() : [],
+        preDeath: team.aiPreDeathAction ? {
+            state: team.aiPreDeathAction.state || null,
+            statusText: team.aiPreDeathAction.statusText || null,
+            reason: team.aiPreDeathAction.reason || null,
+            throttle: team.aiPreDeathAction.throttle,
+            joyX: team.aiPreDeathAction.joyX,
+            joyY: team.aiPreDeathAction.joyY,
+            weapon: team.aiPreDeathAction.weapon || null,
+            queueAction: team.aiPreDeathAction.queueAction || 'none',
+            debug: team.aiPreDeathAction.debug
+                ? JSON.parse(JSON.stringify(team.aiPreDeathAction.debug))
+                : null
+        } : null,
         threatLog: Array.isArray(team.aiThreatLog) ? team.aiThreatLog.slice() : [],
+        decisionTrail: uiGetAIDecisionTrail(teamId),
+        deathTrail: (team.isDestroyed || (typeof team.hp === 'number' && team.hp <= 0))
+            ? uiGetAIDecisionTrail(teamId)
+            : null,
+        trailMeta: {
+            max: AI_DECISION_TRAIL_MAX,
+            frozen: !!team.aiDecisionTrailFrozen,
+            count: Array.isArray(team.aiDecisionTrail) ? team.aiDecisionTrail.length : 0
+        },
         tuningMeta: (typeof window !== 'undefined' && window.AIR_ARENA_AI_TUNING_META) ? { ...window.AIR_ARENA_AI_TUNING_META } : null,
         _includeJsonTail: includeJsonTail
     };
@@ -776,13 +1379,18 @@ function uiFormatAIDebugText(teamId, opts = {}) {
     lines.push(`team: ${snap.teamId}  faction: ${snap.faction}  control: ${snap.control}  ready=${snap.ready} destroyed=${snap.isDestroyed}`);
     lines.push(`target: ${snap.targetId || '-'}  locked: ${snap.lockedTargetId || '-'}  enemy: ${snap.enemyId || '-'}`);
     lines.push(`wingman: order=${snap.wingmanOrder || '-'} lead=${snap.leadId || '-'}`);
-    lines.push(`policy: ${snap.policyMode}  override: ${snap.manualOverride}`);
-    lines.push(`status: ${snap.statusText || '-'}`);
+    lines.push(`state: ${(snap.action && snap.action.state) || '-'}  status: ${snap.statusText || '-'}`);
+    if (snap.isDestroyed) {
+        const act = snap.action || {};
+        lines.push(`death: cause=${act.deathCause || snap.deathCause || '-'} stalled=${act.deathStalled ?? '-'} lastAlive=${act.lastAliveState || '-'} (${act.lastAliveStatusText || '-'})`);
+    }
     if (snap.aircraft) {
         const a = snap.aircraft;
         const p = a.position;
+        const f = a.forward;
         lines.push(`aircraft: ap=${a.ap} heat=${a.heat} hp=${a.hp} stalled=${a.stalled} thr=${a.throttle} wpn=${a.weapon} queue=${a.queuedAction}`);
         lines.push(`position: ${p ? `x=${p.x} y=${p.y} z=${p.z}` : '-'}`);
+        lines.push(`forward: ${f ? `x=${f.x} y=${f.y} z=${f.z} fwdY=${a.fwdY ?? '-'}` : '-'}`);
     }
     if (snap.enemy) {
         const e = snap.enemy;
@@ -829,6 +1437,18 @@ function uiFormatAIDebugText(teamId, opts = {}) {
             lines.push(`- T${item.turn} ${item.threatLevel || 'low'} D${item.distance} A${item.angleDeg} LOS:${item.losBlocked ? 'MASKED' : 'OPEN'} ${item.flare ? 'FLARE' : 'EVADE'}`);
         });
     }
+    const trail = Array.isArray(snap.decisionTrail) ? snap.decisionTrail : [];
+    if (trail.length) {
+        const meta = snap.trailMeta || {};
+        lines.push(`decisionTrail: count=${trail.length}/${meta.max || AI_DECISION_TRAIL_MAX} frozen=${meta.frozen ? 1 : 0}`);
+        trail.forEach((f) => {
+            lines.push(
+                `- T${f.turn} ${f.state || '-'} thr=${f.thr} joy=${f.joyX},${f.joyY} alt=${f.alt} ap=${f.ap} ` +
+                `cvr=${f.coverDist}/${f.coverFwd} roof=${f.roof} risk=${f.risk} gate=${f.gate || '-'} ` +
+                `src=${f.urbanSrc || '-'} sc=${f.straightClimb ?? '-'} fac=${f.facade ?? '-'}`
+            );
+        });
+    }
     if (includeJsonTail) {
         const clean = { ...snap };
         delete clean._includeJsonTail;
@@ -862,6 +1482,7 @@ function uiBuildAIRosterSnapshot() {
             control: snap.control,
             ready: snap.ready,
             isDestroyed: snap.isDestroyed,
+            deathCause: snap.deathCause || null,
             hp: snap.aircraft ? snap.aircraft.hp : null,
             ap: snap.aircraft ? snap.aircraft.ap : null,
             wingmanOrder: snap.wingmanOrder,
@@ -869,16 +1490,19 @@ function uiBuildAIRosterSnapshot() {
             lockedTargetId: snap.lockedTargetId,
             targetId: snap.targetId,
             state: snap.action ? snap.action.state : null,
-            statusText: snap.statusText
+            statusText: snap.statusText,
+            trailCount: snap.trailMeta ? snap.trailMeta.count : 0,
+            trailFrozen: snap.trailMeta ? !!snap.trailMeta.frozen : false
         });
     });
     return {
-        schema: 'air-arena-ai-debug-roster-v1',
+        schema: 'air-arena-ai-debug-roster-v2',
         exportedAt: new Date().toISOString(),
         turn,
         matchMode: matchCfg ? matchCfg.mode : null,
         arenaMode,
         unitIds: ids.slice(),
+        trailMax: AI_DECISION_TRAIL_MAX,
         rosterSummary,
         units
     };
@@ -890,7 +1514,7 @@ function uiFormatAIRosterText(roster) {
     lines.push(`# Air Arena AI Roster Dump`);
     lines.push(`schema: ${dump.schema}`);
     lines.push(`exportedAt: ${dump.exportedAt}`);
-    lines.push(`turn: ${dump.turn}  mode: ${dump.matchMode || '-'}  arena: ${dump.arenaMode}`);
+    lines.push(`turn: ${dump.turn}  mode: ${dump.matchMode || '-'}  arena: ${dump.arenaMode}  trailMax=${dump.trailMax || AI_DECISION_TRAIL_MAX}`);
     lines.push(`## Roster`);
     (dump.rosterSummary || []).forEach((r) => {
         lines.push(
@@ -899,6 +1523,7 @@ function uiFormatAIRosterText(roster) {
             `  hp=${r.hp ?? '-'} ap=${r.ap ?? '-'}` +
             `  order=${r.wingmanOrder || '-'} lead=${r.leadId || '-'}` +
             `  target=${r.targetId || '-'} locked=${r.lockedTargetId || '-'}` +
+            `  trail=${r.trailCount ?? 0}${r.trailFrozen ? 'F' : ''}` +
             `  state=${r.state || '-'}  ${r.statusText || ''}`
         );
     });
@@ -923,7 +1548,7 @@ async function uiExportAllAIDebug() {
     try {
         await uiCopyTextToClipboard(text);
         uiDownloadTextFile(filename, JSON.stringify(roster, null, 2), 'application/json;charset=utf-8');
-        showSMSAlert(`全機決策已複製 + 下載 (${roster.unitIds.length}機)`, '#00ff88');
+        showSMSAlert(`全機決策已複製 + 下載 (${roster.unitIds.length}機, 含自動軌跡)`, '#00ff88');
         return true;
     } catch (err) {
         console.error('[ai-debug] export-all failed', err);
@@ -992,16 +1617,7 @@ function uiAppendAIDebugTrace(teamId, action) {
 }
 
 function uiRefreshAIDebugRecordControls() {
-    const teamId = uiAIDebugExpandedTeam;
-    const team = uiGetAIDebugTeam(teamId);
-    const btnRecord = document.getElementById('btn-ai-debug-record');
-    const btnDownloadTrace = document.getElementById('btn-ai-debug-download-trace');
-    const status = document.getElementById('ai-debug-record-status');
-    const recording = !!(team && team.aiDebugRecording);
-    const count = team && Array.isArray(team.aiDebugTrace) ? team.aiDebugTrace.length : 0;
-    if (btnRecord) btnRecord.textContent = recording ? '停止錄製' : '開始錄製';
-    if (btnDownloadTrace) btnDownloadTrace.disabled = count === 0;
-    if (status) status.textContent = `錄製: ${recording ? 'ON' : 'OFF'} (${count})`;
+    // Per-team copy/download/record UI removed; roster export remains on the replay bar.
 }
 
 async function uiCopyAIDebugSnapshot() {
@@ -1043,7 +1659,7 @@ function uiToggleAIDebugRecording() {
     team.aiDebugRecording = !team.aiDebugRecording;
     if (team.aiDebugRecording && !Array.isArray(team.aiDebugTrace)) team.aiDebugTrace = [];
     uiRefreshAIDebugRecordControls();
-    showSMSAlert(`${teamId.toUpperCase()} 決策錄製 ${team.aiDebugRecording ? '開始' : '停止'}`, team.aiDebugRecording ? '#00ff88' : '#ffbb00');
+    showSMSAlert(`${teamId.toUpperCase()} 完整錄製 ${team.aiDebugRecording ? '開始' : '停止'}（自動軌跡仍持續）`, team.aiDebugRecording ? '#00ff88' : '#ffbb00');
 }
 
 function uiDownloadAIDebugTrace() {
@@ -1087,6 +1703,24 @@ function uiFormatAIDebug(teamId) {
     if (!t) return `${teamId.toUpperCase()}: N/A`;
     if (!t.aiEnabled) return `<div>${teamId.toUpperCase()}: PLAYER</div>`;
 
+    if (t.isDestroyed || (typeof t.hp === 'number' && t.hp <= 0)) {
+        const deadLabel = (t.aiLastAction && t.aiLastAction.statusText) || t.aiStatusText || '被擊墜';
+        const deadReason = (t.aiLastAction && t.aiLastAction.reason) || '';
+        const deadCause = (t.aiLastAction && t.aiLastAction.deathCause) || t.deathCause || 'combat';
+        const lastAlive = (t.aiLastAction && t.aiLastAction.lastAliveState)
+            || (t.aiPreDeathAction && t.aiPreDeathAction.state)
+            || '-';
+        const deadTree = (t.aiLastAction && t.aiLastAction.debug && Array.isArray(t.aiLastAction.debug.tree))
+            ? t.aiLastAction.debug.tree
+            : ((t.aiPreDeathAction && t.aiPreDeathAction.debug && Array.isArray(t.aiPreDeathAction.debug.tree))
+                ? t.aiPreDeathAction.debug.tree.concat([`--- death ---`, deadLabel, `deathCause=${deadCause}`])
+                : [deadLabel]);
+        return `<div>${teamId.toUpperCase()} | ${deadLabel}</div>` +
+            `<div>HP 0  STATE DESTROYED  CAUSE ${String(deadCause).toUpperCase()}  LAST ${String(lastAlive).toUpperCase()}${deadReason ? `  ${deadReason}` : ''}</div>` +
+            `<div>TREE (pre-death preserved):</div><div class="ai-tree">- ${deadTree.join('\n- ')}</div>` +
+            uiThreatLogHtml(t);
+    }
+
     const action = t.aiLastAction;
     const dbg = action && action.debug ? action.debug : null;
     if (!dbg) return `<div>${teamId.toUpperCase()}: ${t.aiStatusText || 'NPC: 待機中'}</div>${uiThreatLogHtml(t)}`;
@@ -1107,85 +1741,61 @@ function uiFormatAIDebug(teamId) {
         `<div>MASK-SCORE ${dbg.maskScore ?? '-'}  MASK-DIST ${dbg.maskDistance ?? '-'}m  MASK-STATE ${(dbg.maskState || 'none').toUpperCase()}  PATH ${dbg.maskPathBlocked ? 'BLOCKED' : 'CLEAR'}  SAFE ${dbg.terrainSafeForMask ? 'YES' : 'NO'}</div>` +
         `<div>MASK-POINT ${dbg.maskPoint ? `(${dbg.maskPoint.x}, ${dbg.maskPoint.y}, ${dbg.maskPoint.z})` : '-'}</div>` +
         `<div>${uiFormatTuningMetaLine()}</div>` +
-        `<div>POLICY ${(t.aiPolicyMode || 'heuristic').toUpperCase()}  PICK ${(policy.selectedState || dbg.mode || '-').toUpperCase()}  BASE ${(policy.baseState || '-').toUpperCase()}  SCORE ${policy.selectedScore ?? '-'}  OVERRIDE ${policy.overridden ? 'YES' : 'NO'}</div>` +
+        `<div>PICK ${(policy.selectedState || dbg.mode || '-').toUpperCase()}  BASE ${(policy.baseState || '-').toUpperCase()}  SCORE ${policy.selectedScore ?? '-'}</div>` +
         `<div>SAFETY ${safety.overridden ? 'OVERRIDE' : 'OK'}  SEL ${(safety.selected || '-').toUpperCase()}  MINALT ${safety.minAlt ?? '-'}  AP ${safety.finalAP ?? '-'}  BLDG ${safety.buildingHit ? 'HIT' : 'CLEAR'}  FWDY ${safety.finalForwardY ?? '-'}  LOOP ${safety.climbLoopRisk ? 'YES' : 'NO'}</div>` +
-        `<div>OVR ${(t.aiManualOverride || 'auto').toUpperCase()}  FLARE ${dbg.flareReserve ?? '-'}  CD ${dbg.flareCooldown ? 'WAIT' : 'READY'}  ACT-MSL ${dbg.actualMissileThreat ? 'YES' : 'NO'}</div>` +
+        `<div>FLARE ${dbg.flareReserve ?? '-'}  CD ${dbg.flareCooldown ? 'WAIT' : 'READY'}  ACT-MSL ${dbg.actualMissileThreat ? 'YES' : 'NO'}</div>` +
         `<div>TREE:</div><div class="ai-tree">` + treeText + `</div>` +
         uiThreatLogHtml(t);
 }
 function uiPositionAIDebugPanel(teamId) {
     const panel = document.getElementById('ai-debug-panel');
     const anchor = document.getElementById(`btn-engage-${teamId}`);
-    if (!panel || !anchor) return;
-    const rect = anchor.getBoundingClientRect();
+    const bar = document.getElementById('replay-control-bar');
+    if (!panel) return;
     const panelWidth = panel.offsetWidth || 420;
     const viewportWidth = window.innerWidth;
-    let left = rect.left + (rect.width / 2) - (panelWidth / 2);
+    let left = (viewportWidth - panelWidth) / 2;
+    let top = 140;
+    if (anchor && anchor.getClientRects().length) {
+        const rect = anchor.getBoundingClientRect();
+        left = rect.left + (rect.width / 2) - (panelWidth / 2);
+        top = rect.bottom + 8;
+    } else if (bar) {
+        const barRect = bar.getBoundingClientRect();
+        top = barRect.bottom + 10;
+    }
     left = Math.max(8, Math.min(viewportWidth - panelWidth - 8, left));
     panel.style.left = `${left}px`;
-    panel.style.top = `${rect.bottom + 8}px`;
+    panel.style.top = `${top}px`;
 }
 function uiRefreshAIDebugPanel() {
     const panel = document.getElementById('ai-debug-panel');
     const body = document.getElementById('ai-debug-body');
-    const btnToggle = document.getElementById('btn-toggle-ai-debug');
     const title = document.getElementById('ai-debug-title');
     const content = document.getElementById('ai-debug-content');
-    const overrideSelect = document.getElementById('ai-override-active');
-    const policyModeSelect = document.getElementById('ai-policy-mode');
-    if (!panel || !body || !btnToggle || !title || !content || !overrideSelect || !policyModeSelect) return;
+    if (!panel || !body || !title || !content) return;
 
     const teamId = uiAIDebugExpandedTeam;
     const team = teamId ? teams[teamId] : null;
     const isOpen = !!(teamId && team && team.aiEnabled);
 
-    panel.style.display = isOpen ? 'block' : 'none';
-    if (!isOpen) return;
+    panel.style.display = isOpen ? 'flex' : 'none';
+    if (!isOpen) {
+        uiRefreshAIDebugWingmanOrders(null);
+        return;
+    }
 
-    body.style.display = uiAIDebugVisible ? 'grid' : 'none';
-    btnToggle.innerText = uiAIDebugVisible ? '隱藏' : '顯示';
+    body.style.display = 'grid';
     title.innerText = `${teamId.toUpperCase()} NPC 決策樹`;
     content.innerHTML = uiFormatAIDebug(teamId);
-    overrideSelect.value = team.aiManualOverride || 'auto';
-    policyModeSelect.value = team.aiPolicyMode || 'heuristic';
-    uiRefreshAIDebugRecordControls();
+    uiRefreshAIDebugWingmanOrders(teamId);
     uiPositionAIDebugPanel(teamId);
-}
-function uiToggleAIDebugPanel() {
-    uiAIDebugVisible = !uiAIDebugVisible;
-    uiRefreshAIDebugPanel();
-}
-function uiApplyAIOverride(mode) {
-    if (!uiAIDebugExpandedTeam) return;
-    const teamId = uiAIDebugExpandedTeam;
-    GameContext.stateMachine.setAIManualOverride(teamId, mode);
-    uiRefreshAIDebugPanel();
-    const t = teams[teamId];
-    if (t && t.aiEnabled && !t.ready) {
-        uiRunAI(teamId);
-    }
-}
-function uiApplyAIPolicyMode(mode) {
-    if (!uiAIDebugExpandedTeam) return;
-    const teamId = uiAIDebugExpandedTeam;
-    GameContext.stateMachine.setAIPolicyMode(teamId, mode);
-    uiRefreshAIDebugPanel();
-    const t = teams[teamId];
-    if (t && t.aiEnabled) {
-        uiRefreshPreview(t);
-        if (!t.ready) uiRunAI(teamId);
-    }
-    uiRenderTempScorePanel();
 }
 function uiToggleAIDebugForTeam(teamId) {
     const t = teams[teamId];
     if (!t || !t.aiEnabled) return;
-    if (uiAIDebugExpandedTeam === teamId) {
-        uiAIDebugExpandedTeam = null;
-    } else {
-        uiAIDebugExpandedTeam = teamId;
-        uiAIDebugVisible = true;
-    }
+    uiAIDebugExpandedTeam = (uiAIDebugExpandedTeam === teamId) ? null : teamId;
+    if (uiAIDebugExpandedTeam && uiIsReplayMainCollapsed()) uiSetReplayMainCollapsed(false);
     uiRefreshAIDebugPanel();
 }
 
@@ -1217,6 +1827,8 @@ function uiRefreshArenaModePanel() {
     const mode = GameContext.getArenaMode ? GameContext.getArenaMode() : (GameContext.state && GameContext.state.arenaMode) || 'buildings';
     select.value = mode;
     status.textContent = uiArenaModeStatus(mode);
+    const cfg = GameContext.getMatchConfig ? GameContext.getMatchConfig() : null;
+    if (cfg) uiSyncSpawnSelects(cfg.spawnAltitude, cfg.spawnSeparation);
 }
 
 function uiApplyArenaMode(mode) {
@@ -1226,7 +1838,36 @@ function uiApplyArenaMode(mode) {
     if (CONFIG.debug) console.log(`[UI] 場地模式切換: ${applied}`);
 }
 
+function uiApplyArenaSpawnFromPanel() {
+    if (GameContext.isAnimating && GameContext.isAnimating()) {
+        if (typeof showSMSAlert === 'function') showSMSAlert('動畫中無法套用起飛位置', '#ffaa00');
+        return false;
+    }
+    const altEl = document.getElementById('arena-spawn-alt');
+    const sepEl = document.getElementById('arena-spawn-sep');
+    const altitude = uiSanitizeSpawnAltitude(altEl ? altEl.value : 45);
+    const separation = uiSanitizeSpawnSeparation(sepEl ? sepEl.value : 100);
+    uiMatchSetupState.spawnAltitude = altitude;
+    uiMatchSetupState.spawnSeparation = separation;
+    uiSyncSpawnSelects(altitude, separation);
+    const sm = GameContext.stateMachine;
+    if (!sm || typeof sm.applySpawnLayout !== 'function') return false;
+    const applied = sm.applySpawnLayout({ altitude, separation });
+    const ids = (GameContext.getActiveMatchIds && GameContext.getActiveMatchIds()) || ['red', 'blue'];
+    ids.forEach((id) => {
+        if (typeof sm.faceOpponent === 'function') sm.faceOpponent(id);
+        const t = GameContext.getTeam(id);
+        if (t && typeof window.updateTacticalPreview === 'function') window.updateTacticalPreview(t);
+    });
+    if (typeof showSMSAlert === 'function') {
+        showSMSAlert(`起飛位置: ALT ${applied.altitude}m · SEP ${applied.separation}m`, '#00ff88');
+    }
+    return true;
+}
+
 let isDraggingJoystick = false;
+let joyGrabOffsetX = 0;
+let joyGrabOffsetY = 0;
 let isDraggingRollRing = false;
 let initialMouseAngle = 0; 
 let initialRingRoll = 0;   
@@ -1238,27 +1879,18 @@ document.addEventListener("DOMContentLoaded", () => {
 
     uiSeatIds().forEach((id) => uiBindSeatControls(id));
     uiBindWingmanOrderHudOnce();
+    uiBindAIDebugWingmanOnce();
+    uiBindReplayMainCollapseOnce();
     uiSetControlsVisible(false);
     uiRefreshTeamModeButtons();
+    uiRefreshSeatVitals();
 
-    const btnToggleAIDebug = document.getElementById('btn-toggle-ai-debug');
-    if (btnToggleAIDebug) btnToggleAIDebug.addEventListener('click', uiToggleAIDebugPanel);
-    const btnAIDebugCopy = document.getElementById('btn-ai-debug-copy');
-    if (btnAIDebugCopy) btnAIDebugCopy.addEventListener('click', () => { uiCopyAIDebugSnapshot(); });
-    const btnAIDebugDownload = document.getElementById('btn-ai-debug-download');
-    if (btnAIDebugDownload) btnAIDebugDownload.addEventListener('click', () => { uiDownloadAIDebugSnapshot(); });
-    const btnAIDebugRecord = document.getElementById('btn-ai-debug-record');
-    if (btnAIDebugRecord) btnAIDebugRecord.addEventListener('click', () => { uiToggleAIDebugRecording(); });
-    const btnAIDebugDownloadTrace = document.getElementById('btn-ai-debug-download-trace');
-    if (btnAIDebugDownloadTrace) btnAIDebugDownloadTrace.addEventListener('click', () => { uiDownloadAIDebugTrace(); });
     const btnAIDebugExportAll = document.getElementById('btn-ai-debug-export-all');
     if (btnAIDebugExportAll) btnAIDebugExportAll.addEventListener('click', () => { uiExportAllAIDebug(); });
-    const overrideActive = document.getElementById('ai-override-active');
-    if (overrideActive) overrideActive.addEventListener('change', (e) => uiApplyAIOverride(e.target.value));
-    const policyModeActive = document.getElementById('ai-policy-mode');
-    if (policyModeActive) policyModeActive.addEventListener('change', (e) => uiApplyAIPolicyMode(e.target.value));
     const arenaModeSelect = document.getElementById('arena-mode-select');
     if (arenaModeSelect) arenaModeSelect.addEventListener('change', (e) => uiApplyArenaMode(e.target.value));
+    const btnArenaSpawn = document.getElementById('btn-arena-apply-spawn');
+    if (btnArenaSpawn) btnArenaSpawn.addEventListener('click', () => uiApplyArenaSpawnFromPanel());
     uiRefreshArenaModePanel();
     uiLoadTempScore();
     document.querySelectorAll('.temp-score-btn[data-score-mode]').forEach((btn) => {
@@ -1341,16 +1973,23 @@ document.addEventListener("DOMContentLoaded", () => {
         window.addEventListener('touchend', () => { isDraggingThrottle = false; });
     }
 
-    // 🌟 SMS 武器切換
+    // 🌟 SMS 武器切換（wrap 在鎖定警報時仍可點／hover 看原狀態）
     let smsContent = document.getElementById('sms-text-content');
-    if(smsContent) smsContent.addEventListener('click', () => {
+    let smsWrap = document.getElementById('sms-text-wrap') || smsContent;
+    if(smsWrap) smsWrap.addEventListener('click', () => {
         let currentTeam = uiCurrentTeamId();
         let t = teams[currentTeam]; 
         if (!t || t.aiEnabled || GameContext.isAnimating() || GameContext.isReplayMode() || t.isDestroyed || t.ready) return;
         
         const nextWeapon = GameContext.stateMachine.toggleWeaponMode(currentTeam);
         if (nextWeapon === 'missile') {
-            showSMSAlert("🚀 FOX-2 飛彈系統通電中... [請點擊掛架開機]", "#ffbb00");
+            const live = typeof teamLiveMissileType === 'function' ? teamLiveMissileType(t) : null;
+            showSMSAlert(
+                live === 'fox1'
+                    ? '🚀 FOX-1 半主動雷達通電中... [請點擊掛架開機]'
+                    : '🚀 FOX-2 飛彈系統通電中... [請點擊掛架開機]',
+                '#ffbb00'
+            );
         } else {
             showSMSAlert("⚠️ 主保險關閉：切換至機砲模式", "#ff0055");
         }
@@ -1358,49 +1997,43 @@ document.addEventListener("DOMContentLoaded", () => {
         uiRefreshPreview(t);
     });
 
-    // 🌟 掛架控制
+    // 🌟 掛架控制（可不經 SMS 飛彈模式，直接點掛架開始通電）
     document.querySelectorAll('.pylon-switch-wrapper').forEach(el => {
         el.addEventListener('click', (e) => {
             let currentTeam = uiCurrentTeamId();
             let t = teams[currentTeam]; 
             if (!t || t.aiEnabled || GameContext.isAnimating() || GameContext.isReplayMode() || t.isDestroyed || t.ready) return;
             
-            if (t.weapon !== 'missile') { showSMSAlert("⚠️ 錯誤：請先將 SMS 切換至飛彈模式", "#ffcc00"); return; }
             if (!t.pylons) { showSMSAlert("🛑 掛架系統尚未初始化", "#ff0055"); return; }
             let pylonId = parseInt(e.currentTarget.getAttribute('data-pylon'));
             let p = t.pylons.find(item => item.id === pylonId);
             if (!p || p.state === 'empty') { showSMSAlert("🛑 警告：該掛架彈藥耗盡", "#ff0055"); return; }
+            // Clicking a pylon implies missile employment — auto-arm SMS if still on gun.
+            let switchedToMissile = false;
+            if (t.weapon !== 'missile') {
+                if (!GameContext.stateMachine.setWeaponMode(currentTeam, 'missile')) return;
+                switchedToMissile = true;
+            }
             const nextState = GameContext.stateMachine.togglePylonPower(currentTeam, pylonId);
-            if (nextState === 'powering') showSMSAlert(`⚡ PYLON ${pylonId} 開始開機通電`, "#ffbb00");
-            else if (nextState === 'standby') showSMSAlert(`ℹ️ PYLON ${pylonId} 電源切斷`, "#aaa");
+            if (nextState === 'powering') {
+                showSMSAlert(
+                    switchedToMissile
+                        ? `🚀 飛彈模式｜PYLON ${pylonId} 開始開機通電`
+                        : `⚡ PYLON ${pylonId} 開始開機通電`,
+                    "#ffbb00"
+                );
+            } else if (nextState === 'standby') {
+                showSMSAlert(`ℹ️ PYLON ${pylonId} 電源切斷`, "#aaa");
+            }
             updateDashboardUI(t); 
             uiRefreshPreview(t);
         });
     });
 
-    // 🌟 武器確認發射
+    // 🌟 武器確認發射（SMS ENT / LCOS 瞄準環雙擊共用）
     let btnEnt = document.getElementById('sms-enter-btn');
     if(btnEnt) btnEnt.addEventListener('click', () => {
-        let currentTeam = uiCurrentTeamId();
-        let t = teams[currentTeam]; 
-        if (!t || t.aiEnabled || GameContext.isAnimating() || GameContext.isReplayMode() || t.isDestroyed || t.ready) return;
-        
-        if (t.weapon === 'gun') {
-            const wasQueued = t.wpnQueued && t.queuedAction === 'gun';
-            GameContext.stateMachine.toggleGunQueue(currentTeam);
-            showSMSAlert(wasQueued ? "⚠️ 機砲保險已關閉" : "⚡ 機砲射擊線已通電", wasQueued ? "#aaa" : "#00ff88");
-        } else {
-            let armedCount = t.pylons ? t.pylons.filter(item => item.state === 'armed').length : 0;
-            let poweringCount = t.pylons ? t.pylons.filter(item => item.state === 'powering').length : 0;
-            if (armedCount > 0) {
-                const wasQueued = t.wpnQueued && t.queuedAction === 'missile';
-                GameContext.stateMachine.toggleMissileQueue(currentTeam);
-                showSMSAlert(wasQueued ? "⚠️ 飛彈發射排程已取消" : `⚡ 飛彈排程鎖定 (${armedCount} 枚)`, wasQueued ? "#aaa" : "#00ffff");
-            } else if (poweringCount > 0) { showSMSAlert("🛑 尋標頭開機中！", "#ffbb00");
-            } else { GameContext.stateMachine.clearQueuedAction(currentTeam); showSMSAlert("🛑 無掛架就緒", "#ff0055"); }
-        }
-        updateDashboardUI(t); 
-        uiRefreshPreview(t);
+        uiToggleWeaponFireQueue();
     });
 
     // 🌟 頂部 Flare 釋放與武裝事件
@@ -1416,6 +2049,21 @@ document.addEventListener("DOMContentLoaded", () => {
             GameContext.stateMachine.toggleFlares(currentTeam);
             showSMSAlert(wasArmed ? "⚠️ 熱焰彈解除" : "🔆 熱焰彈排程中", wasArmed ? "#aaa" : "#ff9800");
             updateDashboardUI(t); 
+            uiRefreshPreview(t);
+        });
+    }
+
+    const btnChaff = document.getElementById('btn-chaff');
+    if (btnChaff) {
+        btnChaff.addEventListener('click', () => {
+            let currentTeam = uiCurrentTeamId();
+            let t = teams[currentTeam];
+            if (!t || t.aiEnabled || t.isDestroyed || GameContext.isAnimating() || t.ready) return;
+            if ((t.chaffAmmo || 0) <= 0) { showSMSAlert('🛑 CHAFF EMPTY', '#ff0055'); return; }
+            const wasArmed = !!t.chaffArmed;
+            if (GameContext.stateMachine.toggleChaff) GameContext.stateMachine.toggleChaff(currentTeam);
+            showSMSAlert(wasArmed ? '⚠️ 箔條解除' : '📡 箔條干擾排程中', wasArmed ? '#aaa' : '#00e5ff');
+            updateDashboardUI(t);
             uiRefreshPreview(t);
         });
     }
@@ -1473,16 +2121,32 @@ function startJoystickDrag(e) {
     let t = teams[currentTeam]; 
     if (!t || t.aiEnabled || t.isDestroyed || GameContext.isAnimating() || t.ready) return;
     if (window.isDraggingLcosRing) return;
-    isDraggingJoystick = true; updateJoystickPosition(e); 
+    isDraggingJoystick = true;
+
+    // Relative grab: keep current stick; do not snap/center on pointer-down.
+    const joyZone = document.getElementById('joystick-zone');
+    if (joyZone) {
+        const rect = joyZone.getBoundingClientRect();
+        const centerX = rect.left + rect.width / 2;
+        const centerY = rect.top + rect.height / 2;
+        const maxRadius = Math.max(8, rect.width / 2 - 15);
+        const curX = (Number(t.joyX) || 0) * maxRadius;
+        const curY = -(Number(t.joyY) || 0) * maxRadius;
+        joyGrabOffsetX = e.clientX - (centerX + curX);
+        joyGrabOffsetY = e.clientY - (centerY + curY);
+    } else {
+        joyGrabOffsetX = 0;
+        joyGrabOffsetY = 0;
+    }
 }
 function doJoystickDrag(e) { if (!isDraggingJoystick) return; updateJoystickPosition(e); }
-function endJoystickDrag() { isDraggingJoystick = false; }
+function endJoystickDrag() { isDraggingJoystick = false; joyGrabOffsetX = 0; joyGrabOffsetY = 0; }
 
 function updateJoystickPosition(e) {
     const joyZone = document.getElementById('joystick-zone'); const joyHandle = document.getElementById('joystick-handle');
     if (!joyZone || !joyHandle) return;
     const rect = joyZone.getBoundingClientRect(); const centerX = rect.left + rect.width / 2; const centerY = rect.top + rect.height / 2; const maxRadius = rect.width / 2 - 15; 
-    let dx = e.clientX - centerX; let dy = e.clientY - centerY; let dist = Math.sqrt(dx * dx + dy * dy);
+    let dx = e.clientX - centerX - joyGrabOffsetX; let dy = e.clientY - centerY - joyGrabOffsetY; let dist = Math.sqrt(dx * dx + dy * dy);
     if (dist > maxRadius) { dx = (dx / dist) * maxRadius; dy = (dy / dist) * maxRadius; dist = maxRadius; }
     joyHandle.style.transform = `translate(${dx}px, ${dy}px)`;
     let currentTeam = uiCurrentTeamId();
@@ -1500,6 +2164,11 @@ function resetJoystickUI() { const joyHandle = document.getElementById('joystick
 function updateDashboardUI(teamObj) {
     let currentTeam = uiCurrentTeamId();
     if (!teamObj || teamObj.id !== currentTeam) return;
+
+    const stallScreen = document.getElementById('stall-screen');
+    if (stallScreen) {
+        stallScreen.style.display = teamObj.stalled && !teamObj.isDestroyed ? 'flex' : 'none';
+    }
 
     // 🚀 5 檔磁吸滑動位置
     let handle = document.getElementById('throttle-handle');
@@ -1531,9 +2200,10 @@ function updateDashboardUI(teamObj) {
 
     let apVal = document.getElementById('hud-val-ap'); let apNeedle = document.getElementById('needle-ap');
     if (apVal) apVal.innerText = Math.floor(previewAp);
-    // 🌟 解鎖 AP 指針上限到 250
+    // Gauge scale matches CONFIG.rules.maxAp (was hard-capped at 250 → 250–300 looked "stuck").
     if (apNeedle) {
-        let maxGaugeAP = 250; let deg = -90 + (previewAp / maxGaugeAP) * 180; if (isNaN(deg)) deg = -90; deg = Math.max(-90, Math.min(90, deg));
+        let maxGaugeAP = (typeof MAX_AP === 'number' && MAX_AP > 0) ? MAX_AP : 300;
+        let deg = -90 + (previewAp / maxGaugeAP) * 180; if (isNaN(deg)) deg = -90; deg = Math.max(-90, Math.min(90, deg));
         let theta = deg * Math.PI / 180; let x2 = 50 + 28 * Math.sin(theta); let y2 = 50 - 28 * Math.cos(theta);
         apNeedle.setAttribute('x2', x2); apNeedle.setAttribute('y2', y2); apNeedle.style.transform = ''; 
     }
@@ -1564,23 +2234,43 @@ function updateDashboardUI(teamObj) {
     const enemyObj = teams[enemyId];
     if (teamObj.wrapper && enemyObj && enemyObj.wrapper && !enemyObj.isDestroyed) {
         let distance = teamObj.wrapper.position.distanceTo(enemyObj.wrapper.position); let forward = new THREE.Vector3(0, 0, 1).applyQuaternion(teamObj.wrapper.quaternion).normalize(); let angle = forward.angleTo(new THREE.Vector3().subVectors(enemyObj.wrapper.position, teamObj.wrapper.position).normalize());
-        isLocked = teamObj.weapon === 'gun' ? (distance <= (typeof GUN_RANGE !== 'undefined' ? GUN_RANGE : 70) && angle <= Math.PI/12) : (distance <= 60 && angle <= Math.PI/12);
+        isLocked = teamObj.weapon === 'gun'
+            ? (distance <= (typeof GUN_RANGE !== 'undefined' ? GUN_RANGE : 70) && angle <= Math.PI/12)
+            : (() => {
+                const live = typeof teamLiveMissileType === 'function' ? teamLiveMissileType(teamObj) : 'fox2';
+                if (live === 'fox1') {
+                    const cfg = typeof getMissileWeaponConfig === 'function' ? getMissileWeaponConfig('fox1') : (CONFIG.weapons.fox1 || {});
+                    const minR = Number(cfg.minArmingRange) || 70;
+                    const maxR = Number(cfg.seekerRange) || 200;
+                    return distance >= minR && distance <= maxR && angle <= (Number(cfg.seekerAngle) || Math.PI / 14);
+                }
+                return distance <= (typeof SEEKER_RANGE !== 'undefined' ? SEEKER_RANGE : 120) && angle <= Math.PI/12;
+            })();
     }
 
     let elSmsContent = document.getElementById('sms-text-content');
     if (elSmsContent) {
-        let wpnName = teamObj.weapon === 'gun' ? '機砲' : '飛彈'; let statusText = '[就緒]';
+        const liveType = teamObj.weapon === 'missile'
+            ? (typeof teamLiveMissileType === 'function' ? teamLiveMissileType(teamObj) : 'fox2')
+            : null;
+        let wpnName = teamObj.weapon === 'gun' ? '機砲' : (liveType === 'fox1' ? 'FOX-1' : 'FOX-2');
+        let statusText = '[就緒]';
         if (teamObj.wpnQueued) { statusText = '[已排程]'; } 
         else if (teamObj.weapon === 'missile') {
             let armedCount = teamObj.pylons ? teamObj.pylons.filter(p => p.state === 'armed').length : 0; let poweringCount = teamObj.pylons ? teamObj.pylons.filter(p => p.state === 'powering').length : 0;
             statusText = armedCount > 0 ? (isLocked ? '[已鎖定]' : '[就緒]') : (poweringCount > 0 ? '[開機中]' : '[未通電]');
         } else { statusText = isLocked ? '[已鎖定]' : '[就緒]'; wpnName = `機砲 [INF]`; }
         elSmsContent.innerText = `狀態 ${statusText} ${wpnName}`;
+        elSmsContent.style.color = '#ffeb3b';
     }
+    uiUpdateSmsRadarLockWarn(teamObj);
 
     if (teamObj.pylons) {
         teamObj.pylons.forEach(p => {
-            let stick = document.getElementById(`pylon-stick-${p.id}`); 
+            let stick = document.getElementById(`pylon-stick-${p.id}`);
+            let label = document.querySelector(`.pylon-switch-wrapper[data-pylon="${p.id}"] .pylon-label`);
+            const wLabel = (typeof pylonWeaponType === 'function' ? pylonWeaponType(p) : p.weaponType) === 'fox1' ? 'F1' : 'F2';
+            if (label) label.innerText = `PYLON ${p.id} ${wLabel}`;
             if (stick) {
                 stick.className = 'pylon-stick';
                 if (p.state === 'empty') { stick.style.background = '#ff0033'; stick.style.boxShadow = '0 0 10px #ff0033'; } 
@@ -1620,21 +2310,51 @@ function updateDashboardUI(teamObj) {
         } 
     }
 
-    // 🌟 每機獨立待命／AI 狀態按鈕
+    const btnChaff = document.getElementById('btn-chaff');
+    if (btnChaff) {
+        const ammo = Number(teamObj.chaffAmmo) || 0;
+        if (ammo <= 0) {
+            btnChaff.innerText = 'CHAFF [0]';
+            btnChaff.style.color = '#555';
+            btnChaff.style.borderColor = '#333';
+            btnChaff.style.background = '#111';
+            btnChaff.style.boxShadow = 'none';
+        } else if (teamObj.chaffArmed) {
+            btnChaff.innerText = `CHAFF [${ammo}]`;
+            btnChaff.style.color = '#fff';
+            btnChaff.style.borderColor = '#00e5ff';
+            btnChaff.style.background = '#0088aa';
+            btnChaff.style.boxShadow = '0 0 12px #00e5ff';
+        } else {
+            btnChaff.innerText = `CHAFF [${ammo}]`;
+            btnChaff.style.color = '#00e5ff';
+            btnChaff.style.borderColor = '#00e5ff';
+            btnChaff.style.background = '#111';
+            btnChaff.style.boxShadow = 'none';
+        }
+    }
+
+    // 🌟 每機獨立待命／AI 狀態按鈕（文案去掉 NPC: 前綴；寬度由席位 1/4 欄位限制）
     uiSeatIds().forEach((id) => {
         let btnEngage = document.getElementById(`btn-engage-${id}`);
         let t = teams[id];
         if (!btnEngage || !t || !uiIsSeatLive(id)) return;
         const faction = (GameContext.getFaction && GameContext.getFaction(id)) || id;
         if (t.aiEnabled) {
-            const action = t.aiLastAction;
-            const detail = action ? ` | THR ${action.throttle || '-'} | ${action.weapon ? action.weapon.toUpperCase() : 'GUN'}` : '';
-            btnEngage.innerText = `${t.aiStatusText || 'NPC: 待機中'}${detail}`;
+            if (t.isDestroyed || (typeof t.hp === 'number' && t.hp <= 0)) {
+                btnEngage.innerText = (t.aiLastAction && t.aiLastAction.statusText) || t.aiStatusText || '被擊墜';
+                btnEngage.title = '點擊打開／收合決策卷軸';
+            } else {
+                const action = t.aiLastAction;
+                const detail = action ? ` | THR ${action.throttle || '-'} | ${action.weapon ? action.weapon.toUpperCase() : 'GUN'}` : '';
+                const label = `${uiStripNpcStatusPrefix(t.aiStatusText || '待機中')}${detail}`;
+                btnEngage.innerText = label;
+                btnEngage.title = `${label}\n點擊打開／收合決策卷軸`;
+            }
             btnEngage.style.borderColor = '#ffbb00';
             btnEngage.style.color = '#ffbb00';
             btnEngage.style.boxShadow = '0 0 10px rgba(255,187,0,0.65), inset 0 0 5px rgba(255,187,0,0.35)';
             btnEngage.style.cursor = 'pointer';
-            btnEngage.title = '點擊展開/收合 AI 決策樹';
         } else if (t.ready) {
             btnEngage.innerText = '待命中';
             let glowColor = faction === 'blue' ? '#00bcd4' : '#ff0055';
@@ -1653,6 +2373,7 @@ function updateDashboardUI(teamObj) {
         }
     });
     uiRefreshTeamModeButtons();
+    uiRefreshSeatVitals();
     uiRefreshAIDebugPanel();
 }
 
@@ -1660,21 +2381,140 @@ function showSMSAlert(text, color) {
     let elSmsContent = document.getElementById('sms-text-content');
     if (elSmsContent) {
         elSmsContent.innerText = text; elSmsContent.style.color = color || '#00ff88';
+        // Temporary alerts should be readable even during radar-lock marquee.
+        const wrap = document.getElementById('sms-text-wrap');
+        if (wrap) wrap.classList.add('sms-alert-force');
         if(window.smsAlertTimeout) clearTimeout(window.smsAlertTimeout);
         window.smsAlertTimeout = setTimeout(() => { 
             let currentTeam = uiCurrentTeamId(); 
             let t = teams[currentTeam]; 
+            if (wrap) wrap.classList.remove('sms-alert-force');
             if(t) { elSmsContent.style.color = '#ffeb3b'; updateDashboardUI(t); } 
         }, 1800);
     }
 }
+
+/**
+ * True when a hostile SARH (FOX-1) illuminate gate currently paints this aircraft.
+ * Used for SMS 「被鎖定」 warning — no aim-ring jitter.
+ */
+function uiEvalHostileSarhLock(selfTeam) {
+    if (!selfTeam || selfTeam.isDestroyed || !selfTeam.wrapper || typeof computeSarhSupport !== 'function') {
+        return { locked: false, by: null };
+    }
+    if (typeof THREE === 'undefined') return { locked: false, by: null };
+    const selfId = selfTeam.id;
+    const selfPos = selfTeam.wrapper.position;
+    const hostiles = (typeof GameContext !== 'undefined' && GameContext.getHostileIds)
+        ? GameContext.getHostileIds(selfId).map((id) => GameContext.getTeam(id)).filter(Boolean)
+        : [];
+    const typeOf = (p) => (typeof pylonWeaponType === 'function' ? pylonWeaponType(p) : (p && p.weaponType) || 'fox2');
+    for (let i = 0; i < hostiles.length; i++) {
+        const foe = hostiles[i];
+        if (!foe || foe.isDestroyed || !foe.wrapper) continue;
+        const hasFox1Missile = (foe.activeMissiles || []).some(
+            (m) => m && m.missileType === 'fox1' && m.active && !m.exploded && Number(m.ap) > 0
+        );
+        const hasFox1Load = (foe.pylons || []).some((p) => p && p.state !== 'empty' && typeOf(p) === 'fox1');
+        if (!hasFox1Missile && !hasFox1Load) continue;
+        let losBlocked = false;
+        if (typeof obstacles !== 'undefined' && obstacles && obstacles.length) {
+            const dir = selfPos.clone().sub(foe.wrapper.position);
+            const dist = dir.length();
+            if (dist > 0.2) {
+                const ray = new THREE.Raycaster(foe.wrapper.position, dir.normalize(), 0.1, dist);
+                losBlocked = ray.intersectObjects(obstacles, true).length > 0;
+            }
+        }
+        const chaffList = (typeof globalChaff !== 'undefined' && Array.isArray(globalChaff))
+            ? globalChaff.map((c) => ({ pos: c.pos, ageSteps: c.ageSteps || c.age || 0 }))
+            : [];
+        const support = computeSarhSupport({
+            shooterPos: foe.wrapper.position,
+            shooterQuat: foe.wrapper.quaternion,
+            targetPos: selfPos,
+            chaffList,
+            step: (typeof performance !== 'undefined' ? performance.now() * 0.06 : 0),
+            losBlocked
+        });
+        if (support && support.supported) {
+            return { locked: true, by: foe.id, support };
+        }
+    }
+    return { locked: false, by: null };
+}
+
+function uiUpdateSmsRadarLockWarn(selfTeam) {
+    const wrap = document.getElementById('sms-text-wrap');
+    const warn = document.getElementById('sms-lock-warn');
+    if (!wrap || !warn) return false;
+    const evalLock = uiEvalHostileSarhLock(selfTeam);
+    const locked = !!(evalLock && evalLock.locked) && !!(selfTeam && !selfTeam.aiEnabled);
+    wrap.classList.toggle('is-radar-locked', locked);
+    warn.hidden = !locked;
+    warn.setAttribute('aria-hidden', locked ? 'false' : 'true');
+    if (locked && evalLock.by) wrap.dataset.lockBy = String(evalLock.by);
+    else delete wrap.dataset.lockBy;
+    return locked;
+}
+
+/** Toggle gun fire / missile launch queue for the active human seat (SMS ENT + LCOS double-tap). */
+function uiToggleWeaponFireQueue(teamId = null) {
+    const currentTeam = teamId || uiCurrentTeamId();
+    const t = teams[currentTeam];
+    if (!t || t.aiEnabled || GameContext.isAnimating() || GameContext.isReplayMode() || t.isDestroyed || t.ready) {
+        return false;
+    }
+
+    if (t.weapon === 'gun') {
+        const wasQueued = t.wpnQueued && t.queuedAction === 'gun';
+        if (!wasQueued && GameContext.stateMachine.isGunOverheated(currentTeam)) {
+            showSMSAlert('🔥 機砲過熱！停火冷卻', '#ff4400');
+            updateDashboardUI(t);
+            return false;
+        }
+        const ok = GameContext.stateMachine.toggleGunQueue(currentTeam);
+        if (!ok && !wasQueued) {
+            showSMSAlert('🔥 機砲過熱！停火冷卻', '#ff4400');
+        } else {
+            showSMSAlert(wasQueued ? '⚠️ 機砲保險已關閉' : '⚡ 機砲射擊線已通電', wasQueued ? '#aaa' : '#00ff88');
+        }
+    } else {
+        const armedCount = t.pylons ? t.pylons.filter((item) => item.state === 'armed').length : 0;
+        const poweringCount = t.pylons ? t.pylons.filter((item) => item.state === 'powering').length : 0;
+        if (armedCount > 0) {
+            const wasQueued = t.wpnQueued && t.queuedAction === 'missile';
+            const liveType = typeof pylonWeaponType === 'function'
+                ? pylonWeaponType(t.pylons.find((p) => p.state === 'armed'))
+                : 'fox2';
+            const ok = GameContext.stateMachine.toggleMissileQueue(currentTeam);
+            if (!wasQueued && !ok && liveType === 'fox1') {
+                showSMSAlert('🛑 FOX-1 需在 70–200m 內鎖定', '#ff0055');
+            } else {
+                const label = liveType === 'fox1' ? 'FOX-1' : 'FOX-2';
+                showSMSAlert(
+                    wasQueued ? `⚠️ ${label} 發射排程已取消` : `⚡ ${label} 排程鎖定 (${armedCount} 枚)`,
+                    wasQueued ? '#aaa' : '#00ffff'
+                );
+            }
+        } else if (poweringCount > 0) {
+            showSMSAlert('🛑 尋標頭開機中！', '#ffbb00');
+        } else {
+            GameContext.stateMachine.clearQueuedAction(currentTeam);
+            showSMSAlert('🛑 無掛架就緒', '#ff0055');
+        }
+    }
+    updateDashboardUI(t);
+    uiRefreshPreview(t);
+    return true;
+}
+window.uiToggleWeaponFireQueue = uiToggleWeaponFireQueue;
 
 // ----------------------------------------------------------------------------
 // Event Bus: EnginePhaseChanged (ui.js 結構整理：事件處理邏輯抽成函式)
 // ----------------------------------------------------------------------------
 function uiOnEnginePhaseChanged(e) {
     const data = e.detail;
-    let lockScreen = document.getElementById('combat-lock-screen');
     let dashboard = document.getElementById('ui-dashboard');
     let repStatus = document.getElementById('replay-status');
     let repSlider = document.getElementById('replay-slider');
@@ -1682,15 +2522,16 @@ function uiOnEnginePhaseChanged(e) {
     switch(data.phase) {
         case 'calculating':
             uiClearAutoAIBattleTimer();
-            if(lockScreen) lockScreen.style.display = 'block';
-            if(dashboard) { dashboard.style.pointerEvents = 'none'; dashboard.style.opacity = '0.2'; }
-            if(repStatus) repStatus.innerText = "狀態: 運算中";
-            uiSetControlsVisible(false);
+            uiShowComputingOverlay(
+                (document.getElementById('compute-lock-sub') && document.getElementById('compute-lock-sub').textContent) ||
+                '戰術結算中…'
+            );
+            if(repStatus) { repStatus.innerText = "狀態: 運算中"; repStatus.style.color = "#ffcc66"; }
             break;
         case 'playing':
             uiClearAutoAIBattleTimer();
-            if(lockScreen) lockScreen.style.display = 'none';
-            if(repStatus) repStatus.innerText = "狀態: 播放中";
+            uiHideComputingOverlay();
+            if(repStatus) { repStatus.innerText = "狀態: 播放中"; repStatus.style.color = "#aaa"; }
             if(repSlider) { 
                 repSlider.min = 1; 
                 repSlider.max = data.maxLog + 0.99; 
@@ -1700,7 +2541,7 @@ function uiOnEnginePhaseChanged(e) {
             uiSyncSelectionChrome(uiCurrentTeamId());
             break;
         case 'planning':
-            if(lockScreen) lockScreen.style.display = 'none';
+            uiHideComputingOverlay();
             if(dashboard) { dashboard.style.pointerEvents = 'auto'; dashboard.style.opacity = '1.0'; }
             if (data.wreckFall) {
                 // Wreck auto-turn is owned by combat.scheduleWreckFallTurn — never also schedule AI.
@@ -1721,7 +2562,7 @@ function uiOnEnginePhaseChanged(e) {
             break;
         case 'game_over':
             uiClearAutoAIBattleTimer();
-            if(lockScreen) lockScreen.style.display = 'none';
+            uiHideComputingOverlay();
             if(dashboard) { dashboard.style.pointerEvents = 'auto'; dashboard.style.opacity = '1.0'; }
             if(repStatus) { repStatus.innerText = `狀態: 戰鬥結束 - ${data.winner || ''}`; repStatus.style.color = "#ffeb3b"; }
             if(repSlider) {
@@ -1785,5 +2626,9 @@ window.AirArenaAIDebug = {
     getTrace(teamId) {
         const t = uiGetAIDebugTeam(teamId || uiAIDebugExpandedTeam);
         return t && Array.isArray(t.aiDebugTrace) ? t.aiDebugTrace.slice() : [];
-    }
+    },
+    getDecisionTrail(teamId) {
+        return uiGetAIDecisionTrail(teamId || uiAIDebugExpandedTeam);
+    },
+    trailMax: AI_DECISION_TRAIL_MAX
 };

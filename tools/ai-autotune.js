@@ -12,8 +12,11 @@ const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
 const sharedDefaults = require(path.join(ROOT, 'js', 'ai', 'pilot-tuning-defaults.js'));
+const weaponEnvelope = require(path.join(ROOT, 'js', 'ai', 'weapon-envelope.js'));
 const PARAM_KEYS = sharedDefaults.PARAM_KEYS;
 const DEFAULT_BASE_PARAMS = Object.fromEntries(PARAM_KEYS.map((key) => [key, sharedDefaults[key]]));
+/** Combat ranges stay pinned to CONFIG via weapon-envelope (H1); only soft angles mutate. */
+const LOCKED_RANGES = weaponEnvelope.getCombatRanges();
 
 const DEFAULTS = {
     seed: 20260706,
@@ -32,7 +35,7 @@ const TUNING_FILE = path.join(ROOT, 'js', 'ai', 'pilot-tuning.local.js');
 function loadBaseParams() {
     const params = { ...DEFAULT_BASE_PARAMS };
     if (!fs.existsSync(TUNING_FILE)) {
-        return { params, source: 'built-in-defaults' };
+        return { params: pinCombatRanges(params), source: 'built-in-defaults' };
     }
     const raw = fs.readFileSync(TUNING_FILE, 'utf8');
     for (const key of PARAM_KEYS) {
@@ -41,7 +44,16 @@ function loadBaseParams() {
             params[key] = Number(match[1]);
         }
     }
-    return { params, source: path.relative(process.cwd(), TUNING_FILE) };
+    return { params: pinCombatRanges(params), source: path.relative(process.cwd(), TUNING_FILE) };
+}
+
+function pinCombatRanges(params) {
+    return {
+        ...params,
+        gunRange: LOCKED_RANGES.gunRange,
+        missileMinRange: LOCKED_RANGES.missileMinRange,
+        missileMaxRange: LOCKED_RANGES.missileMaxRange
+    };
 }
 
 function parseArgs(argv) {
@@ -84,23 +96,23 @@ function pickStressScenario(rand, scenario) {
 }
 
 function mutateParams(rand, base = DEFAULT_BASE_PARAMS) {
-    return {
+    return pinCombatRanges({
         energyCriticalAp: Math.round(pickRange(rand, 46, 62)),
         lowAp: Math.round(pickRange(rand, 60, 76)),
         stallPitchThreshold: pickRange(rand, 0.08, 0.28),
         minRecoverAlt: Math.round(pickRange(rand, 12, 34)),
         stallRecoverBonus: pickRange(rand, 5.0, 12.0),
         climbPenalty: pickRange(rand, 4.0, 9.5),
-        gunRange: Math.round(pickRange(rand, 34, 50)),
+        gunRange: LOCKED_RANGES.gunRange,
         gunAngle: Math.round(pickRange(rand, 16, 30)),
-        missileMinRange: Math.round(pickRange(rand, 24, 44)),
-        missileMaxRange: Math.round(pickRange(rand, 82, 126)),
+        missileMinRange: LOCKED_RANGES.missileMinRange,
+        missileMaxRange: LOCKED_RANGES.missileMaxRange,
         missileAngle: Math.round(pickRange(rand, 18, 38)),
         interceptTurnGain: pickRange(rand, 0.14, 0.34),
         recoverPitchBias: pickRange(rand, -0.36, -0.06),
         hybridAggression: pickRange(rand, 0.25, 0.85),
         _basedOn: base
-    };
+    });
 }
 
 function decideAction(state, policyMode, p) {

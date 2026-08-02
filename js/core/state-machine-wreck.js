@@ -8,6 +8,9 @@ window.StateMachineWreckApi = {
         t.ap = 0;
         t.throttle = 1;
         t.ready = true;
+        if (typeof this.markAIDestroyedStatus === 'function') {
+            this.markAIDestroyedStatus(teamId);
+        }
         return true;
     },
 

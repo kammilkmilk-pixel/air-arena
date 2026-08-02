@@ -36,73 +36,97 @@ function executeTurnSimultaneously() {
         window.uiClearAutoAIBattleTimer();
     }
 
-    try {
+    // Paint "運算中" before sync path/missile resolution blocks the main thread.
     window.dispatchEvent(new CustomEvent('EnginePhaseChanged', { detail: { phase: 'calculating' } }));
-    if (window.ghostWrapper) window.ghostWrapper.visible = false; 
-
-    let steps = CONFIG.rules.stepsPerTurn; let arrayLen = steps + 1; 
-    const ids = combatActiveIds();
-
-    let ctx = {
-        log: { turn: currentTurn, flaresTrack: [], vfxTriggers: [], hpTrack: {} },
-        hp: {},
-        death: {},
-        flares: Array.from({length: arrayLen}, () => [])
-    };
-    ids.forEach((id) => {
-        ctx.log[id] = {};
-        ctx.log[`${id}MslTracks`] = {};
-        ctx.log[`${id}ExplodedAt`] = {};
-        ctx.hp[id] = teams[id].hp;
-        ctx.death[id] = -1;
-        ctx.log.hpTrack[id] = new Array(arrayLen).fill(0);
-    });
-
-    processFlightPaths(ctx);
-    processFlares(ctx);
-
-    for (let step = 0; step <= steps; step++) {
-        let ratio = step / steps;
-        resolveGunsForStep(step, ratio, ctx);
-        resolveMissilesForStep(step, ratio, ctx);
-        resolveDamageAndDeathForStep(step, ratio, ctx);
+    if (typeof window.uiShowComputingOverlay === 'function') {
+        window.uiShowComputingOverlay('戰術結算中…');
     }
+    if (window.ghostWrapper) window.ghostWrapper.visible = false;
 
-    ctx.log.destroyed = {};
-    ids.forEach((id) => {
-        ctx.log.destroyed[id] = ctx.death[id] !== -1 || ctx.hp[id] <= 0;
-    });
-    const redGone = ids.filter((id) => combatFactionOf(id) === 'red').every((id) => ctx.log.destroyed[id]);
-    const blueGone = ids.filter((id) => combatFactionOf(id) === 'blue').every((id) => ctx.log.destroyed[id]);
-    if (redGone || blueGone) {
-        ctx.log.winner = "DRAW (雙方同歸於盡)";
-        if (redGone && !blueGone) ctx.log.winner = "BLUE TEAM 勝利";
-        if (!redGone && blueGone) ctx.log.winner = "RED TEAM 勝利";
-    }
+    const runHeavy = () => {
+        try {
+            let steps = CONFIG.rules.stepsPerTurn; let arrayLen = steps + 1;
+            const ids = combatActiveIds();
 
-    ids.forEach(id => { 
-        let t = teams[id];
-        GameContext.stateMachine.pruneActiveMissiles(id);
-        if (ctx.death[id] !== -1) {
-            if (typeof drawTrajectoryLine === 'function') drawTrajectoryLine(t);
-            if (trajectoryMeshes[id]) {
-                let isCurrentPlayer = (typeof tAct !== 'undefined' && id === tAct) || (id === window.tAct);
-                trajectoryMeshes[id].visible = isCurrentPlayer ? true : !!(t.userData && t.userData.showEnvelope);
+            let ctx = {
+                log: { turn: currentTurn, flaresTrack: [], chaffTrack: [], vfxTriggers: [], hpTrack: {} },
+                hp: {},
+                death: {},
+                flares: Array.from({ length: arrayLen }, () => []),
+                chaff: Array.from({ length: arrayLen }, () => [])
+            };
+            ids.forEach((id) => {
+                ctx.log[id] = {};
+                ctx.log[`${id}MslTracks`] = {};
+                ctx.log[`${id}ExplodedAt`] = {};
+                ctx.hp[id] = teams[id].hp;
+                ctx.death[id] = -1;
+                ctx.log.hpTrack[id] = new Array(arrayLen).fill(0);
+            });
+
+            processFlightPaths(ctx);
+            processFlares(ctx);
+            if (typeof processChaff === 'function') processChaff(ctx);
+
+            for (let step = 0; step <= steps; step++) {
+                let ratio = step / steps;
+                resolveGunsForStep(step, ratio, ctx);
+                resolveMissilesForStep(step, ratio, ctx);
+                resolveDamageAndDeathForStep(step, ratio, ctx);
             }
+
+            ctx.log.destroyed = {};
+            ids.forEach((id) => {
+                ctx.log.destroyed[id] = ctx.death[id] !== -1 || ctx.hp[id] <= 0;
+            });
+            const redGone = ids.filter((id) => combatFactionOf(id) === 'red').every((id) => ctx.log.destroyed[id]);
+            const blueGone = ids.filter((id) => combatFactionOf(id) === 'blue').every((id) => ctx.log.destroyed[id]);
+            if (redGone || blueGone) {
+                ctx.log.winner = "DRAW (雙方同歸於盡)";
+                if (redGone && !blueGone) ctx.log.winner = "BLUE TEAM 勝利";
+                if (!redGone && blueGone) ctx.log.winner = "RED TEAM 勝利";
+            }
+
+            ids.forEach(id => {
+                let t = teams[id];
+                GameContext.stateMachine.pruneActiveMissiles(id);
+                if (ctx.death[id] !== -1) {
+                    if (typeof drawTrajectoryLine === 'function') drawTrajectoryLine(t);
+                    if (trajectoryMeshes[id]) {
+                        let isCurrentPlayer = (typeof tAct !== 'undefined' && id === tAct) || (id === window.tAct);
+                        trajectoryMeshes[id].visible = isCurrentPlayer ? true : !!(t.userData && t.userData.showEnvelope);
+                    }
+                }
+            });
+
+            GameContext.stateMachine.commitTurn(ctx.log);
+            window.dispatchEvent(new CustomEvent('EnginePhaseChanged', { detail: { phase: 'playing', maxLog: battleLog.length } }));
+            if (GameContext.services.startCombatAnimation) {
+                GameContext.callService('startCombatAnimation');
+            } else {
+                GameContext.setAnimating(true);
+                GameContext.state.animProgress = 0;
+            }
+        } catch (error) {
+            console.error('回合運算發生錯誤：', error);
+            if (typeof window.uiHideComputingOverlay === 'function') {
+                window.uiHideComputingOverlay();
+            }
+        } finally {
+            // Unlock once animation owns the turn; finishTurn may start another turn later.
+            turnExecutionLocked = false;
         }
-    });
-    
-    GameContext.stateMachine.commitTurn(ctx.log);
-    window.dispatchEvent(new CustomEvent('EnginePhaseChanged', { detail: { phase: 'playing', maxLog: battleLog.length } }));
-    if (GameContext.services.startCombatAnimation) {
-        GameContext.callService('startCombatAnimation');
+    };
+
+    // Double-rAF + timeout: style flush, first paint of CSS spinner, then heavy sync work.
+    if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                setTimeout(runHeavy, 0);
+            });
+        });
     } else {
-        GameContext.setAnimating(true);
-        GameContext.state.animProgress = 0;
-    }
-    } finally {
-        // Unlock once animation owns the turn; finishTurn may start another turn later.
-        turnExecutionLocked = false;
+        setTimeout(runHeavy, 0);
     }
 }
 window.executeTurnSimultaneously = executeTurnSimultaneously;
@@ -120,8 +144,23 @@ function finishTurnSimultaneously() {
             let t = teams[id];
             if (!t) return;
             const destroyedByLog = !!(lastLog && lastLog.destroyed && lastLog.destroyed[id]);
-            if (!t.isDestroyed && lastLog[id] && lastLog[id].damageTaken > 0) GameContext.stateMachine.applyDamage(id, lastLog[id].damageTaken);
-            if (!t.isDestroyed && destroyedByLog) GameContext.stateMachine.applyDamage(id, Math.max(100, t.hp || 100));
+            const logCause = lastLog && lastLog.deathCause ? lastLog.deathCause[id] : null;
+            const flags = lastLog && lastLog.deathFlags ? lastLog.deathFlags[id] : null;
+            const softFlag = lastLog && lastLog.softWreck ? lastLog.softWreck[id] : null;
+            const inferredCause = logCause
+                || (softFlag === false && destroyedByLog ? 'impact' : null)
+                || 'combat';
+            const deathMeta = {
+                cause: inferredCause,
+                stalled: flags && flags.stalled != null ? !!flags.stalled : !!t.stalled,
+                ap: flags && Number.isFinite(Number(flags.ap)) ? Number(flags.ap) : t.ap
+            };
+            if (!t.isDestroyed && lastLog[id] && lastLog[id].damageTaken > 0) {
+                GameContext.stateMachine.applyDamage(id, lastLog[id].damageTaken, deathMeta);
+            }
+            if (!t.isDestroyed && destroyedByLog) {
+                GameContext.stateMachine.applyDamage(id, Math.max(100, t.hp || 100), deathMeta);
+            }
 
             const finalPos = (t.flightCurve && t.pathQuats && t.pathQuats.length)
                 ? t.flightCurve.getPointAt(1.0)
@@ -180,6 +219,8 @@ function finishTurnSimultaneously() {
             
             GameContext.stateMachine.updateHeat(id, heatDelta);
             GameContext.stateMachine.updateAP(id, finalStepAP, stats.thrust);
+            const firedGun = !!(t.chain && t.chain.length > 0 && t.chain[0].fire === 'gun');
+            GameContext.stateMachine.settleGunHeat(id, firedGun);
             GameContext.stateMachine.resetPlanningChain(id);
             let freshRes = simulateFlight(t, t.chain); t.pathPoints = freshRes.points; t.pathQuats = freshRes.quats;
             GameContext.stateMachine.resetTurnStatus(id);

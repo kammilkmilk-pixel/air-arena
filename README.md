@@ -2,8 +2,9 @@
 
 ## 目前更新狀態
 
-**版本快照：v3.0**（2026-07-27）  
-基於 v2.2 Stable 架構，新增協作編隊、對戰設定與殘骸墜落演出。
+**版本快照：v3.0+**（文件更新 **2026-08-02**）  
+基於 v2.2 Stable 架構；v3.0 協作編隊／殘骸之後，續修 AI 城區、SARH／箔條、鏡頭與頂欄 UX。  
+**備份前請以本節 + [`TECH-DEBT.md`](./TECH-DEBT.md) 為準。**
 
 ### 已完成（v2.2 基礎）
 
@@ -12,76 +13,98 @@
 - **資源容錯**：`fallbacks.js` 戰機、城市、VFX 缺失時可降級運行。
 - **LCOS 修正**：機砲準星大小綁定兩機實際距離，不受鏡頭遠近影響。
 - **Phase 1–3 架構**：`GameContext` 收斂 state / services / three / stateMachine；TeamState / TeamView 分層。
-- **AI MVP + 回歸**：`pilot-ai.js` FSM、城市避障、hybrid / fox2-first；`npm run test:ai` 五關課程。
+- **AI MVP + 回歸**：`pilot-ai.js` FSM、城市避障、hybrid / fox2-first；`npm run test:ai` 課程＋煙測。
 
 ### 已完成（v3.0 新增）
 
 | 階段 | 內容 |
 |------|------|
-| **0a Match Setup** | 開局 UI：1v1 / 2v2、各席位 Human / AI、掛載偏好（gun / fox2-priority） |
-| **0b Multi-unit** | 四機編制：`red` / `red2` / `blue` / `blue2`；`matchActive` 控制參戰；陣營 API |
-| **選取與鏡頭** | 3D 點選戰機切換操控；點敵機鎖定目標；追蹤鏡頭跟己機、look-at 瞄敵 |
-| **MFD 顯示規則** | 僅當前**人類**座席且非動畫中顯示 MFD（`#ui-wrapper.is-controls-hidden`） |
-| **Phase 1 Wingman** | 僚機四指令：`follow` / `cover` / `break` / `attack`；白框 + 指令面板 |
-| **殘骸墜落** | 機砲/飛彈擊毀 → 當回合緩墜 + 輕煙 → **下一回合**爆炸碎裂；撞地/對撞仍即時殉爆 |
-| **勝負延遲** | 有 `wreckPhase: 'falling'` 時延後 `game_over`，由 `scheduleWreckFallTurn` 單一路徑自動開跑 |
+| **0a Match Setup** | 開局 UI：1v1 / 2v2、各席位 Human / AI、掛載偏好 |
+| **0b Multi-unit** | 四機編制：`red` / `red2` / `blue` / `blue2`；`matchActive`；陣營 API |
+| **選取與鏡頭** | 點選切換；點敵鎖定；追蹤鏡頭以己機為軸、對準鎖定目標（距離 **8**） |
+| **MFD 顯示規則** | 僅當前**人類**座席且非動畫中顯示 MFD |
+| **Phase 1 Wingman** | 僚機五指令：`follow` / `attack` / `free` / `cover` / `break` |
+| **殘骸墜落** | 擊毀緩墜 → 次回合碎裂；撞地／對撞即時殉爆 |
+| **勝負延遲** | `wreckPhase: 'falling'` 時延後 `game_over` |
+
+### 近期續修（2026-07 末 → 08-01）
+
+| 項目 | 內容 |
+|------|------|
+| **AI 城區** | 屋頂淨空、Scheme B、`buildingRiskDowngrade: 0`、true undercroft／handoff／facade／AABB>memory |
+| **Phase A 能量** | 大轉向降 thr；軟避障能量門（H6） |
+| **ACMI** | 擊墜僚機可再顯示；碎片 VFX 仍缺（M4） |
+| **Decide / envelope** | `decide-pipeline`、`weapon-envelope`、多項 smoke |
+| **LCOS** | 相對拖曳、軸修正、遮擋仍顯示外環 |
+
+### 本波已完成（2026-08-02）
+
+| 項目 | 內容 |
+|------|------|
+| **Soft aiMap** | 儘量不強制 stick；clearAbove／perch 軟讓路 |
+| **雷達鎖定 SMS** | 「被鎖定」跑馬燈；無瞄準環 jitter |
+| **Typed CM** | FOX-1／SARH paint → chaff+beam；FOX-2 → flare |
+| **Chaff** | 5 回合白煙+閃光；擋在鏡頭與機之間半透明；快照含 `chaffAmmo` |
+| **標準掛載** | **2×FOX-1 + 2×FOX-2 + Gun**（內 F1／外 F2） |
+| **頂欄 UX** | 「運算中」併入狀態列；播放列常駐；▾ 向下收合隊伍／狀態／決策樹 |
+| **地圖** | `assets/maps` + `map-editor/`（AI hazard 標籤仍延後，見 M22） |
 
 ### 關鍵數值（當前平衡）
 
 | 項目 | 值 |
 |------|-----|
 | 機砲射程 | 70 |
-| FOX-2 有效窗 | 45–120 |
-| 開局高度 Y | 38 |
-| FOX2 開局偷襲機率 | ~0.2 |
-| 煙霧 baseOpacity | ~0.38 |
+| FOX-2 有效窗 | **35–120** |
+| FOX-1 射程／發射窗 | seeker **200**；發射排程 **70–200**（照射環可從 ~8m 顯示） |
+| 標準掛載 | P1/P4 FOX-1、P2/P3 FOX-2 + SMS 機砲 |
+| 開局高度 Y | **28**（Match Setup 可選 28／45／60／80） |
+| 追蹤鏡頭距離 | **8**（己機軸心 → 鎖定目標） |
+| FOX2 開局偷襲機率 | `fox2OpeningAmbushChance` 預設 **0.2** |
+| 建築風險降級 | `buildingRiskDowngrade: 0` |
+| Chaff 壽命 | 5 回合（`lifeSteps` 500） |
 
-### 目前技術債（v3.0 已知）
+### 目前技術債（摘要）
 
-- **ACMI 重播**：碎片爆炸為即時 `spawnAircraftDebris`，未寫入 `battleLog.vfxTriggers`，重播看不到爆碎。
-- **序列化缺口**：`getSerializableTeamState` 未含 `wreckPhase` / `wreckBurstTurn`。
-- **跨局殘留**：`aircraftDebris` 陣列新局未清空，碎片可能短暫殘留。
-- **硬毀無碎片**：墜地/對撞/空中相撞不走軟殺路徑，無延遲碎片（設計取捨）。
-- **舊債延續**：`pathPoints` 等 runtime 仍在 team；envelope 多來源；regression surrogate 與 live FSM 漂移。詳見 `TECH-DEBT.md`。
+- **High：** 無開放項。
+- **Medium 優先：** FOX-1 照射環 vs 發射窗 UX（M23）；CM 被城市逃生擠掉（M24）；T38／beam（M18/M21）；**Phase B 未開始（M8）**；ACMI 碎片（M4–M6）。
+- **詳表與計劃進度表：** [`TECH-DEBT.md`](./TECH-DEBT.md)。`docs/Tactical-Development-Memo.md` 為歷史備忘，勿當現行架構。
 
 ---
 
 ## 專案結構
 
 ```
-Air-Arena-v2.2-Stable/          # 目錄名保留；文件版本 v3.0
-├── index.html                  # 遊戲入口 + Match Setup + Wingman HUD
+Air-Arena-v2.2-Stable/          # 目錄名保留；文件版本 v3.0+
+├── index.html                  # 遊戲入口 + Match Setup + 頂欄
 ├── package.json
+├── README.md                   # 系統字典（現行）
+├── TECH-DEBT.md                # 技術債 + 計劃進度（現行）
 ├── css/style.css
+├── docs/
+│   └── Tactical-Development-Memo.md  # 歷史備忘（已過時）
+├── map-editor/                 # 地圖編輯器（WIP polish）
 ├── js/
 │   ├── game.js                 # 主迴圈、點選、鏡頭、模型載入
 │   ├── core/
-│   │   ├── config.js               # 數值、資源路徑、地圖
+│   │   ├── config.js               # 數值、資源路徑、doctrine
 │   │   ├── context.js              # GameContext、陣營/目標/對戰 API
 │   │   ├── fallbacks.js
-│   │   ├── team-state.js           # 常數、隊伍工廠、TeamView accessors
-│   │   ├── compat-aliases.js       # 舊版 window / script-scope 別名
-│   │   ├── state-machine-match.js  # Match Setup mixin
-│   │   ├── state-machine-wreck.js  # 殘骸墜落 / 碎片 mixin
-│   │   └── state-machine.js        # StateMachine 核心 + AI / 武器 / 結算
+│   │   ├── map-catalog.js / map-loader.js
+│   │   ├── team-state.js
+│   │   ├── compat-aliases.js
+│   │   ├── state-machine-match.js
+│   │   ├── state-machine-wreck.js
+│   │   └── state-machine.js
 │   ├── logic/
-│   │   ├── combat-helpers.js       # roster helper、pylon attach、spark 生成
-│   │   ├── combat-pipeline.js      # 飛行路徑、flare、soft-wreck 路徑合成
-│   │   ├── combat-resolution.js    # 機砲、飛彈、傷害與死亡判定
-│   │   ├── combat-turn.js          # turn runner、結算、wreckFall 自動回合
-│   │   ├── physics.js
-│   │   └── weapon.js
+│   │   ├── combat-helpers.js / combat-pipeline.js / combat-resolution.js / combat-turn.js
+│   │   ├── physics.js / weapon.js / sarh.js
 │   ├── ai/
-│   │   ├── pilot-ai.js         # NPC FSM + Wingman 支援邏輯
-│   │   ├── pilot-tuning-defaults.js
-│   │   └── pilot-tuning.local.example.js
+│   │   ├── pilot-ai.js / decide-pipeline.js / building-risk.js / weapon-envelope.js
+│   │   ├── ai-map.js / urban-avoid-side.js / pilot-tuning-defaults.js
 │   └── view/
-│       ├── render.js           # 渲染、碎片 VFX、ACMI 播放
-│       ├── ui.js               # MFD、Match Setup、Wingman 面板
-│       └── hud.js
-├── tools/                      # ai-regression、autotune、curriculum
+│       ├── render.js / ui.js / hud.js
+├── tools/                      # regression、smoke、autotune、bake:ai-map
 ├── assets/
-├── docs/Tactical-Development-Memo.md
 └── TECH-DEBT.md
 ```
 
@@ -101,7 +124,8 @@ npm start
 ## 對戰設定 (Match Setup)
 
 - **模式**：`1v1`（僅 red/blue）｜`2v2`（啟用 red2/blue2）
-- **席位**：`red-1` / `red-2` / `blue-1` / `blue-2` → `control: human | ai`、`loadout: gun-priority | fox2-priority`
+- **席位**：`red-1` / `red-2` / `blue-1` / `blue-2` → `control: human | ai`、`loadout: standard | gun-priority | fox2-priority | fox1-priority`  
+  - **standard** 預設掛載：`fox1, fox2, fox2, fox1` + SMS 機砲  
 - **套用**：`GameContext.stateMachine.applyMatchConfig(config)` → 設 `matchActive`、AI 政策、武器預選
 - **狀態**：`GameContext.state.matchReady`
 
@@ -176,8 +200,9 @@ npm start
 
 ## 選取、鏡頭與操控
 
-- **點己機**：`selectTeam` + 鏡頭跟隨
-- **點敵機**：`setLockedTarget`；鏡頭仍跟己機，`lookAtFromAircraft(host, target)`
+- **點己機**：`selectTeam` + 追蹤鏡頭（距離 `CHASE_CAM_DIST = 8`）
+- **點敵機**：`setLockedTarget`；鏡頭仍以己機為軸，沿「己機↔鎖定」對準目標（`getAircraftChaseCamPose`）
+- **運算中**：頂欄狀態列轉圈 +「狀態: 運算中」；播放列常駐，隊伍／決策樹可向下收合
 - **點友軍 AI 僚機**：選取 + Wingman 指令面板（不搶人類 MFD）
 - **MFD**：僅人類座席、非 `isAnimating` 時顯示
 - **動畫中追蹤**：`cameraFollowOverrideId` 鎖定己機
@@ -320,17 +345,22 @@ processFlightPaths → processFlares
 
 ---
 
-## v3.0 備份檢查清單
+## v3.0+ 健康檢查清單
 
 - [x] Match Setup 1v1 / 2v2
 - [x] 四機編制與陣營 API
 - [x] 點選 / 鎖定 / 追蹤鏡頭
-- [x] Wingman 四指令 AI
+- [x] Wingman 五指令 AI（含 `free`）
 - [x] 軟殺緩墜 → 下回合碎片
 - [x] wreckFall 單一路徑自動回合（無雙重 execute）
+- [x] 屋頂淨空 + Scheme B 建築風險降級
+- [x] ACMI 擊墜機模可見；NPC「被擊墜」
+- [x] LCOS 相對拖曳／軸向／遮擋可見
 - [ ] ACMI 重播碎片（待辦）
 - [ ] wreck 狀態序列化（待辦）
+- [ ] Phase B 戰術定位層
+- [ ] Envelope 單一來源 + regression 對齊
 
 ---
 
-*文件版本 v3.0 · 對應程式樹 `airarAir-Arena-v2.2-Stable` · 技術債詳 `TECH-DEBT.md`*
+*文件版本 v3.0+（2026-07-30）· 對應程式樹 `airarAir-Arena-v2.2-Stable` · 技術債詳 `TECH-DEBT.md`*

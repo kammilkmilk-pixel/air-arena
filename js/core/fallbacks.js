@@ -72,7 +72,8 @@ window.AssetFallbacks = {
                 new THREE.BoxGeometry(b.w, b.h, b.d),
                 new THREE.MeshStandardMaterial({ color: b.color || 0x2c2c2c, roughness: 0.85, metalness: 0.05 })
             );
-            mesh.position.set(b.x, b.h / 2, b.z);
+            mesh.position.set(b.x, (b.y || 0) + b.h / 2, b.z);
+            mesh.rotation.y = b.rotY || 0;
             mesh.castShadow = true;
             mesh.receiveShadow = true;
             cityGroup.add(mesh);
@@ -80,7 +81,7 @@ window.AssetFallbacks = {
         });
 
         scene.add(cityGroup);
-        console.warn(`🏙️ 使用 CONFIG.map.buildings 程序城市 (${buildings.length} 棟)。可放入 assets/models/city.glb 以啟用完整場景。`);
+        console.warn(`🏙️ 使用 CONFIG.map.buildings 程序城市 (${buildings.length} 棟)。可用 map-editor 編輯 assets/maps/，或放入 assets/models/city.glb。`);
         return cityGroup;
     }
 };

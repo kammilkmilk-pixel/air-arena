@@ -1,0 +1,10 @@
+{
+  "maps": [
+    {
+      "id": "citymap",
+      "name": "City Map",
+      "path": "assets/maps/citymap.json",
+      "aiMapPath": "assets/maps/citymap.ai-map.json"
+    }
+  ]
+}

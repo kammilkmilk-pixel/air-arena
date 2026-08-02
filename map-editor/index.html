@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Air Arena Map Editor</title>
+    <link rel="stylesheet" href="css/editor.css">
+</head>
+<body>
+    <header class="topbar">
+        <div class="brand">Map Editor</div>
+        <div class="topbar-actions">
+            <button type="button" id="btn-load-default">載入預設</button>
+            <button type="button" id="btn-import">匯入 JSON</button>
+            <button type="button" id="btn-export">匯出 JSON</button>
+            <input type="file" id="file-import" accept="application/json,.json" hidden>
+        </div>
+    </header>
+
+    <aside class="toolbar">
+        <button type="button" class="tool-btn is-active" data-tool="select" title="選取">選取</button>
+        <button type="button" class="tool-btn" data-tool="box" title="放置方塊">方塊</button>
+        <button type="button" class="tool-btn" data-tool="move" title="拖曳移動 XZ">移動</button>
+        <button type="button" id="btn-add-glb" title="加入 GLB">+ GLB</button>
+        <button type="button" id="btn-duplicate" title="複製選取">複製</button>
+        <button type="button" id="btn-delete" title="刪除選取">刪除</button>
+        <div class="asset-picker" id="asset-picker" hidden>
+            <label for="asset-select">模型</label>
+            <select id="asset-select"></select>
+            <label for="asset-custom">或路徑</label>
+            <input type="text" id="asset-custom" placeholder="assets/models/city1.glb">
+            <button type="button" id="btn-place-glb">放置</button>
+            <button type="button" id="btn-cancel-glb">取消</button>
+        </div>
+    </aside>
+
+    <main class="viewport-wrap">
+        <canvas id="viewport"></canvas>
+        <div class="viewport-hint">左鍵選取／放置 · 右鍵旋轉視角 · 滾輪縮放 · 移動工具拖曳 XZ</div>
+    </main>
+
+    <aside class="inspector" id="inspector">
+        <h2>地圖</h2>
+        <label>名稱 <input type="text" id="map-name"></label>
+        <h3>地面</h3>
+        <label>寬 <input type="number" id="ground-width" step="10"></label>
+        <label>深 <input type="number" id="ground-depth" step="10"></label>
+        <label>中心 X <input type="number" id="ground-cx" step="1"></label>
+        <label>中心 Z <input type="number" id="ground-cz" step="1"></label>
+        <label>顏色 <input type="color" id="ground-color"></label>
+
+        <h3>光線</h3>
+        <label>天空光 <input type="color" id="light-hemi-sky"></label>
+        <label>地面反光 <input type="color" id="light-hemi-ground"></label>
+        <label>天空光強度 <input type="number" id="light-hemi-i" step="0.05" min="0" max="3"></label>
+        <label>環境光 <input type="color" id="light-ambient"></label>
+        <label>環境光強度 <input type="number" id="light-ambient-i" step="0.05" min="0" max="3"></label>
+        <label>太陽光色 <input type="color" id="light-sun"></label>
+        <label>太陽光強度 <input type="number" id="light-sun-i" step="0.05" min="0" max="3"></label>
+        <label>太陽方向 X <input type="number" id="light-sun-x" step="0.05"></label>
+        <label>太陽方向 Y <input type="number" id="light-sun-y" step="0.05"></label>
+        <label>太陽方向 Z <input type="number" id="light-sun-z" step="0.05"></label>
+
+        <h3>天幕</h3>
+        <label>模式
+            <select id="sky-mode">
+                <option value="color">純色</option>
+                <option value="texture">貼圖天幕</option>
+            </select>
+        </label>
+        <label>天空色 <input type="color" id="sky-color"></label>
+        <label>霧色 <input type="color" id="sky-fog-color"></label>
+        <label>霧近 <input type="number" id="sky-fog-near" step="5"></label>
+        <label>霧遠 <input type="number" id="sky-fog-far" step="10"></label>
+        <label>天幕路徑 <input type="text" id="sky-texture" placeholder="assets/sky/sky.jpg"></label>
+        <label>天幕半徑 <input type="number" id="sky-radius" step="50" min="100"></label>
+        <button type="button" id="btn-sky-browse" style="width:100%;margin-bottom:8px;">選擇天幕圖檔路徑提示</button>
+
+        <h2>物件</h2>
+        <div id="object-list" class="object-list"></div>
+
+        <div id="object-props" class="object-props" hidden>
+            <h3>屬性</h3>
+            <label>ID <input type="text" id="obj-id" readonly></label>
+            <label>類型 <input type="text" id="obj-kind" readonly></label>
+            <label>X <input type="number" id="obj-x" step="0.5"></label>
+            <label>Y <input type="number" id="obj-y" step="0.5"></label>
+            <label>Z <input type="number" id="obj-z" step="0.5"></label>
+            <label>旋轉 Y (°) <input type="number" id="obj-roty" step="5"></label>
+            <div id="box-dims">
+                <label>寬 W <input type="number" id="obj-w" step="0.5" min="0.1"></label>
+                <label>深 D <input type="number" id="obj-d" step="0.5" min="0.1"></label>
+                <label>高 H <input type="number" id="obj-h" step="0.5" min="0.1"></label>
+            </div>
+            <div id="glb-dims" hidden>
+                <label>縮放 X <input type="number" id="obj-sx" step="0.01" min="0.001"></label>
+                <label>縮放 Y <input type="number" id="obj-sy" step="0.01" min="0.001"></label>
+                <label>縮放 Z <input type="number" id="obj-sz" step="0.01" min="0.001"></label>
+                <label>來源 <input type="text" id="obj-src"></label>
+            </div>
+            <label>顏色 <input type="color" id="obj-color"> <button type="button" id="btn-clear-color" title="清除染色">清除</button></label>
+            <label class="checkbox"><input type="checkbox" id="obj-collision"> 碰撞</label>
+        </div>
+        <p id="status" class="status"></p>
+    </aside>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+    <script src="js/asset-library.js"></script>
+    <script src="js/document.js"></script>
+    <script src="js/scene.js"></script>
+    <script src="js/inspector.js"></script>
+    <script src="js/tools.js"></script>
+    <script src="js/io.js"></script>
+    <script src="js/main.js"></script>
+</body>
+</html>

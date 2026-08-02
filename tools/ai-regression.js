@@ -17,8 +17,24 @@ const ROOT = path.join(__dirname, '..');
 const CURRICULUM_FILE = path.join(ROOT, 'tools', 'curriculum', 'ai-curriculum.json');
 const TUNING_FILE = path.join(ROOT, 'js', 'ai', 'pilot-tuning.local.js');
 const sharedDefaults = require(path.join(ROOT, 'js', 'ai', 'pilot-tuning-defaults.js'));
+const weaponEnvelope = require(path.join(ROOT, 'js', 'ai', 'weapon-envelope.js'));
+const buildingRisk = require(path.join(ROOT, 'js', 'ai', 'building-risk.js'));
 const PARAM_KEYS = sharedDefaults.PARAM_KEYS;
 const DEFAULT_PARAMS = Object.fromEntries(PARAM_KEYS.map((key) => [key, sharedDefaults[key]]));
+const ENVELOPE = weaponEnvelope.getCombatRanges();
+
+function gunRangeOf(params) {
+    const n = Number(params && params.gunRange);
+    return Number.isFinite(n) && n > 0 ? n : ENVELOPE.gunRange;
+}
+function missileMinOf(params) {
+    const n = Number(params && params.missileMinRange);
+    return Number.isFinite(n) && n > 0 ? n : ENVELOPE.missileMinRange;
+}
+function missileMaxOf(params) {
+    const n = Number(params && params.missileMaxRange);
+    return Number.isFinite(n) && n > 0 ? n : ENVELOPE.missileMaxRange;
+}
 
 const DEFAULTS = {
     seed: 20260707,
@@ -153,18 +169,24 @@ function generateObstacles(stage, rand) {
     return obstacles;
 }
 
-function nearestObstacle(state, obstacles) {
+function nearestObstacle(state, obstacles, params = null) {
     let nearest = {
         distance: Infinity,
         forwardDistance: Infinity,
         side: 1,
         id: null,
         collisionRisk: 'low',
-        riskPriority: 3
+        riskPriority: 3,
+        roofClearance: null
     };
     const forward = headingToVector(state.heading);
+    const forwardY = Math.sin(state.pitch || 0);
+    const riskDowngrade = Number(params && params.buildingRiskDowngrade);
+    const schemeSteps = Number.isFinite(riskDowngrade) ? riskDowngrade : Number(DEFAULT_PARAMS.buildingRiskDowngrade || 0);
     for (const obstacle of obstacles) {
-        if (state.altitude > obstacle.height + 8) continue;
+        const roofClearance = state.altitude - obstacle.height;
+        // Fully above canopy with margin: ignore unless diving into footprint (handled below).
+        if (roofClearance > buildingRisk.ROOF_CLEAR_M + 2 && forwardY >= -0.2) continue;
         const dx = obstacle.x - state.x;
         const dz = obstacle.z - state.z;
         const centerDist = Math.hypot(dx, dz);
@@ -172,12 +194,25 @@ function nearestObstacle(state, obstacles) {
         const forwardDist = dx * forward.x + dz * forward.z - obstacle.radius;
         const lateral = dx * forward.z - dz * forward.x;
         const behind = forwardDist < -obstacle.radius;
-        const collisionRisk = behind && edgeDist >= 8
+        let collisionRisk = behind && edgeDist >= 8
             ? 'low'
             : (edgeDist < 12 || (forwardDist > 0 && forwardDist < 24 && Math.abs(lateral) < obstacle.radius + 12)
                 ? 'high'
                 : (edgeDist < 26 || (forwardDist > 0 && forwardDist < 46 && Math.abs(lateral) < obstacle.radius + 18) ? 'medium' : 'low'));
-        const riskPriority = collisionRisk === 'high' ? 0 : (collisionRisk === 'medium' ? 1 : 2);
+        collisionRisk = buildingRisk.applyRoofClearanceToRisk(
+            collisionRisk,
+            roofClearance,
+            forwardY,
+            forwardDist,
+            lateral
+        );
+        // Scheme B softens bubble pressure, but never hides an imminent cylinder hit
+        // (surrogate radii are fatter than live AABB — keep hard contact as high).
+        const imminentHit = edgeDist < 10 || (forwardDist > 0 && forwardDist < 14 && Math.abs(lateral) < obstacle.radius + 10);
+        if (!imminentHit) {
+            collisionRisk = buildingRisk.downgradeBuildingRisk(collisionRisk, schemeSteps);
+        }
+        const riskPriority = buildingRisk.riskPriority(collisionRisk);
         if (riskPriority < nearest.riskPriority || (riskPriority === nearest.riskPriority && edgeDist < nearest.distance)) {
             nearest = {
                 distance: edgeDist,
@@ -185,7 +220,8 @@ function nearestObstacle(state, obstacles) {
                 side: lateral >= 0 ? -1 : 1,
                 id: obstacle.id,
                 collisionRisk,
-                riskPriority
+                riskPriority,
+                roofClearance: Number(roofClearance.toFixed(1))
             };
         }
     }
@@ -501,7 +537,7 @@ const PROTECTED_STATES = new Set([
     'urbanClimbingTurn', 'urbanRouteEscape', 'urbanBuildingWeave', 'altitudeBandLevelOut', 'stallBreakout', 'energyRecover',
     'recover', 'reacquire', 'searchIntercept', 'orbitCutIn', 'intercept', 'mandatoryMergeBreak',
     'mergeBreak', 'gunAttack', 'missileAttack', 'missilePrep', 'corridorCombatIntercept',
-    'hybridIntercept', 'heuristicIntercept'
+    'hybridIntercept', 'heuristicIntercept', 'alignFirst', 'fox2Intercept', 'openingRoofDash', 'missilePrep'
 ]);
 
 function getForwardY(state) {
@@ -568,8 +604,8 @@ function isCloseCombatUrbanDefer(ctx, params) {
     const distance = Number(ctx && ctx.distance);
     const angleDeg = Number(ctx && ctx.angleDeg);
     const threatScore = Number((ctx && ctx.threatScore) || 0);
-    const gunReach = Number(params.gunRange || 42) + 22;
-    const knifeFight = Number.isFinite(distance) && distance > 0 && distance <= Number(params.gunRange || 42) + 12;
+    const gunReach = gunRangeOf(params) + 22;
+    const knifeFight = Number.isFinite(distance) && distance > 0 && distance <= gunRangeOf(params) + 12;
     const forwardDist = Number(coverInfo.forwardDistance);
     const coverDist = Number(coverInfo.distance);
     const imminentBuilding =
@@ -640,12 +676,100 @@ function getGunLeadAim(state, params) {
     return { horizontalBias, verticalBias, leadTurns: Number(leadTurns.toFixed(2)) };
 }
 
-function getRangeMode(distance, params, openSky = false) {
+function getRangeMode(distance, params, openSky = false, policyMode = 'heuristic') {
+    if (policyMode === 'fox2-first') {
+        // FOX2-FIRST: missile-biased until deep gun knife.
+        if (distance <= gunRangeOf(params) * 0.85) return 'gun';
+        if (distance >= missileMinOf(params) * 0.85) return 'missile';
+        return 'missile';
+    }
     const gunBonus = openSky ? 22 : 12;
-    const hysteresis = openSky ? 18 : 15;
-    if (distance <= Number(params.gunRange || 42) + gunBonus) return 'gun';
-    if (distance >= Number(params.missileMinRange || 18) && distance <= Number(params.missileMaxRange || 95) + (openSky ? 25 : 15)) return 'missile';
+    if (distance <= gunRangeOf(params) + gunBonus) return 'gun';
+    if (distance >= missileMinOf(params) && distance <= missileMaxOf(params) + (openSky ? 25 : 15)) return 'missile';
     return 'intercept';
+}
+
+function wantsAlignBeforeAccel(ctx = {}) {
+    if (ctx.energyCritical || ctx.stalled || ctx.groundRisk) return false;
+    if (ctx.collisionRisk === 'high') return false;
+    const angleDeg = Number(ctx.angleDeg || 0);
+    const localZ = Number(ctx.localZ);
+    return angleDeg > 38 || (Number.isFinite(localZ) && localZ < 0.42);
+}
+
+function buildAlignBeforeAccelAction(state, turnTowardTarget, localToEnemy, angleDeg, preferMissile) {
+    const fwdY = getForwardY(state);
+    const throttle = (angleDeg > 55 || fwdY > 0.45) ? 2 : 3;
+    let joyY = clamp((localToEnemy.y || 0) * 0.32, -0.35, 0.35);
+    if (fwdY > 0.28) joyY = Math.min(joyY, -0.28);
+    else if (fwdY < -0.28 && state.altitude > 28) joyY = Math.max(joyY, 0.12);
+    return {
+        state: 'alignFirst',
+        throttle,
+        joyX: clamp(turnTowardTarget * 1.15, -1, 1),
+        joyY: clamp(joyY, -0.75, 0.42),
+        fire: preferMissile && angleDeg < 28 && state.missiles > 0 ? 'missile' : 'none'
+    };
+}
+
+function decideFox2Opening(state, params, cover, ctx) {
+    const {
+        angleDeg, distance, turnTowardTarget, localToEnemy, openSky,
+        energyCritical, groundRisk, forwardY
+    } = ctx;
+    const hasMissile = state.missiles > 0;
+    const ambush = !!state.fox2Ambush;
+    const windowTurns = 28;
+    const openingRush = ambush && hasMissile && state.turn <= windowTurns && !energyCritical && !state.stalled && !groundRisk && cover.collisionRisk !== 'high' && state.altitude >= 16;
+    const rangeMode = getRangeMode(distance, params, openSky, 'fox2-first');
+
+    if (wantsAlignBeforeAccel({
+        angleDeg,
+        localZ: localToEnemy.z,
+        energyCritical,
+        stalled: state.stalled,
+        groundRisk,
+        collisionRisk: cover.collisionRisk
+    })) {
+        return buildAlignBeforeAccelAction(state, turnTowardTarget, localToEnemy, angleDeg, hasMissile);
+    }
+
+    const inEnvelope =
+        hasMissile &&
+        distance >= missileMinOf(params) &&
+        distance <= missileMaxOf(params) + (openSky ? 20 : 8) &&
+        angleDeg < params.missileAngle * 1.25 &&
+        cover.collisionRisk !== 'high';
+
+    if (openingRush || rangeMode === 'missile') {
+        if (inEnvelope && angleDeg < params.missileAngle) {
+            return {
+                state: 'missileAttack',
+                throttle: 3,
+                joyX: clamp(turnTowardTarget * 0.35, -0.7, 0.7),
+                joyY: interceptJoyY(state, params),
+                fire: 'missile'
+            };
+        }
+        if (openingRush && state.altitude < 40 && forwardY < 0.35) {
+            return {
+                state: 'openingRoofDash',
+                throttle: state.heat > 76 ? 3 : 4,
+                joyX: clamp(turnTowardTarget * 0.45, -0.7, 0.7),
+                joyY: 0.28,
+                fire: 'none'
+            };
+        }
+        return {
+            state: inEnvelope ? 'missilePrep' : 'fox2Intercept',
+            throttle: angleDeg > 40 ? 3 : (state.heat > 70 ? 3 : 4),
+            joyX: clamp(turnTowardTarget * 0.72, -0.92, 0.92),
+            joyY: clamp(interceptJoyY(state, params), -0.5, 0.5),
+            fire: 'none'
+        };
+    }
+
+    return null;
 }
 
 function buildGunAttackAction(state, params, cover, options = {}) {
@@ -814,14 +938,20 @@ function initEpisode(stage, policyMode, rand, runIndex, episodeIndex) {
     const corridorUrban = urban && env.building_layout === 'alternating-corridor';
     const fullMapUrban = urban && env.building_layout === 'config-default';
     const lightUrban = urban && env.building_layout === 'spaced';
-    const lowStart = urban && (episodeIndex % 4 === 0);
+    const lowStart = (urban && (episodeIndex % 4 === 0)) || env.spawn_profile === 'low-start';
     const groundRecovery = env.spawn_profile === 'ground-recovery';
     const offset = (runIndex % 2 === 0 ? -1 : 1) * pickRange(rand, 5, 18);
+    const lowAltMin = env.spawn_profile === 'low-start'
+        ? (corridorUrban ? 24 : 26)
+        : (fullMapUrban ? 28 : (corridorUrban ? 26 : 22));
+    const lowAltMax = env.spawn_profile === 'low-start'
+        ? (corridorUrban ? 34 : 36)
+        : (fullMapUrban ? 40 : (corridorUrban ? 36 : 34));
     const state = {
         x: fullMapUrban ? pickRange(rand, 7, 13) : (corridorUrban ? pickRange(rand, -8, 8) : (lightUrban ? pickRange(rand, -10, 10) : offset)),
         z: fullMapUrban ? pickRange(rand, -38, -24) : (-115 + pickRange(rand, -10, 8)),
         heading: fullMapUrban ? pickRange(rand, -0.08, 0.08) : (corridorUrban ? pickRange(rand, -0.06, 0.06) : pickRange(rand, -0.14, 0.14)),
-        altitude: groundRecovery ? pickRange(rand, 3.5, 18) : (lowStart ? pickRange(rand, fullMapUrban ? 28 : (corridorUrban ? 26 : 22), fullMapUrban ? 40 : (corridorUrban ? 36 : 34)) : pickRange(rand, fullMapUrban ? 38 : 34, fullMapUrban ? 58 : 62)),
+        altitude: groundRecovery ? pickRange(rand, 3.5, 18) : (lowStart ? pickRange(rand, lowAltMin, lowAltMax) : pickRange(rand, fullMapUrban ? 38 : 34, fullMapUrban ? 58 : 62)),
         pitch: groundRecovery ? pickRange(rand, -0.62, -0.18) : pickRange(rand, -0.08, 0.22),
         ap: Math.round(groundRecovery ? pickRange(rand, 82, 130) : (lowStart ? pickRange(rand, 72, 104) : pickRange(rand, 86, 124))),
         heat: pickRange(rand, 12, 50),
@@ -839,8 +969,22 @@ function initEpisode(stage, policyMode, rand, runIndex, episodeIndex) {
         lastBrakeTurn: -99,
         avoidSide: 0,
         avoidUntil: -1,
-        policyMode
+        policyMode,
+        fox2Ambush: false
     };
+    if (env.spawn_profile === 'fox2-opening') {
+        // Perch ~44, approach ~72m, nose roughly on — live FOX2 opening geometry.
+        state.altitude = pickRange(rand, 42, 46);
+        state.x = pickRange(rand, -4, 4);
+        state.z = pickRange(rand, -40, -28);
+        state.enemyX = pickRange(rand, -6, 6);
+        state.enemyZ = state.z + pickRange(rand, 68, 78);
+        state.heading = Math.atan2(state.enemyX - state.x, state.enemyZ - state.z) + pickRange(rand, -0.35, 0.35);
+        state.pitch = pickRange(rand, -0.04, 0.08);
+        state.ap = Math.round(pickRange(rand, 90, 120));
+        state.missiles = 4;
+        state.fox2Ambush = true;
+    }
     if (groundRecovery) {
         state.heading = pickRange(rand, -0.3, 0.3);
         state.enemyX = pickRange(rand, -55, 55);
@@ -853,7 +997,7 @@ function decideAction(state, policyMode, params, obstacles) {
     const targetAngle = angleToTarget(state);
     const angleDeg = Math.abs(targetAngle) * 180 / Math.PI;
     const distance = distanceToEnemy(state);
-    const cover = nearestObstacle(state, obstacles);
+    const cover = nearestObstacle(state, obstacles, params);
     const turnTowardTarget = clamp(targetAngle / (Math.PI / 2), -1, 1);
     const localToEnemy = getLocalToEnemy(state);
     const headOnFactor = localToEnemy.z;
@@ -899,7 +1043,7 @@ function decideAction(state, policyMode, params, obstacles) {
     const gunAngleRad = params.gunAngle * Math.PI / 180;
     const openSky = obstacles.length === 0;
     const openSkyAggression = openSky ? 1.15 : 1.0;
-    const rangeMode = getRangeMode(distance, params, openSky);
+    const rangeMode = getRangeMode(distance, params, openSky, policyMode);
 
     if (state.altitude < 20 || (state.altitude < 45 && forwardY < -0.2)) {
         const lateral = getEmergencyPullUpLateral({
@@ -983,6 +1127,15 @@ function decideAction(state, policyMode, params, obstacles) {
 
     if (energyCritical && !urbanPressure) {
         return { state: 'energyRecover', throttle: 5, joyX: 0.04, joyY: params.recoverPitchBias, fire: 'none' };
+    }
+
+    // H4: fox2-first doctrine — missile bias / alignFirst / opening rush (no hybridPress).
+    if (policyMode === 'fox2-first' && cover.collisionRisk !== 'high' && !urbanPressure) {
+        const fox2 = decideFox2Opening(state, params, cover, {
+            angleDeg, distance, turnTowardTarget, localToEnemy, openSky,
+            energyCritical, groundRisk, forwardY
+        });
+        if (fox2) return fox2;
     }
 
     const lowAltitudeTacticalBan = state.altitude < 20 || (state.altitude < 45 && forwardY < -0.2);
@@ -1200,6 +1353,23 @@ function decideAction(state, policyMode, params, obstacles) {
 
     if (state.missiles > 0 && distance > params.missileMinRange && distance < (params.missileMaxRange + (openSky ? 28 : 0)) && angleDeg < params.missileAngle * (openSky ? 1.5 : 1.0)) {
         return { state: 'missileAttack', throttle: 3, joyX: turnTowardTarget * 0.22, joyY: interceptJoyY(state, params), fire: 'missile' };
+    }
+
+    if (policyMode === 'fox2-first') {
+        const fox2 = decideFox2Opening(state, params, cover, {
+            angleDeg, distance, turnTowardTarget, localToEnemy, openSky,
+            energyCritical, groundRisk, forwardY
+        });
+        if (fox2) return fox2;
+        return {
+            state: 'fox2Intercept',
+            throttle: state.heat > 76 ? 3 : (angleDeg > 35 ? 3 : 4),
+            joyX: clamp(turnTowardTarget * 0.7, -0.92, 0.92),
+            joyY: clamp(interceptJoyY(state, params), -0.5, 0.5),
+            fire: (state.missiles > 0 && distance >= missileMinOf(params) && distance <= missileMaxOf(params) && angleDeg < params.missileAngle)
+                ? 'missile'
+                : (distance < gunRangeOf(params) && angleDeg < params.gunAngle ? 'gun' : 'none')
+        };
     }
 
     if (policyMode === 'hybrid') {
@@ -1458,7 +1628,8 @@ function evaluateGates(metrics, gates) {
         ['avg_enemy_hp_left_max', 'avgEnemyHpLeft', '<='],
         ['avg_turns_max', 'avgTurns', '<='],
         ['win_rate_min', 'winRate', '>='],
-        ['avg_hits_gun_min', 'avgHitsGun', '>=']
+        ['avg_hits_gun_min', 'avgHitsGun', '>='],
+        ['avg_hits_missile_min', 'avgHitsMissile', '>=']
     ];
     const failed = [];
     for (const [gateKey, metricKey, op] of checks) {
@@ -1479,7 +1650,7 @@ function evaluateGates(metrics, gates) {
     return failed;
 }
 
-const COMBAT_METRICS = new Set(['avgEnemyHpLeft', 'winRate', 'avgTurns', 'avgHitsGun']);
+const COMBAT_METRICS = new Set(['avgEnemyHpLeft', 'winRate', 'avgTurns', 'avgHitsGun', 'avgHitsMissile']);
 
 function combatGateFailures(failedGates) {
     return failedGates.filter((item) => COMBAT_METRICS.has(item.metric));
@@ -1508,6 +1679,78 @@ function worstEpisodes(episodes, limit = 5) {
         .slice(0, limit);
 }
 
+function runDoctrineSmoke(params) {
+    const fails = [];
+    // 1) Roof clearance + Scheme B: alt = height+9 → side bubble must not stay high.
+    const roofState = {
+        x: 0, z: 0, heading: 0, altitude: 49, pitch: 0.05, ap: 100
+    };
+    const roofObstacles = [{ id: 'roof1', x: 18, z: 8, radius: 14, height: 40 }];
+    const roofCover = nearestObstacle(roofState, roofObstacles, params);
+    if (roofCover.collisionRisk === 'high') {
+        fails.push('roofClearance: expected non-high risk when alt=height+9');
+    }
+
+    // 2) fox2-first off-boresight → alignFirst with thr ≤ 3 (never hybridIntercept).
+    const alignState = {
+        x: 0, z: 0, heading: 0, altitude: 44, pitch: 0, ap: 100, heat: 20,
+        enemyX: 40, enemyZ: 50, missiles: 4, stalled: false, fox2Ambush: true,
+        turn: 2, avoidSide: 0, avoidUntil: -1, lastBrakeTurn: -99, hits: { gun: 0, missile: 0 }
+    };
+    const alignAction = decideAction(alignState, 'fox2-first', params, []);
+    if (alignAction.state === 'hybridIntercept' || alignAction.state === 'hybridPress') {
+        fails.push(`fox2Lockout: got ${alignAction.state}, doctrine must not hybridPress`);
+    }
+    const ang = Math.abs(angleToTarget(alignState)) * 180 / Math.PI;
+    if (ang > 38 && alignAction.state !== 'alignFirst') {
+        fails.push(`alignFirst: expected alignFirst at ang=${ang.toFixed(1)}, got ${alignAction.state}`);
+    }
+    if (alignAction.state === 'alignFirst' && Number(alignAction.throttle) > 3) {
+        fails.push(`alignFirst: throttle ${alignAction.throttle} > 3`);
+    }
+
+    // 3) fox2 missile bias in envelope → not hybridIntercept.
+    const mslState = {
+        x: 0, z: 0, heading: 0, altitude: 44, pitch: 0, ap: 105, heat: 20,
+        enemyX: 2, enemyZ: 70, missiles: 4, stalled: false, fox2Ambush: true,
+        turn: 3, avoidSide: 0, avoidUntil: -1, lastBrakeTurn: -99, hits: { gun: 0, missile: 0 }
+    };
+    const mslAction = decideAction(mslState, 'fox2-first', params, []);
+    if (mslAction.state === 'hybridIntercept') {
+        fails.push('fox2Missile: hybridIntercept leak');
+    }
+    if (!['missileAttack', 'missilePrep', 'alignFirst', 'fox2Intercept', 'openingRoofDash'].includes(mslAction.state)) {
+        fails.push(`fox2Missile: unexpected state ${mslAction.state}`);
+    }
+
+    // 4) M2 gap profile: mid-lane is medium under gap, high under legacy.
+    const gapP = buildingRisk.getBuildingRiskProfile('gap');
+    const legacyP = buildingRisk.getBuildingRiskProfile('legacy');
+    const gapMid = buildingRisk.classifyHorizontalRisk(10, 20, 5, gapP);
+    const legacyMid = buildingRisk.classifyHorizontalRisk(10, 20, 5, legacyP);
+    if (gapMid !== 'medium') fails.push(`m2GapMid: expected medium, got ${gapMid}`);
+    if (legacyMid !== 'high') fails.push(`m2LegacyMid: expected high, got ${legacyMid}`);
+
+    // 5) Energy critical / stall must not hybrid-press (surrogate mirror of live lockedByEnergy).
+    const stallState = {
+        x: 0, z: 0, heading: 0, altitude: 28, pitch: 0.55, ap: 38, heat: 10,
+        enemyX: 8, enemyZ: 40, missiles: 2, stalled: true, fox2Ambush: false,
+        turn: 12, avoidSide: 0, avoidUntil: -1, lastBrakeTurn: -99, hits: { gun: 0, missile: 0 }
+    };
+    const stallAction = decideAction(stallState, 'hybrid', params, []);
+    if (stallAction.state === 'hybridPress' || stallAction.state === 'hybridIntercept' || stallAction.state === 'hybridBlitz') {
+        fails.push(`energyLock: stalled hybrid leak → ${stallAction.state}`);
+    }
+    if (!['stallBreakout', 'energyRecover', 'recover'].includes(stallAction.state)) {
+        fails.push(`energyLock: expected stall/energy recover, got ${stallAction.state}`);
+    }
+    if (stallAction.fire === 'missile') {
+        fails.push('energyLock: must not fire missile while stalled');
+    }
+
+    return fails;
+}
+
 function ensureDir(filePath) {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
 }
@@ -1519,7 +1762,7 @@ function main() {
     const runs = args.runs || curriculum.baseline.runs_per_stage || 3;
     const episodesPerRun = args.episodes || curriculum.baseline.episodes_per_run || 40;
     const maxTurns = args.turns || curriculum.baseline.max_turns || 80;
-    const policyModes = curriculum.baseline.policy_modes || ['heuristic', 'hybrid'];
+    const baselineModes = curriculum.baseline.policy_modes || ['heuristic', 'hybrid'];
     const stages = curriculum.stages.filter((stage) => args.stage === 'all' || stage.id === args.stage);
 
     if (stages.length === 0) {
@@ -1528,17 +1771,26 @@ function main() {
         process.exit(1);
     }
 
+    const doctrineSmokeFails = runDoctrineSmoke(tuning.params);
+    if (doctrineSmokeFails.length) {
+        console.error('Doctrine smoke FAIL:');
+        for (const f of doctrineSmokeFails) console.error(`  - ${f}`);
+        process.exit(1);
+    }
+
     const stageReports = [];
     for (let stageIndex = 0; stageIndex < stages.length; stageIndex++) {
         const stage = stages[stageIndex];
         const gates = gatesForStage(curriculum, stage);
         const enforceCombatGates = stage.enforce_combat_gates === true;
+        const policyModes = stage.policy_modes || baselineModes;
         const policyReports = {};
         for (const policyMode of policyModes) {
             const episodes = [];
             for (let runIndex = 0; runIndex < runs; runIndex++) {
                 for (let episodeIndex = 0; episodeIndex < episodesPerRun; episodeIndex++) {
-                    const seed = args.seed + stageIndex * 100000 + runIndex * 1000 + episodeIndex * 17 + (policyMode === 'hybrid' ? 503 : 0);
+                    const modeSalt = policyMode === 'hybrid' ? 503 : (policyMode === 'fox2-first' ? 907 : 0);
+                    const seed = args.seed + stageIndex * 100000 + runIndex * 1000 + episodeIndex * 17 + modeSalt;
                     episodes.push(runEpisode(stage, policyMode, tuning.params, maxTurns, seed, runIndex, episodeIndex));
                 }
             }
@@ -1560,6 +1812,7 @@ function main() {
             name: stage.name,
             environment: stage.environment,
             enforceCombatGates,
+            policyModes,
             gates,
             policies: policyReports,
             passed: Object.values(policyReports).every((report) => report.passed),
@@ -1576,7 +1829,8 @@ function main() {
             episodesPerRun,
             maxTurns,
             stage: args.stage,
-            policyModes
+            policyModes: baselineModes,
+            doctrineSmoke: 'pass'
         },
         tuning: {
             source: tuning.source,
@@ -1589,7 +1843,9 @@ function main() {
         notes: [
             'Fast deterministic regression surrogate; use for before/after AI checks.',
             'A pass here should be followed by in-game validation for full Three.js collision behavior.',
-            'Only stages with enforceCombatGates=true block overall pass on combat gate failures; others report combat metrics only.'
+            'Only stages with enforceCombatGates=true block overall pass on combat gate failures; others report combat metrics only.',
+            'H4: doctrine smoke covers fox2-first align/lockout + roof/Scheme B; stage F-fox2-opening runs fox2-first episodes.',
+            'Step2/M2: building-risk-smoke + doctrine m2GapMid/energyLock; stage G-urban-gap-corridor stresses alternating-corridor layout.'
         ]
     };
 
@@ -1598,6 +1854,7 @@ function main() {
 
     console.log('AI regression finished');
     console.log(`Report: ${args.out}`);
+    console.log('Doctrine smoke: PASS');
     console.log(`Overall: ${report.passed ? 'PASS' : 'FAIL'}`);
     console.log(`Safety: ${report.safetyPassed ? 'PASS' : 'FAIL'}`);
     console.log(`Combat: ${report.combatPassed ? 'PASS' : 'FAIL'}`);
@@ -1605,7 +1862,7 @@ function main() {
         const parts = Object.entries(stage.policies).map(([policy, result]) => {
             const m = result.metrics;
             const combatTag = stage.enforceCombatGates ? ` combat=${result.combatPassed ? 'PASS' : 'FAIL'}` : '';
-            return `${policy} ${result.passed ? 'PASS' : 'FAIL'} safety=${result.safetyPassed ? 'PASS' : 'FAIL'}${combatTag} crash=${m.crashRate} stall=${m.stallEventsPerEpisode} win=${m.winRate} gun=${m.avgHitsGun} enemyHp=${m.avgEnemyHpLeft} turns=${m.avgTurns} bldg=${m.buildingCollisionRate}`;
+            return `${policy} ${result.passed ? 'PASS' : 'FAIL'} safety=${result.safetyPassed ? 'PASS' : 'FAIL'}${combatTag} crash=${m.crashRate} stall=${m.stallEventsPerEpisode} win=${m.winRate} gun=${m.avgHitsGun} msl=${m.avgHitsMissile} enemyHp=${m.avgEnemyHpLeft} turns=${m.avgTurns} bldg=${m.buildingCollisionRate}`;
         });
         console.log(`${stage.id}: ${parts.join(' | ')}`);
         if (stage.enforceCombatGates) {
@@ -1621,4 +1878,14 @@ function main() {
     if (!report.passed) process.exitCode = 1;
 }
 
-main();
+if (require.main === module) {
+    main();
+}
+
+module.exports = {
+    decideAction,
+    nearestObstacle,
+    runDoctrineSmoke,
+    getRangeMode,
+    buildingRisk
+};

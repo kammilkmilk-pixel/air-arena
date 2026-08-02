@@ -79,6 +79,18 @@ function resolveGunsForStep(step, ratio, ctx) {
                 if (expectedBulletPos.distanceTo(p2) <= forwardDist * Math.tan(dAngle)) {
                     // 安全判定：只有敵機在障礙物前面才會扣血
                     if (!isGunBlockedByBuilding || forwardDist < distToBlock) {
+                        // Range falloff: ≤60 → 100%; beyond that −10% hit chance per +10 range (linear).
+                        const gunCfg = CONFIG.weapons.gun || {};
+                        const falloffStart = Number.isFinite(Number(gunCfg.hitFalloffStart)) ? Number(gunCfg.hitFalloffStart) : 60;
+                        const falloffBand = Number.isFinite(Number(gunCfg.hitFalloffBand)) ? Number(gunCfg.hitFalloffBand) : 10;
+                        const falloffPer = Number.isFinite(Number(gunCfg.hitFalloffPerBand)) ? Number(gunCfg.hitFalloffPerBand) : 0.1;
+                        let hitChance = 1;
+                        if (forwardDist > falloffStart && falloffBand > 0) {
+                            hitChance = Math.max(0, 1 - falloffPer * ((forwardDist - falloffStart) / falloffBand));
+                        }
+                        if (hitChance < 1 && Math.random() > hitChance) {
+                            return;
+                        }
                         ctx.hp[enemy.id] -= (GUN_DAMAGE / 100);
                         ctx.log[enemy.id].damageTaken += (GUN_DAMAGE / 100);
                         
@@ -175,7 +187,15 @@ function resolveMissilesForStep(step, ratio, ctx) {
                 preferredEnemy,
                 cFlares,
                 activeM,
-                { shooterId: id, ratio, heatSources }
+                {
+                    shooterId: id,
+                    ratio,
+                    heatSources,
+                    step,
+                    chaffList: (ctx.chaff && ctx.chaff[step]) ? ctx.chaff[step] : [],
+                    illuminatorPos: getPosAt(ratio, t.pathPoints),
+                    illuminatorQuat: getQuatAt(ratio, t.pathQuats)
+                }
             );
 
             let isMissileCrashedIntoBuilding = false;
@@ -218,11 +238,12 @@ function resolveMissilesForStep(step, ratio, ctx) {
                 ctx.log.vfxTriggers.push({ type: 'explosion', step: step, pos: activeM.pos.clone(), rot: Math.random() * Math.PI * 2, scale: 1.2 });
                 ctx.log.vfxTriggers.push({ type: 'flash', step: step, pos: activeM.pos.clone(), rot: Math.random() * Math.PI * 2, scale: 1.5 });
 
-                const fox2 = CONFIG.weapons['fox2'] || {};
-                const fuseRange = fox2.fuseRange ? fox2.fuseRange : 3.5;
-                const frontFuseMult = stepRes.frontAspect ? (fox2.frontAspectFuseRangeMult || 0.45) : 1;
-                const frontDamageMult = stepRes.frontAspect ? (fox2.frontAspectDamageMult || 0.45) : 1;
-                const effectiveFuseRange = (fuseRange * frontFuseMult) + (stepRes.frontAspect ? 0.25 : 1.1);
+                const mType = activeM.missileType === 'fox1' ? 'fox1' : 'fox2';
+                const mCfg = (CONFIG.weapons && CONFIG.weapons[mType]) ? CONFIG.weapons[mType] : (CONFIG.weapons['fox2'] || {});
+                const fuseRange = mCfg.fuseRange ? mCfg.fuseRange : 3.5;
+                const frontFuseMult = (mType === 'fox2' && stepRes.frontAspect) ? (mCfg.frontAspectFuseRangeMult || 0.45) : 1;
+                const frontDamageMult = (mType === 'fox2' && stepRes.frontAspect) ? (mCfg.frontAspectDamageMult || 0.45) : 1;
+                const effectiveFuseRange = (fuseRange * frontFuseMult) + ((mType === 'fox2' && stepRes.frontAspect) ? 0.25 : 1.1);
 
                 // 傷害對象 = 實際追蹤載機；追熱焰時改打近炸範圍內最近載機（可含友軍）
                 let victimId = stepRes.hitTargetId || null;
@@ -232,7 +253,7 @@ function resolveMissilesForStep(step, ratio, ctx) {
                         victimId = stepRes.trackId;
                     }
                 }
-                if (!victimId && !isMissileCrashedIntoBuilding) {
+                if (!victimId && !isMissileCrashedIntoBuilding && mType === 'fox2') {
                     let bestD = effectiveFuseRange;
                     heatSources.forEach((src) => {
                         if (!src || src.kind !== 'aircraft' || !src.pos) return;
@@ -245,7 +266,8 @@ function resolveMissilesForStep(step, ratio, ctx) {
                 }
 
                 if (!isMissileCrashedIntoBuilding && victimId && ctx.hp[victimId] !== undefined) {
-                    const damage = MISSILE_DAMAGE * frontDamageMult;
+                    const baseDmg = Number(mCfg.damage);
+                    const damage = (Number.isFinite(baseDmg) ? baseDmg : MISSILE_DAMAGE) * frontDamageMult;
                     ctx.hp[victimId] -= damage;
                     if (ctx.log[victimId]) ctx.log[victimId].damageTaken += damage;
                 }
@@ -274,6 +296,8 @@ function resolveDamageAndDeathForStep(step, ratio, ctx) {
                     ctx.log[id].damageTaken = 100;
                     if (!ctx.log.softWreck) ctx.log.softWreck = {};
                     ctx.log.softWreck[id] = false;
+                    if (!ctx.log.deathCause) ctx.log.deathCause = {};
+                    ctx.log.deathCause[id] = 'midair';
                 });
                 ctx.log.vfxTriggers.push({
                     type: 'explosion',
@@ -330,6 +354,16 @@ function resolveDamageAndDeathForStep(step, ratio, ctx) {
             ctx.hp[id] = 0; ctx.death[id] = step; ctx.log[id].damageTaken = 100;
             if (!ctx.log.softWreck) ctx.log.softWreck = {};
             ctx.log.softWreck[id] = false;
+            if (!ctx.log.deathCause) ctx.log.deathCause = {};
+            ctx.log.deathCause[id] = collisionType === 'ground' ? 'ground' : 'building';
+            if (!ctx.log.deathFlags) ctx.log.deathFlags = {};
+            const stallAp = (typeof CONFIG !== 'undefined' && CONFIG.rules && CONFIG.rules.stallSpeedAP) ? CONFIG.rules.stallSpeedAP : 35;
+            const pathAp = (t.chain && t.chain[0] && typeof t.chain[0].resultingAP === 'number') ? t.chain[0].resultingAP : null;
+            const stalledAtImpact = !!t.stalled || (Number.isFinite(pathAp) && pathAp < stallAp);
+            ctx.log.deathFlags[id] = {
+                stalled: stalledAtImpact,
+                ap: Number.isFinite(pathAp) ? pathAp : (typeof t.ap === 'number' ? t.ap : null)
+            };
             ctx.log.vfxTriggers.push({ type: 'explosion', step: step, pos: currentPos.clone(), scale: 2.3, rot: Math.random()*Math.PI*2 });
             ctx.log.vfxTriggers.push({ type: 'spark_explosion', step: step, pos: currentPos.clone(), velocities: genSparks(60, 0.7), wind: new THREE.Vector3(0,0,0) });
             ctx.log.vfxTriggers.push({ type: 'flash', step: step, pos: currentPos.clone(), rot: Math.random()*Math.PI*2, scale: 1.5 });
@@ -341,6 +375,8 @@ function resolveDamageAndDeathForStep(step, ratio, ctx) {
             ctx.death[id] = step;
             if (!ctx.log.softWreck) ctx.log.softWreck = {};
             if (ctx.log.softWreck[id] !== false) ctx.log.softWreck[id] = true;
+            if (!ctx.log.deathCause) ctx.log.deathCause = {};
+            if (!ctx.log.deathCause[id]) ctx.log.deathCause[id] = 'combat';
         }
 
         if (ctx.death[id] === step || (ctx.death[id] !== -1 && step === ctx.death[id])) {

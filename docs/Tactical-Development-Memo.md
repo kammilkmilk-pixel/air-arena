@@ -1,5 +1,9 @@
 # **📝 戰術開發與維護備忘錄 (Tactical Development & Maintenance Memo)**
 
+> **狀態：歷史備忘（2026-06-24）— 路徑與架構已過時。**  
+> 現行系統字典與技術債請以專案根目錄 **`README.md`**、**`TECH-DEBT.md`** 為準（快照 **2026-08-02**）。  
+> 本檔僅保留早期修復敘事，**勿**依此改 `js/core/game.js` / 單體 `combat.js`（檔案已不存在）。
+
 * **適用專案**：3D 向量空戰模擬器 (Three.js / Canvas MFD System)  
 * **記錄日期**：2026.06.24  
 * **設計原則**：數據驅動 (Data-Driven)、物理大一統、未來高擴充性

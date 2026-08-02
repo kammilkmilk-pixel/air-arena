@@ -13,7 +13,10 @@ window.GameContext = {
 
     state: {
         battleLog: [],
+        /** Lightweight doctrine/AI events (not ACMI path frames). */
+        doctrineEvents: [],
         globalFlares: [],
+        globalChaff: [],
         globalBullets: [],
         missileMeshBase: null,
         initialPositions: null,
@@ -99,19 +102,39 @@ window.GameContext = {
     },
 
     sanitizeMatchLoadout(loadout) {
-        const allowed = ['standard', 'gun-priority', 'fox2-priority'];
+        const allowed = ['standard', 'gun-priority', 'fox2-priority', 'fox1-priority'];
         return allowed.includes(loadout) ? loadout : 'standard';
+    },
+
+    sanitizePylonLoadout(arr) {
+        if (typeof sanitizePylonLoadout === 'function') return sanitizePylonLoadout(arr);
+        return ['fox1', 'fox2', 'fox2', 'fox1'];
+    },
+
+    sanitizeSpawnAltitude(alt) {
+        const n = Math.round(Number(alt));
+        const allowed = [28, 45, 60, 80];
+        return allowed.includes(n) ? n : 45;
+    },
+
+    sanitizeSpawnSeparation(sep) {
+        const n = Math.round(Number(sep));
+        const allowed = [60, 100, 140, 200];
+        return allowed.includes(n) ? n : 100;
     },
 
     createDefaultMatchConfig(mode = '1v1') {
         const matchMode = this.sanitizeMatchMode(mode);
+        const defaultPylons = this.sanitizePylonLoadout(null);
         return {
             mode: matchMode,
+            spawnAltitude: 45,
+            spawnSeparation: 100,
             seats: {
-                'red-1': { control: 'human', loadout: 'standard', teamId: 'red' },
-                'red-2': { control: 'ai', loadout: 'standard', teamId: 'red2', deferred: matchMode !== '2v2' },
-                'blue-1': { control: 'ai', loadout: 'standard', teamId: 'blue' },
-                'blue-2': { control: 'ai', loadout: 'standard', teamId: 'blue2', deferred: matchMode !== '2v2' }
+                'red-1': { control: 'human', loadout: 'standard', pylons: defaultPylons.slice(), teamId: 'red' },
+                'red-2': { control: 'ai', loadout: 'standard', pylons: defaultPylons.slice(), teamId: 'red2', deferred: matchMode !== '2v2' },
+                'blue-1': { control: 'ai', loadout: 'standard', pylons: defaultPylons.slice(), teamId: 'blue' },
+                'blue-2': { control: 'ai', loadout: 'standard', pylons: defaultPylons.slice(), teamId: 'blue2', deferred: matchMode !== '2v2' }
             }
         };
     },
@@ -237,7 +260,14 @@ window.GameContext = {
             const src = incoming[seatId] || {};
             base.seats[seatId].control = this.sanitizeMatchControl(src.control || base.seats[seatId].control);
             base.seats[seatId].loadout = this.sanitizeMatchLoadout(src.loadout || base.seats[seatId].loadout);
+            base.seats[seatId].pylons = this.sanitizePylonLoadout(src.pylons || base.seats[seatId].pylons);
         });
+        base.spawnAltitude = this.sanitizeSpawnAltitude(
+            config && config.spawnAltitude != null ? config.spawnAltitude : base.spawnAltitude
+        );
+        base.spawnSeparation = this.sanitizeSpawnSeparation(
+            config && config.spawnSeparation != null ? config.spawnSeparation : base.spawnSeparation
+        );
         this.state.matchConfig = base;
         return base;
     },
@@ -323,6 +353,12 @@ window.GameContext = {
         const wrapper = this.getTeamWrapper(id);
         const position = wrapper ? wrapper.position : null;
         const forward = wrapper ? new THREE.Vector3(0, 0, 1).applyQuaternion(wrapper.quaternion).normalize() : null;
+        // Backfill for teams created before chaff existed (hot-reload / old sessions).
+        if (team.chaffAmmo == null) {
+            team.chaffAmmo = (CONFIG.weapons && CONFIG.weapons.chaff && CONFIG.weapons.chaff.maxAmmo) || 3;
+        }
+        if (team.chaffArmed == null) team.chaffArmed = false;
+        if (team.aiLastChaffTurn == null) team.aiLastChaffTurn = -99;
 
         return {
             id: team.id,
@@ -343,6 +379,8 @@ window.GameContext = {
             queuedAction: team.queuedAction || 'none',
             flareAmmo: team.flareAmmo,
             flaresArmed: team.flaresArmed,
+            chaffAmmo: team.chaffAmmo,
+            chaffArmed: !!team.chaffArmed,
             ready: team.ready,
             aiEnabled: !!team.aiEnabled,
             aiState: team.aiState || 'player',
@@ -364,9 +402,12 @@ window.GameContext = {
             })),
             activeMissiles: (team.activeMissiles || []).map(m => ({
                 pylonId: m.pylonId,
+                missileType: m.missileType || 'fox2',
                 active: m.active,
                 exploded: m.exploded,
-                ap: m.ap
+                ap: m.ap,
+                supportLocked: !!m.supportLocked,
+                traveled: Number(m.traveled) || 0
             }))
         };
     },

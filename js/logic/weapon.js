@@ -100,11 +100,19 @@ function buildMissileHeatSources(shooterId, ratio, currentFlares) {
 function pickHottestMissileTrack(mPos, mQuat, heatSources) {
     if (!heatSources || !heatSources.length) return null;
     const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(mQuat).normalize();
-    const weaponCfg = (typeof CONFIG !== 'undefined' && CONFIG.weapons && CONFIG.weapons.fox2) ? CONFIG.weapons.fox2 : {};
+    const weaponCfg = (typeof getMissileWeaponConfig === 'function')
+        ? getMissileWeaponConfig('fox2')
+        : ((typeof CONFIG !== 'undefined' && CONFIG.weapons && CONFIG.weapons.fox2) ? CONFIG.weapons.fox2 : {});
     const frontSeekerMult = weaponCfg.frontAspectSeekerAngleMult || 0.55;
-    const seekerRange = (typeof SEEKER_RANGE !== 'undefined' && SEEKER_RANGE > 0) ? SEEKER_RANGE : 120;
-    const seekerAngle = (typeof SEEKER_ANGLE !== 'undefined' && SEEKER_ANGLE > 0) ? SEEKER_ANGLE : Math.PI / 12;
-    const minHeat = (typeof SEEKER_MIN_HEAT !== 'undefined') ? SEEKER_MIN_HEAT : 20;
+    const seekerRange = Number(weaponCfg.seekerRange) > 0
+        ? Number(weaponCfg.seekerRange)
+        : ((typeof SEEKER_RANGE !== 'undefined' && SEEKER_RANGE > 0) ? SEEKER_RANGE : 120);
+    const seekerAngle = Number(weaponCfg.seekerAngle) > 0
+        ? Number(weaponCfg.seekerAngle)
+        : ((typeof SEEKER_ANGLE !== 'undefined' && SEEKER_ANGLE > 0) ? SEEKER_ANGLE : Math.PI / 12);
+    const minHeat = Number.isFinite(Number(weaponCfg.seekerMinHeat))
+        ? Number(weaponCfg.seekerMinHeat)
+        : ((typeof SEEKER_MIN_HEAT !== 'undefined') ? SEEKER_MIN_HEAT : 20);
 
     let best = null;
     heatSources.forEach((src) => {
@@ -146,10 +154,105 @@ function simulateMissileStep(mPos, mQuat, targetPos, targetQuat, mAP, teamObj, e
     let lostTarget = false;
     let nextPos = mPos.clone();
     let nextQuat = mQuat.clone();
-    const weaponCfg = (typeof CONFIG !== 'undefined' && CONFIG.weapons && CONFIG.weapons.fox2) ? CONFIG.weapons.fox2 : {};
     const options = opts || {};
+    const missileType = (activeM && activeM.missileType === 'fox1') ? 'fox1' : 'fox2';
+    const weaponCfg = (typeof getMissileWeaponConfig === 'function')
+        ? getMissileWeaponConfig(missileType)
+        : ((typeof CONFIG !== 'undefined' && CONFIG.weapons && CONFIG.weapons[missileType])
+            ? CONFIG.weapons[missileType]
+            : ((CONFIG && CONFIG.weapons && CONFIG.weapons.fox2) ? CONFIG.weapons.fox2 : {}));
     const shooterId = options.shooterId || (teamObj && teamObj.id) || null;
     const ratio = (typeof options.ratio === 'number') ? options.ratio : null;
+
+    // FOX-1 semi-active: illuminate target or coast.
+    if (missileType === 'fox1' && typeof computeSarhSupport === 'function') {
+        const armRange = Number(weaponCfg.minArmingRange) || 70;
+        const speed = Number(weaponCfg.speed) || 0.55;
+        const turnRate = Number(weaponCfg.turnRate) || 0.09;
+        if (activeM && !activeM.launchPos) activeM.launchPos = mPos.clone();
+        const traveled = activeM
+            ? (Number.isFinite(Number(activeM.traveled))
+                ? Number(activeM.traveled)
+                : (activeM.launchPos ? mPos.distanceTo(activeM.launchPos) : 0))
+            : 0;
+        const canGuide = traveled >= armRange;
+        const supportId = (activeM && activeM.supportTargetId) || (enemyObj && enemyObj.id) || null;
+        const supportTeam = (supportId && typeof teams !== 'undefined' && teams[supportId]) ? teams[supportId] : enemyObj;
+        const shooterAlive = !!(teamObj && !teamObj.isDestroyed && !(typeof teamObj.hp === 'number' && teamObj.hp <= 0));
+        let illumPos = options.illuminatorPos || null;
+        let illumQuat = options.illuminatorQuat || null;
+        let tgtPos = options.supportTargetPos || targetPos;
+        let tgtVel = options.supportTargetVel || null;
+        if (teamObj && teamObj.pathPoints && teamObj.pathPoints.length && ratio != null && typeof getPosAt === 'function') {
+            illumPos = getPosAt(ratio, teamObj.pathPoints);
+            illumQuat = getQuatAt(ratio, teamObj.pathQuats);
+        } else if (teamObj && teamObj.wrapper) {
+            illumPos = teamObj.wrapper.position.clone();
+            illumQuat = teamObj.wrapper.quaternion.clone();
+        }
+        if (supportTeam && supportTeam.pathPoints && supportTeam.pathPoints.length && ratio != null && typeof getPosAt === 'function') {
+            tgtPos = getPosAt(ratio, supportTeam.pathPoints);
+            if (ratio > 0.02) {
+                const prev = getPosAt(Math.max(0, ratio - 0.02), supportTeam.pathPoints);
+                tgtVel = tgtPos.clone().sub(prev);
+            }
+        }
+        let losBlocked = false;
+        if (illumPos && tgtPos && typeof obstacles !== 'undefined' && obstacles.length) {
+            const dir = tgtPos.clone().sub(illumPos);
+            const dist = dir.length();
+            if (dist > 0.2) {
+                const ray = new THREE.Raycaster(illumPos, dir.normalize(), 0.1, dist);
+                losBlocked = ray.intersectObjects(obstacles, true).length > 0;
+            }
+        }
+        const support = computeSarhSupport({
+            shooterPos: illumPos,
+            shooterQuat: illumQuat,
+            targetPos: tgtPos,
+            targetVel: tgtVel,
+            chaffList: options.chaffList || [],
+            step: options.step || 0,
+            losBlocked: losBlocked || !shooterAlive
+        });
+        if (activeM) activeM.supportLocked = !!(canGuide && support.supported);
+        const directHitRange = 1.5;
+        const fuseRange = Number(weaponCfg.fuseRange) || 3;
+        if (tgtPos && mPos.distanceTo(tgtPos) < directHitRange) {
+            return {
+                pos: nextPos, quat: nextQuat, ap: 0, exploded: true, lostTarget: false,
+                frontAspect: false, frontDot: 0, trackId: supportId, trackKind: 'aircraft',
+                hitTargetId: supportId, guided: canGuide, traveled, supportLocked: true, missileType: 'fox1'
+            };
+        }
+        lostTarget = canGuide && !support.supported;
+        let effectiveTurn = turnRate * (support.beamHard ? (Number(weaponCfg.beamTurnMult) || 0.55) : 1);
+        if (canGuide && support.supported && tgtPos && shooterAlive) {
+            const desiredDir = new THREE.Vector3().subVectors(tgtPos, mPos).normalize();
+            nextQuat.slerp(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), desiredDir), effectiveTurn);
+        }
+        nextPos.add(new THREE.Vector3(0, 0, 1).applyQuaternion(nextQuat).multiplyScalar(speed));
+        let nextAP = mAP - speed;
+        const nextTraveled = traveled + speed;
+        if (activeM) {
+            activeM.traveled = nextTraveled;
+            activeM.guided = nextTraveled >= armRange && support.supported;
+        }
+        let hitTargetId = null;
+        if (tgtPos && nextPos.distanceTo(tgtPos) < Math.max(directHitRange, fuseRange * (support.supported ? 1 : 0.35))) {
+            if (support.supported || nextPos.distanceTo(tgtPos) < directHitRange) {
+                exploded = true;
+                hitTargetId = supportId;
+                nextAP = 0;
+            }
+        }
+        return {
+            pos: nextPos, quat: nextQuat, ap: nextAP, exploded, lostTarget,
+            frontAspect: false, frontDot: 0, trackId: supportId, trackKind: 'aircraft',
+            hitTargetId, guided: canGuide && support.supported, traveled: nextTraveled,
+            supportLocked: !!(canGuide && support.supported), missileType: 'fox1'
+        };
+    }
 
     let heatSources = options.heatSources;
     if (!heatSources) {
@@ -194,7 +297,7 @@ function simulateMissileStep(mPos, mQuat, targetPos, targetQuat, mAP, teamObj, e
     const aspect = (trackPos && trackQuat)
         ? getMissileAspect(trackPos, trackQuat, mPos)
         : { frontAspect: false, frontDot: 0 };
-    const effectiveTurnRate = MISSILE_TURN_RATE * (aspect.frontAspect ? (weaponCfg.frontAspectTurnRateMult || 0.55) : 1);
+    const effectiveTurnRate = (Number(weaponCfg.turnRate) || MISSILE_TURN_RATE) * (aspect.frontAspect ? (weaponCfg.frontAspectTurnRateMult || 0.55) : 1);
     const directHitRange = aspect.frontAspect ? 0.85 : 1.65;
 
     // 慣性段也允許擦撞命中（不導引，但彈體仍有殺傷）
@@ -242,13 +345,13 @@ function simulateMissileStep(mPos, mQuat, targetPos, targetQuat, mAP, teamObj, e
     } else {
         const toTrack = trackPos.clone().sub(mPos);
         if (toTrack.lengthSq() < 0.0001) lostTarget = true;
-        else if (forward.angleTo(toTrack.normalize()) > (SEEKER_ANGLE * (aspect.frontAspect ? (weaponCfg.frontAspectSeekerAngleMult || 0.55) : 1))) {
+        else if (forward.angleTo(toTrack.normalize()) > ((Number(weaponCfg.seekerAngle) || SEEKER_ANGLE) * (aspect.frontAspect ? (weaponCfg.frontAspectSeekerAngleMult || 0.55) : 1))) {
             lostTarget = true;
         }
     }
 
     // 3. 導引：解制前強制直線
-    let speed = MISSILE_SPEED;
+    let speed = Number(weaponCfg.speed) || MISSILE_SPEED;
     if (canGuide && !lostTarget && trackPos) {
         let desiredDir = new THREE.Vector3().subVectors(trackPos, mPos).normalize();
         let desiredQuat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), desiredDir);

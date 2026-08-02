@@ -19,12 +19,16 @@
     pipper.style.transform = 'translate(-50%, -50%)';
     pipper.style.transition = 'opacity 0.2s ease-in-out';
     // 外圓平時顯示；倒 T / 中心點僅機砲排程後顯示
-    // #lcos-grab-ring：整圓（含內部）可拖曳調整機頭（joyX/joyY）；外環視覺比基準大約 10%
+    // #lcos-grab-ring：拖曳調機頭；雙擊＝開火／飛彈排程（同 SMS ENT）
+    // #lcos-gun-heat-*：機砲過熱環（外環外側粗黑圈，溫度順時針填紅）
     pipper.innerHTML = `
         <svg viewBox="0 0 100 100" style="width: 100%; height: 100%; overflow: visible; filter: none; pointer-events: none;">
+            <circle id="lcos-gun-heat-track" cx="50" cy="50" r="46" stroke="#ffffff" stroke-width="5.5" fill="none" opacity="0.92" style="display: none;"/>
+            <circle id="lcos-gun-heat-fill" cx="50" cy="50" r="46" stroke="#ff1a1a" stroke-width="5.5" fill="none"
+                stroke-linecap="butt" transform="rotate(-90 50 50)" opacity="0.95" style="display: none;"/>
             <circle id="lcos-cone-circle" cx="50" cy="50" r="37.4" stroke="#ffffff" stroke-width="2.6" fill="none" opacity="0.9"/>
             <circle id="lcos-grab-ring" cx="50" cy="50" r="37.4" stroke="none" fill="rgba(255,255,255,0.01)"
-                style="pointer-events: fill; cursor: grab;"/>
+                style="pointer-events: fill; cursor: grab;" title="拖曳調機頭｜雙擊開火／發射"/>
             <g id="lcos-aim-group" style="display: none; pointer-events: none;">
                 <g id="lcos-inner-t" stroke="#e6c200" stroke-width="1.8" stroke-linecap="square" fill="none">
                     <line id="lcos-t-bar" x1="38" y1="52" x2="62" y2="52"/>
@@ -34,14 +38,287 @@
             </g>
         </svg>
     `;
+    pipper.title = '拖曳調機頭｜雙擊開火／發射';
 })();
 
+// 飛彈 seeker：外環四角加粗斜槓 → 鎖定後移到敵機組成 X
+(function initMissileSeekerBrackets() {
+    if (document.getElementById('missile-seeker-brackets')) return;
+    const el = document.createElement('div');
+    el.id = 'missile-seeker-brackets';
+    el.style.cssText = [
+        'position:fixed',
+        'top:0',
+        'left:0',
+        'width:56px',
+        'height:56px',
+        'pointer-events:none',
+        'z-index:8100',
+        'display:none',
+        'transform:translate(-50%,-50%)',
+        'transition:none'
+    ].join(';');
+    el.innerHTML = `
+        <svg viewBox="0 0 100 100" style="width:100%;height:100%;overflow:visible;pointer-events:none;">
+            <g id="missile-seeker-marks" stroke="#ffffff" stroke-width="3.6" stroke-linecap="square" fill="none" opacity="0.95">
+                <line id="msl-b-0" x1="0" y1="0" x2="0" y2="0"/>
+                <line id="msl-b-1" x1="0" y1="0" x2="0" y2="0"/>
+                <line id="msl-b-2" x1="0" y1="0" x2="0" y2="0"/>
+                <line id="msl-b-3" x1="0" y1="0" x2="0" y2="0"/>
+            </g>
+        </svg>
+    `;
+    document.body.appendChild(el);
+})();
+
+/**
+ * Missile mode seeker marks on LCOS ring:
+ * - unlocked / in-window: 4 bold corner ticks pointing outward
+ * - missile queued + lock (in shoot window): hollow X (same position)
+ * @param {{visible:boolean, lockedX:boolean, pipperX:number, pipperY:number, pipperSize:number, ringR?:number, color?:string}} opts
+ */
+function updateMissileSeekerBrackets(opts) {
+    const el = document.getElementById('missile-seeker-brackets');
+    if (!el) return;
+    if (!opts || !opts.visible) {
+        el.style.display = 'none';
+        if (window._mslBracketAnim) window._mslBracketAnim.xT = 0;
+        return;
+    }
+
+    const wantX = !!opts.lockedX;
+    const anim = window._mslBracketAnim || (window._mslBracketAnim = { xT: 0 });
+    const targetT = wantX ? 1 : 0;
+    const step = wantX ? 0.22 : 0.28;
+    if (anim.xT < targetT) anim.xT = Math.min(targetT, anim.xT + step);
+    else if (anim.xT > targetT) anim.xT = Math.max(targetT, anim.xT - step);
+    const t = anim.xT;
+
+    const pipX = Number(opts.pipperX) || 0;
+    const pipY = Number(opts.pipperY) || 0;
+    const pipSize = Math.max(40, Number(opts.pipperSize) || 56);
+    const ringR = Number.isFinite(opts.ringR) ? opts.ringR : 37.4;
+    const k = 0.70710678;
+
+    // 外環四角短斜槓：朝外
+    const tickLen = 11;
+    const corners = [
+        { ox: 50 - ringR * k, oy: 50 - ringR * k, dx: -1, dy: -1 }, // TL out
+        { ox: 50 + ringR * k, oy: 50 - ringR * k, dx: 1, dy: -1 },  // TR out
+        { ox: 50 - ringR * k, oy: 50 + ringR * k, dx: -1, dy: 1 },  // BL out
+        { ox: 50 + ringR * k, oy: 50 + ringR * k, dx: 1, dy: 1 }    // BR out
+    ];
+    // 空心 X：兩條對角線，中心留空
+    const xArm = 20;
+    const xGap = 5.5;
+    const xSegs = [
+        { x1: 50 - xArm, y1: 50 - xArm, x2: 50 - xGap, y2: 50 - xGap },
+        { x1: 50 + xArm, y1: 50 - xArm, x2: 50 + xGap, y2: 50 - xGap },
+        { x1: 50 - xArm, y1: 50 + xArm, x2: 50 - xGap, y2: 50 + xGap },
+        { x1: 50 + xArm, y1: 50 + xArm, x2: 50 + xGap, y2: 50 + xGap }
+    ];
+
+    const color = opts.color || '#ffffff';
+    const marks = document.getElementById('missile-seeker-marks');
+    if (marks) {
+        marks.setAttribute('stroke', color);
+        marks.setAttribute('stroke-width', t > 0.5 ? '4.0' : '3.6');
+    }
+
+    for (let i = 0; i < 4; i++) {
+        const line = document.getElementById(`msl-b-${i}`);
+        if (!line) continue;
+        const c = corners[i];
+        // tick: from ring corner outward
+        const x0 = c.ox;
+        const y0 = c.oy;
+        const x1 = c.ox + c.dx * tickLen * k;
+        const y1 = c.oy + c.dy * tickLen * k;
+        const xs = xSegs[i];
+        line.setAttribute('x1', String(x0 + (xs.x1 - x0) * t));
+        line.setAttribute('y1', String(y0 + (xs.y1 - y0) * t));
+        line.setAttribute('x2', String(x1 + (xs.x2 - x1) * t));
+        line.setAttribute('y2', String(y1 + (xs.y2 - y1) * t));
+    }
+
+    el.style.display = 'block';
+    el.style.left = `${pipX}px`;
+    el.style.top = `${pipY}px`;
+    el.style.width = `${pipSize}px`;
+    el.style.height = `${pipSize}px`;
+    el.style.filter = color === '#ff0055'
+        ? 'drop-shadow(0 0 5px #ff0055)'
+        : 'drop-shadow(0 0 2px rgba(255,255,255,0.55))';
+    el.style.opacity = '0.95';
+}
+
+/** FOX-1 SARH illuminate ring = unstable nose/look lock cone + missile status boxes.
+ *  Separate from LCOS/方向盤 seeker brackets (those stay on for FOX-1 too). */
+function updateFox1SupportHud(team, enemy, enemyPos, enemyProj, isObscured) {
+    let ring = document.getElementById('fox1-hit-ring');
+    if (!ring) {
+        ring = document.createElement('div');
+        ring.id = 'fox1-hit-ring';
+        ring.style.cssText = 'position:fixed;pointer-events:none;z-index:8050;border:2px solid #ffaa00;border-radius:50%;transform:translate(-50%,-50%);display:none;box-sizing:border-box;';
+        document.body.appendChild(ring);
+    }
+    let boxHost = document.getElementById('fox1-missile-boxes');
+    if (!boxHost) {
+        boxHost = document.createElement('div');
+        boxHost.id = 'fox1-missile-boxes';
+        boxHost.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:8060;';
+        document.body.appendChild(boxHost);
+    }
+
+    const live = (typeof teamLiveMissileType === 'function') ? teamLiveMissileType(team) : null;
+    const hasFox1Flight = !!(team && team.activeMissiles && team.activeMissiles.some(
+        (m) => m && m.missileType === 'fox1' && !m.exploded && m.ap > 0 && m.active
+    ));
+    const showFox1 = !!(team && team.weapon === 'missile' && (live === 'fox1' || hasFox1Flight));
+    if (!showFox1 || !team || !team.wrapper) {
+        ring.style.display = 'none';
+        boxHost.innerHTML = '';
+        return;
+    }
+
+    const cfg = typeof getMissileWeaponConfig === 'function' ? getMissileWeaponConfig('fox1') : {};
+    const shooterPos = team.wrapper.position;
+    const shooterQuat = team.wrapper.quaternion;
+    const nowStep = (typeof performance !== 'undefined' ? performance.now() * 0.06 : 0);
+    const chaffList = (typeof globalChaff !== 'undefined' && Array.isArray(globalChaff))
+        ? globalChaff.map((c) => ({ pos: c.pos, ageSteps: c.ageSteps || c.age || 0 }))
+        : [];
+    let losBlocked = false;
+    if (enemyPos && typeof obstacles !== 'undefined' && obstacles.length) {
+        const dir = enemyPos.clone().sub(shooterPos);
+        const dist = dir.length();
+        if (dist > 0.2) {
+            const ray = new THREE.Raycaster(shooterPos, dir.normalize(), 0.1, dist);
+            losBlocked = ray.intersectObjects(obstacles, true).length > 0;
+        }
+    }
+
+    const baseAngle = Number(cfg.supportBaseAngle) || (Math.PI / 18);
+    let support = {
+        angle: baseAngle,
+        inRange: false,
+        supported: false,
+        inGate: false,
+        flicker: false,
+        breathe: 1,
+        lookDir: null
+    };
+    if (enemyPos && typeof computeSarhSupport === 'function') {
+        support = computeSarhSupport({
+            shooterPos,
+            shooterQuat,
+            targetPos: enemyPos,
+            chaffList,
+            step: nowStep,
+            losBlocked
+        });
+    }
+
+    // Illuminate axis = stable nose (no look jitter on the ring)
+    const noseFwd = new THREE.Vector3(0, 0, 1).applyQuaternion(shooterQuat).normalize();
+    const lookDir = noseFwd;
+    const enemyDist = enemyPos ? shooterPos.distanceTo(enemyPos) : 0;
+    const maxR = Number(cfg.seekerRange) || 200;
+    const aimDist = enemyDist > 1
+        ? Math.max(40, Math.min(maxR, enemyDist))
+        : Math.max(60, maxR * 0.45);
+    const lookWorld = shooterPos.clone().add(lookDir.clone().multiplyScalar(aimDist));
+    const lookProj = lookWorld.clone().project(camera);
+    if (lookProj.z > 1) {
+        ring.style.display = 'none';
+    } else {
+        const sx = (lookProj.x * 0.5 + 0.5) * window.innerWidth;
+        const sy = (lookProj.y * -0.5 + 0.5) * window.innerHeight;
+        // Screen radius from angular illuminate gate (grows/shrinks with support.angle)
+        const focal = Math.max(window.innerHeight, 480) * 0.72;
+        let pxR = Math.tan(Math.max(0.004, support.angle || baseAngle)) * focal;
+        pxR = Math.max(8, Math.min(90, pxR));
+        if (window._fox1RingR == null) window._fox1RingR = pxR;
+        window._fox1RingR += (pxR - window._fox1RingR) * 0.28;
+
+        const gateHot = !!(support.supported || (support.inRange && support.inGate));
+        const col = gateHot ? '#ff0055' : '#ffaa00';
+        ring.style.display = 'block';
+        ring.style.left = `${sx}px`;
+        ring.style.top = `${sy}px`;
+        ring.style.width = `${window._fox1RingR * 2}px`;
+        ring.style.height = `${window._fox1RingR * 2}px`;
+        ring.style.borderColor = col;
+        ring.style.opacity = String(
+            (support.breathe != null ? support.breathe : 1) *
+            (support.flicker && (Date.now() % 160 < 80) ? 0.35 : 0.88)
+        );
+        ring.style.boxShadow = gateHot
+            ? '0 0 10px rgba(255,0,85,0.55)'
+            : '0 0 6px rgba(255,170,0,0.35)';
+    }
+
+    // Missile boxes (still track missile / enemy)
+    boxHost.innerHTML = '';
+    if (!enemyPos || isObscured) return;
+    (team.activeMissiles || []).forEach((m) => {
+        if (!m || m.missileType !== 'fox1' || m.exploded || m.ap <= 0 || !m.active || !m.pos) return;
+        const mp = m.pos.clone();
+        mp.project(camera);
+        if (mp.z > 1) return;
+        const mx = (mp.x * 0.5 + 0.5) * window.innerWidth;
+        const my = (mp.y * -0.5 + 0.5) * window.innerHeight;
+        const md = enemyPos ? m.pos.distanceTo(enemyPos) : 0;
+        const locked = !!m.supportLocked;
+        const el = document.createElement('div');
+        el.style.cssText = `position:fixed;left:${mx}px;top:${my}px;transform:translate(-50%,-50%);border:1px solid ${locked ? '#ff0055' : '#aaa'};color:${locked ? '#ff0055' : '#ccc'};font:10px/1.2 monospace;padding:2px 4px;background:rgba(0,0,0,0.65);white-space:nowrap;`;
+        el.textContent = `${Math.floor(md)}m ${locked ? 'LOCK' : 'COAST'}`;
+        boxHost.appendChild(el);
+    });
+}
+
+/** Gun overheat ring outside LCOS outer cone: black track + clockwise red fill. */
+function updateLcosGunHeatRing(team, coneCx = 50, coneCy = 50, coneR = 37.4, visible = true) {
+    const track = document.getElementById('lcos-gun-heat-track');
+    const fill = document.getElementById('lcos-gun-heat-fill');
+    if (!track || !fill) return;
+    if (!visible || !team || team.weapon !== 'gun') {
+        track.style.display = 'none';
+        fill.style.display = 'none';
+        return;
+    }
+    const heat = Math.max(0, Math.min(1, Number(team.gunHeat) || 0));
+    const cx = Number(coneCx);
+    const cy = Number(coneCy);
+    const baseR = Number(coneR);
+    const r = (Number.isFinite(baseR) ? baseR : 37.4) + 8.6;
+    const circ = 2 * Math.PI * r;
+    track.setAttribute('cx', String(cx));
+    track.setAttribute('cy', String(cy));
+    track.setAttribute('r', String(r));
+    track.style.display = 'block';
+    fill.setAttribute('cx', String(cx));
+    fill.setAttribute('cy', String(cy));
+    fill.setAttribute('r', String(r));
+    fill.setAttribute('transform', `rotate(-90 ${cx} ${cy})`);
+    fill.setAttribute('stroke-dasharray', String(circ.toFixed(2)));
+    fill.setAttribute('stroke-dashoffset', String((circ * (1 - heat)).toFixed(2)));
+    fill.style.display = heat > 0.001 ? 'block' : 'none';
+}
+
 // 準星外環拖曳 → 調整機頭方向（與座艙搖桿同一套 joyX / joyY）
+// 輕點雙擊（幾乎無拖移）→ 切換機砲／飛彈開火排程
 (function initLcosRingDrag() {
     window.isDraggingLcosRing = false;
-    let dragCenterX = 0;
-    let dragCenterY = 0;
     let activePointerId = null;
+    let dragStartX = 0;
+    let dragStartY = 0;
+    let startJoyX = 0;
+    let startJoyY = 0;
+    let dragMoved = false;
+    let lastTapAt = 0;
+    const TAP_MOVE_PX = 8;
+    const DBLTAP_MS = 380;
 
     // 短距近乎與手指同步；超過 soft 區才增幅拉滿
     const LCOS_DRAG = {
@@ -91,22 +368,81 @@
         joyHandle.style.transform = `translate(${joyX * maxRadius}px, ${-joyY * maxRadius}px)`;
     }
 
+    /**
+     * Map screen drag to body-frame stick so inverted / banked flight stays
+     * "drag toward where you want the nose on screen" (not reversed).
+     * dx: screen-right, dy: screen-down (DOM).
+     */
+    function mapScreenDragToJoy(dx, dy, mag, team) {
+        const dist = Math.hypot(dx, dy);
+        if (!(dist > 0.001) || !(mag > 0)) return { joyX: 0, joyY: 0 };
+
+        const cam = (typeof camera !== 'undefined') ? camera : null;
+        const quat = team && team.wrapper
+            ? (team.wrapper.userData.logicalQuat || team.wrapper.quaternion)
+            : null;
+        if (!cam || !quat || typeof THREE === 'undefined') {
+            // Match cockpit stick: screen-right = +joyX was reversed for nose-on-screen
+            // after camera/body remap; keep Y, flip X.
+            return { joyX: (-dx / dist) * mag, joyY: (-dy / dist) * mag };
+        }
+
+        const camRight = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 0).normalize();
+        const camUp = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 1).normalize();
+        const camFwd = new THREE.Vector3();
+        cam.getWorldDirection(camFwd);
+
+        const desired = camRight.clone().multiplyScalar(dx).add(camUp.clone().multiplyScalar(-dy));
+        if (desired.lengthSq() < 1e-10) return { joyX: 0, joyY: 0 };
+        desired.normalize();
+
+        const bodyRight = new THREE.Vector3(1, 0, 0).applyQuaternion(quat);
+        const bodyUp = new THREE.Vector3(0, 1, 0).applyQuaternion(quat);
+
+        // Project body axes onto the camera plane so screen sense matches.
+        const rightScreen = bodyRight.clone().addScaledVector(camFwd, -bodyRight.dot(camFwd));
+        const upScreen = bodyUp.clone().addScaledVector(camFwd, -bodyUp.dot(camFwd));
+        if (rightScreen.lengthSq() < 1e-8 || upScreen.lengthSq() < 1e-8) {
+            return { joyX: (-dx / dist) * mag, joyY: (-dy / dist) * mag };
+        }
+        rightScreen.normalize();
+        upScreen.normalize();
+
+        let jx = desired.dot(rightScreen);
+        let jy = desired.dot(upScreen);
+        const len = Math.hypot(jx, jy);
+        if (len < 1e-6) return { joyX: 0, joyY: 0 };
+        // Negate X so drag-right moves nose right on screen (Y already correct).
+        return { joyX: (-jx / len) * mag, joyY: (jy / len) * mag };
+    }
+
+    function clampJoyVector(joyX, joyY) {
+        const len = Math.hypot(joyX, joyY);
+        if (len <= 1 || len < 1e-8) return { joyX, joyY };
+        return { joyX: joyX / len, joyY: joyY / len };
+    }
+
+    /** Relative drag: preserve stick on pointer-down; only change after move. */
     function applyNoseFromPointer(clientX, clientY) {
         const t = canPilotActive();
         if (!t) return;
-        const dx = clientX - dragCenterX;
-        const dy = clientY - dragCenterY;
+        if (typeof camera !== 'undefined' && camera && camera.updateMatrixWorld) {
+            camera.updateMatrixWorld();
+        }
+        const dx = clientX - dragStartX;
+        const dy = clientY - dragStartY;
         const dist = Math.hypot(dx, dy);
+        // Tiny jitter on press: keep starting stick exactly.
+        if (dist < 2) {
+            syncJoystickHandle(startJoyX, startJoyY);
+            return;
+        }
         const { softPx, fullPx } = getDragRadii();
         const mag = mapDistToJoyMag(dist, softPx, fullPx);
-        let joyX = 0;
-        let joyY = 0;
-        if (dist > 0.001 && mag > 0) {
-            joyX = (dx / dist) * mag;
-            joyY = (-dy / dist) * mag;
-        }
-        if (!GameContext.stateMachine.setJoystickInput(t.id, joyX, joyY)) return;
-        syncJoystickHandle(joyX, joyY);
+        const delta = mapScreenDragToJoy(dx, dy, mag, t);
+        const next = clampJoyVector(startJoyX + delta.joyX, startJoyY + delta.joyY);
+        if (!GameContext.stateMachine.setJoystickInput(t.id, next.joyX, next.joyY)) return;
+        syncJoystickHandle(next.joyX, next.joyY);
         if (typeof uiRefreshPreview === 'function') uiRefreshPreview(t);
         else if (typeof updateDashboardUI === 'function') updateDashboardUI(t);
     }
@@ -114,6 +450,7 @@
     function endDrag(e) {
         if (!window.isDraggingLcosRing) return;
         if (e && activePointerId != null && e.pointerId !== activePointerId) return;
+        const wasDrag = dragMoved;
         window.isDraggingLcosRing = false;
         activePointerId = null;
         const grab = document.getElementById('lcos-grab-ring');
@@ -122,12 +459,28 @@
         if (pipper) pipper.classList.remove('lcos-dragging');
         const cone = document.getElementById('lcos-cone-circle');
         if (cone) cone.setAttribute('stroke-width', '2.6');
+
+        // Double-tap (no meaningful drag): same as SMS ENT — queue gun / missile.
+        if (!wasDrag && canPilotActive()) {
+            const now = Date.now();
+            if (now - lastTapAt <= DBLTAP_MS) {
+                lastTapAt = 0;
+                if (typeof window.uiToggleWeaponFireQueue === 'function') {
+                    window.uiToggleWeaponFireQueue();
+                }
+            } else {
+                lastTapAt = now;
+            }
+        } else {
+            lastTapAt = 0;
+        }
     }
 
     function bindGrabRing() {
         const grab = document.getElementById('lcos-grab-ring');
         if (!grab || grab.dataset.dragBound === 'true') return;
         grab.dataset.dragBound = 'true';
+        grab.setAttribute('title', '拖曳調機頭｜雙擊開火／發射');
 
         grab.addEventListener('pointerdown', (e) => {
             if (e.button != null && e.button !== 0) return;
@@ -138,9 +491,13 @@
 
             const pipper = document.getElementById('lcos-pipper');
             if (!pipper || pipper.style.display === 'none') return;
-            const rect = pipper.getBoundingClientRect();
-            dragCenterX = rect.left + rect.width / 2;
-            dragCenterY = rect.top + rect.height / 2;
+
+            // Relative grab — do not snap stick to click-vs-center (that auto-centered).
+            dragStartX = e.clientX;
+            dragStartY = e.clientY;
+            startJoyX = Number(t.joyX) || 0;
+            startJoyY = Number(t.joyY) || 0;
+            dragMoved = false;
 
             window.isDraggingLcosRing = true;
             activePointerId = e.pointerId;
@@ -152,12 +509,15 @@
 
             e.preventDefault();
             e.stopPropagation();
-            applyNoseFromPointer(e.clientX, e.clientY);
+            syncJoystickHandle(startJoyX, startJoyY);
         });
 
         grab.addEventListener('pointermove', (e) => {
             if (!window.isDraggingLcosRing) return;
             if (activePointerId != null && e.pointerId !== activePointerId) return;
+            const dx = e.clientX - dragStartX;
+            const dy = e.clientY - dragStartY;
+            if (!dragMoved && Math.hypot(dx, dy) >= TAP_MOVE_PX) dragMoved = true;
             e.preventDefault();
             e.stopPropagation();
             applyNoseFromPointer(e.clientX, e.clientY);
@@ -235,6 +595,48 @@ if (typeof window.hudClickListenerRegistered === 'undefined') {
 }
 
 // 🌟 4. 核心渲染更新：每影格刷新雙框定位與 LCOS 物理投影
+/**
+ * Keep LCOS near aircraft forward on screen. Full world-impact projection often
+ * flies off the top of the viewport in top-down / planning cams.
+ */
+function resolveLcosScreenPos(aimPoint, noseAnchorWorld) {
+    const w = window.innerWidth || 800;
+    const h = window.innerHeight || 600;
+    const nose = noseAnchorWorld.clone().project(camera);
+    let nx = (nose.x * 0.5 + 0.5) * w;
+    let ny = (nose.y * -0.5 + 0.5) * h;
+    const noseOk = !(nose.z > 1.0);
+
+    let px;
+    let py;
+    let aimOk = aimPoint && !(aimPoint.z > 1.0);
+    if (aimOk) {
+        px = (aimPoint.x * 0.5 + 0.5) * w;
+        py = (aimPoint.y * -0.5 + 0.5) * h;
+    } else if (noseOk) {
+        px = nx;
+        py = ny;
+    } else {
+        return null;
+    }
+
+    if (noseOk) {
+        const maxLeadPx = Math.min(w, h) * 0.2;
+        let dx = px - nx;
+        let dy = py - ny;
+        const d = Math.hypot(dx, dy);
+        if (d > maxLeadPx && d > 0.001) {
+            px = nx + (dx / d) * maxLeadPx;
+            py = ny + (dy / d) * maxLeadPx;
+        }
+    }
+
+    const margin = 42;
+    px = Math.max(margin, Math.min(w - margin, px));
+    py = Math.max(margin, Math.min(h - margin, py));
+    return { px, py };
+}
+
 window.updateDynamicHUD = function() {
     let currentTeam = GameContext.getActiveTeamId();
     let t = teams[currentTeam];
@@ -256,6 +658,9 @@ window.updateDynamicHUD = function() {
         if(dynamicHud) dynamicHud.style.display = 'none';
         if(ghostHud) ghostHud.style.display = 'none';
         if(lcosPipper && !ringDragging) lcosPipper.style.display = 'none';
+        updateLcosGunHeatRing(null, 50, 50, 37.4, false);
+        updateMissileSeekerBrackets({ visible: false });
+        if (typeof updateFox1SupportHud === 'function') updateFox1SupportHud(null, null, null, null, true);
         return;
     }
 
@@ -263,6 +668,9 @@ window.updateDynamicHUD = function() {
         if(dynamicHud) dynamicHud.style.display = 'none';
         if(ghostHud) ghostHud.style.display = 'none';
         if(lcosPipper && !ringDragging) lcosPipper.style.display = 'none';
+        updateLcosGunHeatRing(null, 50, 50, 37.4, false);
+        updateMissileSeekerBrackets({ visible: false });
+        if (typeof updateFox1SupportHud === 'function') updateFox1SupportHud(null, null, null, null, true);
         return;
     }
 
@@ -303,15 +711,44 @@ window.updateDynamicHUD = function() {
             hudShape.style.boxShadow = 'none';
             hudShape.style.borderStyle = 'dashed';
             hudShape.innerHTML = '<span style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #ff9800; font-weight: 900; font-size: 14px; text-shadow: 0 0 4px #ff9800;">X</span>';
+            const lockLabel = document.getElementById('hud-tgt-lock');
+            if (lockLabel) {
+                lockLabel.classList.remove('is-on');
+                lockLabel.hidden = true;
+            }
         } else {
             hudShape.style.borderStyle = 'solid';
             let distance = t.wrapper.position.distanceTo(enemyCurrentPos);
             let forward = new THREE.Vector3(0, 0, 1).applyQuaternion(t.wrapper.quaternion).normalize();
             let angle = forward.angleTo(new THREE.Vector3().subVectors(enemyCurrentPos, t.wrapper.position).normalize());
             
-            let isLocked = t.weapon === 'gun' ? (distance <= gunFireRange && angle <= Math.PI/8) : (distance <= 600 && angle <= Math.PI/12);
-            
-            if (isLocked) {
+            const liveMsl = (typeof teamLiveMissileType === 'function') ? teamLiveMissileType(t) : 'fox2';
+            const fox1Cfg = (typeof getMissileWeaponConfig === 'function')
+                ? getMissileWeaponConfig('fox1')
+                : ((CONFIG.weapons && CONFIG.weapons.fox1) ? CONFIG.weapons.fox1 : {});
+            const missileLockRange = liveMsl === 'fox1'
+                ? (Number(fox1Cfg.seekerRange) || 200)
+                : ((typeof SEEKER_RANGE !== 'undefined' && SEEKER_RANGE > 0) ? SEEKER_RANGE : 120);
+            const missileLockMin = liveMsl === 'fox1' ? (Number(fox1Cfg.minArmingRange) || 70) : 0;
+            const missileLockAng = liveMsl === 'fox1'
+                ? (Number(fox1Cfg.seekerAngle) || Math.PI / 14)
+                : Math.PI / 12;
+            let isLocked = t.weapon === 'gun'
+                ? (distance <= gunFireRange && angle <= Math.PI / 8)
+                : (distance <= missileLockRange && distance >= missileLockMin && angle <= missileLockAng);
+
+            const fox1Active = liveMsl === 'fox1' && t.weapon === 'missile' && (
+                !!(t.wpnQueued && t.queuedAction === 'missile') ||
+                (t.activeMissiles && t.activeMissiles.some(m => m.missileType === 'fox1' && !m.exploded && m.ap > 0))
+            );
+            const showFox1LockLabel = !!(fox1Active && isLocked);
+
+            if (fox1Active && isLocked) {
+                hudShape.style.borderColor = '#ff0055';
+                hudShape.style.backgroundColor = 'rgba(255, 0, 85, 0.14)';
+                hudShape.style.boxShadow = '0 0 15px rgba(255, 0, 85, 0.45)';
+                hudShape.innerHTML = '<span style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #ff0055; font-weight: 900; font-size: 14px; text-shadow: 0 0 5px #ff0055;">O</span>';
+            } else if (isLocked) {
                 hudShape.style.borderColor = '#00ff88';
                 hudShape.style.backgroundColor = 'rgba(0, 255, 136, 0.12)';
                 hudShape.style.boxShadow = '0 0 15px rgba(0, 255, 136, 0.4)';
@@ -322,8 +759,17 @@ window.updateDynamicHUD = function() {
                 hudShape.style.boxShadow = 'none';
                 hudShape.innerHTML = '<span style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #00bcd4; font-weight: 900; font-size: 14px;">X</span>';
             }
+
+            const lockLabel = document.getElementById('hud-tgt-lock');
+            if (lockLabel) {
+                lockLabel.classList.toggle('is-on', showFox1LockLabel);
+                lockLabel.hidden = !showFox1LockLabel;
+            }
         }
     }
+
+    updateFox1SupportHud(t, enemy, enemyCurrentPos, currentProj, isObscured);
+    if (typeof uiUpdateSmsRadarLockWarn === 'function') uiUpdateSmsRadarLockWarn(t);
 
     // ========================================================================
     // 🎯 準星：外細圓環平時顯示（機砲 / 飛彈）；倒 T 僅機砲排程後
@@ -350,6 +796,8 @@ window.updateDynamicHUD = function() {
         if (window.isDraggingLcosRing) return;
         if (lcosPipper) lcosPipper.style.display = 'none';
         if (ghostHud) ghostHud.style.display = 'none';
+        updateLcosGunHeatRing(t, 50, 50, 37.4, false);
+        updateMissileSeekerBrackets({ visible: false });
     };
 
     const paintPipperColor = (inRange) => {
@@ -369,13 +817,51 @@ window.updateDynamicHUD = function() {
         if (centerDot) centerDot.setAttribute('fill', inRange ? '#ff0055' : '#e6c200');
     };
 
+    // 飛彈已排程（SMS ENT / 雙擊）；空心 X 還需同時在射擊窗內（準星紅）
+    const missileQueued =
+        t.weapon === 'missile' && (!!t.ready || !!t.wpnQueued);
+
     if (t.weapon === 'gun') {
+        updateMissileSeekerBrackets({ visible: false });
         if (typeof trajectoryMeshes !== 'undefined' && trajectoryMeshes[enemy.id]) trajectoryMeshes[enemy.id].visible = false;
         if (typeof threatEnvGroup !== 'undefined' && threatEnvGroup) threatEnvGroup.visible = false;
         if (t.userData && t.userData.gunPreview) t.userData.gunPreview.visible = false;
 
         if (isObscured) {
-            hidePipper();
+            // Keep outer ring visible for nose steering even when LOS is blocked.
+            const noseAnchor = myGhostPos.clone().add(
+                new THREE.Vector3(0, 0, 1).applyQuaternion(myGhostQuat).multiplyScalar(18)
+            );
+            const screenPos = resolveLcosScreenPos(null, noseAnchor);
+            if (!screenPos) {
+                hidePipper();
+            } else {
+                lcosPipper.style.display = 'block';
+                if (!window.lcosLastPos) window.lcosLastPos = new THREE.Vector2(screenPos.px, screenPos.py);
+                else window.lcosLastPos.lerp(new THREE.Vector2(screenPos.px, screenPos.py), 0.4);
+                lcosPipper.style.left = `${window.lcosLastPos.x}px`;
+                lcosPipper.style.top = `${window.lcosLastPos.y}px`;
+                lcosPipper.style.width = '56px';
+                lcosPipper.style.height = '56px';
+                lcosPipper.style.opacity = '0.9';
+                if (lcosConeCircle) {
+                    lcosConeCircle.setAttribute('cx', '50');
+                    lcosConeCircle.setAttribute('cy', '50');
+                    lcosConeCircle.setAttribute('r', '35.2');
+                    lcosConeCircle.setAttribute('stroke', '#ffffff');
+                    lcosConeCircle.setAttribute('stroke-width', '3.2');
+                    const grabRing = document.getElementById('lcos-grab-ring');
+                    if (grabRing) {
+                        grabRing.setAttribute('cx', '50');
+                        grabRing.setAttribute('cy', '50');
+                        grabRing.setAttribute('r', '35.2');
+                    }
+                    updateLcosGunHeatRing(t, 50, 50, 35.2, true);
+                }
+                const aimGroup = document.getElementById('lcos-aim-group');
+                if (aimGroup) aimGroup.style.display = 'none';
+                if (ghostHud) ghostHud.style.display = 'none';
+            }
         } else {
             let ghostProj = enemyGhostPos.clone();
             ghostProj.project(camera);
@@ -407,12 +893,16 @@ window.updateDynamicHUD = function() {
             let aimPoint = bulletImpactPos.clone();
             aimPoint.project(camera);
 
-            if (aimPoint.z > 1.0) {
+            const noseAnchor = myGhostPos.clone().add(
+                new THREE.Vector3(0, 0, 1).applyQuaternion(myGhostQuat).multiplyScalar(18)
+            );
+            const screenPos = resolveLcosScreenPos(aimPoint, noseAnchor);
+            if (!screenPos) {
                 hidePipper();
             } else {
                 lcosPipper.style.display = 'block';
-                let px = (aimPoint.x * 0.5 + 0.5) * window.innerWidth;
-                let py = (aimPoint.y * -0.5 + 0.5) * window.innerHeight;
+                let px = screenPos.px;
+                let py = screenPos.py;
                 if (!window.lcosLastPos) {
                     window.lcosLastPos = new THREE.Vector2(px, py);
                 } else {
@@ -458,6 +948,7 @@ window.updateDynamicHUD = function() {
                         grabRing.setAttribute('cy', String(cy));
                         grabRing.setAttribute('r', String(funnelR));
                     }
+                    updateLcosGunHeatRing(t, cx, cy, funnelR, true);
                 }
 
                 const aimGroup = document.getElementById('lcos-aim-group');
@@ -481,6 +972,7 @@ window.updateDynamicHUD = function() {
             }
         }
     } else if (t.weapon === 'missile') {
+        updateLcosGunHeatRing(t, 50, 50, 37.4, false);
         // 飛彈：僅外細圓環，平時黃、進入 seeker 命中窗變紅
         let shouldShowEnv = !!(enemy.userData && enemy.userData.showEnvelope && !isObscured);
         if (typeof trajectoryMeshes !== 'undefined' && trajectoryMeshes[enemy.id]) {
@@ -492,7 +984,45 @@ window.updateDynamicHUD = function() {
         if (ghostHud) ghostHud.style.display = 'none';
 
         if (isObscured) {
-            hidePipper();
+            const myGhostForward = new THREE.Vector3(0, 0, 1).applyQuaternion(myGhostQuat).normalize();
+            const noseAnchor = myGhostPos.clone().add(myGhostForward.clone().multiplyScalar(18));
+            const screenPos = resolveLcosScreenPos(null, noseAnchor);
+            if (!screenPos) {
+                hidePipper();
+            } else {
+                lcosPipper.style.display = 'block';
+                if (!window.lcosLastPos) window.lcosLastPos = new THREE.Vector2(screenPos.px, screenPos.py);
+                else window.lcosLastPos.lerp(new THREE.Vector2(screenPos.px, screenPos.py), 0.4);
+                lcosPipper.style.left = `${window.lcosLastPos.x}px`;
+                lcosPipper.style.top = `${window.lcosLastPos.y}px`;
+                lcosPipper.style.width = '52px';
+                lcosPipper.style.height = '52px';
+                lcosPipper.style.opacity = '0.9';
+                if (lcosConeCircle) {
+                    lcosConeCircle.setAttribute('cx', '50');
+                    lcosConeCircle.setAttribute('cy', '50');
+                    lcosConeCircle.setAttribute('r', '35.2');
+                    lcosConeCircle.setAttribute('stroke', '#ffffff');
+                    lcosConeCircle.setAttribute('stroke-width', '3.2');
+                    const grabRing = document.getElementById('lcos-grab-ring');
+                    if (grabRing) {
+                        grabRing.setAttribute('cx', '50');
+                        grabRing.setAttribute('cy', '50');
+                        grabRing.setAttribute('r', '35.2');
+                    }
+                }
+                const aimGroup = document.getElementById('lcos-aim-group');
+                if (aimGroup) aimGroup.style.display = 'none';
+                updateMissileSeekerBrackets({
+                    visible: true,
+                    lockedX: false,
+                    pipperX: window.lcosLastPos.x,
+                    pipperY: window.lcosLastPos.y,
+                    pipperSize: 52,
+                    ringR: 35.2,
+                    color: '#ffffff'
+                });
+            }
         } else {
             const myGhostForward = new THREE.Vector3(0, 0, 1).applyQuaternion(myGhostQuat).normalize();
             const toEnemy = enemyGhostPos.clone().sub(myGhostPos);
@@ -504,12 +1034,14 @@ window.updateDynamicHUD = function() {
             const aimPoint = aimWorld.clone();
             aimPoint.project(camera);
 
-            if (aimPoint.z > 1.0) {
+            const noseAnchor = myGhostPos.clone().add(myGhostForward.clone().multiplyScalar(18));
+            const screenPos = resolveLcosScreenPos(aimPoint, noseAnchor);
+            if (!screenPos) {
                 hidePipper();
             } else {
                 lcosPipper.style.display = 'block';
-                const px = (aimPoint.x * 0.5 + 0.5) * window.innerWidth;
-                const py = (aimPoint.y * -0.5 + 0.5) * window.innerHeight;
+                const px = screenPos.px;
+                const py = screenPos.py;
                 if (!window.lcosLastPos) {
                     window.lcosLastPos = new THREE.Vector2(px, py);
                 } else {
@@ -528,8 +1060,8 @@ window.updateDynamicHUD = function() {
                 lcosPipper.style.width = `${pipperSizePx}px`;
                 lcosPipper.style.height = `${pipperSizePx}px`;
 
+                const funnelR = (32 + turnMag * 3) * 1.1;
                 if (lcosConeCircle) {
-                    const funnelR = (32 + turnMag * 3) * 1.1;
                     lcosConeCircle.setAttribute('cx', '50');
                     lcosConeCircle.setAttribute('cy', '50');
                     lcosConeCircle.setAttribute('r', String(funnelR));
@@ -546,12 +1078,27 @@ window.updateDynamicHUD = function() {
                     aimGroup.setAttribute('transform', 'translate(0 0)');
                 }
 
+                const liveM = (typeof teamLiveMissileType === 'function') ? teamLiveMissileType(t) : 'fox2';
+                const fox1c = (typeof getMissileWeaponConfig === 'function') ? getMissileWeaponConfig('fox1') : {};
+                const hitMax = liveM === 'fox1' ? (Number(fox1c.seekerRange) || 200) : missileHitRange;
+                const hitMin = liveM === 'fox1' ? (Number(fox1c.minArmingRange) || 70) : 8;
+                const hitAng = liveM === 'fox1' ? (Number(fox1c.seekerAngle) || Math.PI / 14) : missileHitAngle;
                 const inRange =
-                    dist <= missileHitRange &&
-                    dist >= 8 &&
-                    angleToEnemy <= missileHitAngle &&
+                    dist <= hitMax &&
+                    dist >= hitMin &&
+                    angleToEnemy <= hitAng &&
                     myGhostForward.dot(toEnemyNorm) > 0.55;
                 paintPipperColor(inRange);
+                // 方向盤 / seeker brackets stay on for FOX-1; illuminate ring is separate
+                updateMissileSeekerBrackets({
+                    visible: true,
+                    lockedX: !!(missileQueued && inRange),
+                    pipperX: window.lcosLastPos.x,
+                    pipperY: window.lcosLastPos.y,
+                    pipperSize: pipperSizePx,
+                    ringR: funnelR,
+                    color: inRange ? '#ff0055' : '#ffffff'
+                });
             }
         }
     } else {
