@@ -269,44 +269,82 @@ body { margin: 0; padding: 0; overflow: hidden; background-color: #0c0c0c; font-
 .alt-label { position: absolute; font-size: 11px; font-weight: bold; color: #fff; text-shadow: 1px 1px 2px #000; pointer-events: none; display: none; z-index: 15; }
 
 #startup-screen {
-    position: fixed; top: 0; left: 0; width: 100%;
-    height: 100dvh; height: 100vh;
+    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    width: 100%;
+    /* svh = 實際可視高度；避免 100vh 高於 iOS 可視區導致捲到底回彈 */
+    height: 100%;
+    height: 100vh;
+    height: 100dvh;
+    height: 100svh;
+    max-height: 100svh;
     background-color: #050505; z-index: 99999;
     color: #fff; font-family: 'Courier New', monospace; text-align: center;
     pointer-events: auto; transition: opacity 1.2s ease-in-out;
-    overflow-x: hidden;
-    overflow-y: hidden;
+    overflow: hidden;
     overscroll-behavior: none;
-    touch-action: pan-y;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-gutter: stable;
-    scrollbar-width: thin;
-    scrollbar-color: rgba(140, 160, 180, 0.55) rgba(20, 24, 28, 0.9);
+    touch-action: manipulation;
+    box-sizing: border-box;
+}
+html.startup-lock,
+html.startup-lock body {
+    overflow: hidden !important;
+    height: 100% !important;
+    width: 100% !important;
+    overscroll-behavior: none;
+    touch-action: none;
 }
 /* ENTERING：置中、鎖捲動 */
 #startup-screen.is-entering {
     display: flex;
+    flex-direction: column;
     justify-content: center;
+    align-items: stretch;
+}
+#startup-screen.is-entering #startup-scroll {
+    display: flex;
+    flex: 1 1 auto;
     align-items: center;
+    justify-content: center;
     overflow: hidden;
 }
-/* SETUP：改 block 捲動，避免 flex 置中造成拉到底回彈 */
-#startup-screen.is-setup {
-    display: block;
-    overflow-y: auto;
-    overscroll-behavior-y: contain;
+#startup-screen.is-entering #startup-setup-footer {
+    display: none !important;
 }
-#startup-screen::-webkit-scrollbar { width: 10px; }
-#startup-screen::-webkit-scrollbar-track {
+/* SETUP：外層鎖死，只讓 #startup-scroll 捲動 */
+#startup-screen.is-setup {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+}
+#startup-scroll {
+    flex: 1 1 auto;
+    min-height: 0;
+    width: 100%;
+    overflow-x: hidden;
+    overflow-y: hidden;
+    overscroll-behavior: none;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
+    scrollbar-gutter: stable;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(140, 160, 180, 0.55) rgba(20, 24, 28, 0.9);
+}
+#startup-screen.is-setup #startup-scroll {
+    overflow-y: auto;
+    overscroll-behavior-y: none;
+}
+#startup-scroll::-webkit-scrollbar { width: 10px; }
+#startup-scroll::-webkit-scrollbar-track {
     background: rgba(20, 24, 28, 0.95);
     border-left: 1px solid rgba(60, 70, 80, 0.5);
 }
-#startup-screen::-webkit-scrollbar-thumb {
+#startup-scroll::-webkit-scrollbar-thumb {
     background: rgba(120, 140, 160, 0.55);
     border-radius: 6px;
     border: 2px solid rgba(20, 24, 28, 0.95);
 }
-#startup-screen::-webkit-scrollbar-thumb:hover {
+#startup-scroll::-webkit-scrollbar-thumb:hover {
     background: rgba(160, 185, 210, 0.75);
 }
 #startup-shell {
@@ -314,13 +352,24 @@ body { margin: 0; padding: 0; overflow: hidden; background-color: #0c0c0c; font-
     max-width: min(560px, 92vw);
     width: 100%;
     margin: 0 auto;
-    padding: 12px 12px calc(88px + env(safe-area-inset-bottom, 0px));
+    padding: 12px 12px 20px;
     box-sizing: border-box;
 }
 #startup-screen.is-setup #startup-shell {
-    margin-top: min(4vh, 28px);
-    min-height: min-content;
+    margin-top: min(3vh, 20px);
+    padding-bottom: 28px;
 }
+#startup-setup-footer {
+    flex: 0 0 auto;
+    width: 100%;
+    max-width: min(560px, 92vw);
+    margin: 0 auto;
+    padding: 10px 12px calc(12px + env(safe-area-inset-bottom, 0px));
+    box-sizing: border-box;
+    background: linear-gradient(180deg, rgba(5, 5, 5, 0) 0%, rgba(5, 5, 5, 0.92) 28%, #050505 100%);
+    z-index: 2;
+}
+#startup-setup-footer[hidden] { display: none !important; }
 #startup-text {
     font-size: clamp(18px, 3.2vw, 28px); font-weight: bold; letter-spacing: 4px;
     text-shadow: 0 0 10px rgba(255, 255, 255, 0.5);
@@ -349,14 +398,13 @@ body { margin: 0; padding: 0; overflow: hidden; background-color: #0c0c0c; font-
     padding: 18px 18px 16px;
     text-align: left;
     opacity: 0;
-    transform: translateY(10px);
-    transition: opacity 0.55s ease, transform 0.55s ease;
+    transition: opacity 0.55s ease;
 }
 #match-setup-panel[hidden] { display: none !important; }
 #startup-screen.is-setup #match-setup-panel {
     opacity: 1;
-    transform: translateY(0);
 }
+.match-setup-section-seats { margin-bottom: 4px; }
 .match-setup-title {
     font-size: 15px; font-weight: bold; letter-spacing: 3px;
     color: #e6e6e6; margin-bottom: 14px; text-align: center;
@@ -450,12 +498,11 @@ body { margin: 0; padding: 0; overflow: hidden; background-color: #0c0c0c; font-
     padding: 7px 6px; cursor: pointer;
 }
 .match-engage-btn {
-    width: 100%; margin-top: 4px; font-family: inherit;
+    width: 100%; margin-top: 0; font-family: inherit;
     font-size: 15px; font-weight: bold; letter-spacing: 4px;
-    padding: 12px 10px; cursor: pointer;
+    padding: 14px 10px; cursor: pointer;
     color: #0a0a0a; background: #ff0055; border: 1px solid #ff4477;
     box-shadow: 0 0 16px rgba(255, 0, 85, 0.35);
-    scroll-margin-bottom: calc(28px + env(safe-area-inset-bottom, 0px));
 }
 .match-engage-btn:hover { filter: brightness(1.08); }
 .match-engage-btn:disabled { opacity: 0.5; cursor: wait; }
@@ -625,7 +672,7 @@ body { margin: 0; padding: 0; overflow: hidden; background-color: #0c0c0c; font-
 #sms-enter-btn:active { transform: scale(0.92); background: #00aa5e; }
 
 /* ─── U型面板底圖 ─── */
-#u-shape-panel { position: relative !important; width: 100% !important; height: 100% !important; background-color: rgba(18, 18, 22, 0.96) !important; background-repeat: no-repeat !important; background-position: bottom center !important; background-size: 100% 100% !important; display: block !important; }
+#u-shape-panel { position: relative !important; width: 100% !important; height: 100% !important; background-color: transparent !important; background-repeat: no-repeat !important; background-position: bottom center !important; background-size: 100% 100% !important; display: block !important; }
 
 /* ─── 左翼推力滑軌 ─── */
 #left-arm-throttle { position: absolute !important; top: 16% !important; left: var(--edge-dist) !important; width: 10% !important; height: 65% !important; display: flex !important; align-items: center !important; justify-content: center !important; }

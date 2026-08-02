@@ -411,6 +411,8 @@ function uiBindMatchSetupOnce() {
 function uiShowMatchSetup() {
     const screen = document.getElementById('startup-screen');
     const panel = document.getElementById('match-setup-panel');
+    const footer = document.getElementById('startup-setup-footer');
+    const scroller = document.getElementById('startup-scroll');
     if (!screen || !panel) return false;
     uiBindMatchSetupOnce();
     if (!uiMatchSetupState.seats) {
@@ -434,15 +436,18 @@ function uiShowMatchSetup() {
     uiSyncSpawnSelects(uiMatchSetupState.spawnAltitude, uiMatchSetupState.spawnSeparation);
     uiRenderMatchSeatList();
     panel.hidden = false;
+    if (footer) footer.hidden = false;
     screen.classList.remove('is-entering');
     screen.style.display = '';
     screen.style.opacity = '1';
     screen.style.pointerEvents = 'auto';
-    screen.scrollTop = 0;
-    // Two-frame swap so opacity/transform fade runs after ENTERING splash.
+    document.documentElement.classList.add('startup-lock');
+    document.body.classList.add('startup-lock');
+    if (scroller) scroller.scrollTop = 0;
+    // Two-frame swap so opacity fade runs after ENTERING splash.
     requestAnimationFrame(() => {
         screen.classList.add('is-setup');
-        screen.scrollTop = 0;
+        if (scroller) scroller.scrollTop = 0;
     });
     return true;
 }
@@ -451,9 +456,13 @@ function uiDismissStartupScreen() {
     const startup = document.getElementById('startup-screen');
     if (!startup) return;
     startup.style.opacity = '0';
+    document.documentElement.classList.remove('startup-lock');
+    document.body.classList.remove('startup-lock');
     setTimeout(() => {
         startup.style.display = 'none';
         startup.classList.remove('is-setup', 'is-entering');
+        const footer = document.getElementById('startup-setup-footer');
+        if (footer) footer.hidden = true;
     }, 1200);
 }
 
@@ -557,6 +566,8 @@ function uiBeginMatchOrShowSetup() {
         screen.style.opacity = '1';
         screen.style.pointerEvents = 'auto';
     }
+    document.documentElement.classList.add('startup-lock');
+    document.body.classList.add('startup-lock');
     // Keep ENTERING splash ~1s after boot, then fade into Match Setup.
     setTimeout(() => {
         uiShowMatchSetup();

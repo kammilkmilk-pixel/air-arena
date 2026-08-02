@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-Hant">
+<html lang="zh-Hant" class="startup-lock">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
@@ -7,60 +7,64 @@
     <title>垂直空域 (Vertical Airspace) - 側翼 MFD 完全體</title>
     <link rel="stylesheet" href="css/style.css">
 </head>
-<body class="theme-red">
+<body class="theme-red startup-lock">
     <!-- 1. 開場授權黑幕 + 對戰設定 -->
     <div id="startup-screen" class="is-entering">
-        <div id="startup-shell">
-            <div id="startup-text">
-                ENTERING COMBAT AIRSPACE...<br>
-                <span class="startup-sub">ENGAGEMENT AUTHORIZED</span>
+        <div id="startup-scroll">
+            <div id="startup-shell">
+                <div id="startup-text">
+                    ENTERING COMBAT AIRSPACE...<br>
+                    <span class="startup-sub">ENGAGEMENT AUTHORIZED</span>
+                </div>
+                <div id="match-setup-panel" hidden>
+                    <div class="match-setup-title">MATCH SETUP</div>
+                    <div class="match-setup-section">
+                        <div class="match-setup-label">對戰模式</div>
+                        <div class="match-mode-row" role="group" aria-label="match mode">
+                            <button type="button" class="match-mode-btn is-active" data-mode="1v1">1 vs 1</button>
+                            <button type="button" class="match-mode-btn" data-mode="2v2">2 vs 2</button>
+                        </div>
+                        <div id="match-mode-hint" class="match-setup-hint">1v1：紅藍各一架，適合單挑與練習武器／箔條。僅 RED-1 與 BLUE-1 參戰。</div>
+                    </div>
+                    <div class="match-setup-section">
+                        <div class="match-setup-label">選擇地圖</div>
+                        <div class="match-map-row">
+                            <select id="match-map-select" aria-label="選擇地圖"></select>
+                            <button type="button" id="btn-map-import" class="match-map-btn" title="匯入編輯器匯出的 JSON">加入</button>
+                            <button type="button" id="btn-map-delete" class="match-map-btn match-map-btn-danger" title="刪除選中的自訂地圖">刪除</button>
+                            <input type="file" id="match-map-file" accept="application/json,.json" hidden>
+                        </div>
+                        <div class="match-spawn-row">
+                            <label class="match-spawn-field" for="match-spawn-alt">
+                                <span>起始高度</span>
+                                <select id="match-spawn-alt" aria-label="起始高度">
+                                    <option value="28">28m 街谷</option>
+                                    <option value="45" selected>45m 戰鬥帶</option>
+                                    <option value="60">60m 高空</option>
+                                    <option value="80">80m 屋頂帶</option>
+                                </select>
+                            </label>
+                            <label class="match-spawn-field" for="match-spawn-sep">
+                                <span>相對距離</span>
+                                <select id="match-spawn-sep" aria-label="相對距離">
+                                    <option value="60">60m 近</option>
+                                    <option value="100" selected>100m 標準</option>
+                                    <option value="140">140m 遠</option>
+                                    <option value="200">200m 超遠</option>
+                                </select>
+                            </label>
+                        </div>
+                        <div id="match-map-hint" class="match-setup-hint">內建地圖可直接選用（含預烘焙 AI 摘要）。自訂圖：先用 Map Editor 匯出 JSON，再按「加入」；僅存於本機瀏覽器。起始高度／相對距離在 ENGAGE 時套用雙方起飛位置。</div>
+                    </div>
+                    <div class="match-setup-section match-setup-section-seats">
+                        <div class="match-setup-label">機組配置</div>
+                        <div id="match-seat-list" class="match-seat-list"></div>
+                    </div>
+                </div>
             </div>
-            <div id="match-setup-panel" hidden>
-                <div class="match-setup-title">MATCH SETUP</div>
-                <div class="match-setup-section">
-                    <div class="match-setup-label">對戰模式</div>
-                    <div class="match-mode-row" role="group" aria-label="match mode">
-                        <button type="button" class="match-mode-btn is-active" data-mode="1v1">1 vs 1</button>
-                        <button type="button" class="match-mode-btn" data-mode="2v2">2 vs 2</button>
-                    </div>
-                    <div id="match-mode-hint" class="match-setup-hint">1v1：紅藍各一架，適合單挑與練習武器／箔條。僅 RED-1 與 BLUE-1 參戰。</div>
-                </div>
-                <div class="match-setup-section">
-                    <div class="match-setup-label">選擇地圖</div>
-                    <div class="match-map-row">
-                        <select id="match-map-select" aria-label="選擇地圖"></select>
-                        <button type="button" id="btn-map-import" class="match-map-btn" title="匯入編輯器匯出的 JSON">加入</button>
-                        <button type="button" id="btn-map-delete" class="match-map-btn match-map-btn-danger" title="刪除選中的自訂地圖">刪除</button>
-                        <input type="file" id="match-map-file" accept="application/json,.json" hidden>
-                    </div>
-                    <div class="match-spawn-row">
-                        <label class="match-spawn-field" for="match-spawn-alt">
-                            <span>起始高度</span>
-                            <select id="match-spawn-alt" aria-label="起始高度">
-                                <option value="28">28m 街谷</option>
-                                <option value="45" selected>45m 戰鬥帶</option>
-                                <option value="60">60m 高空</option>
-                                <option value="80">80m 屋頂帶</option>
-                            </select>
-                        </label>
-                        <label class="match-spawn-field" for="match-spawn-sep">
-                            <span>相對距離</span>
-                            <select id="match-spawn-sep" aria-label="相對距離">
-                                <option value="60">60m 近</option>
-                                <option value="100" selected>100m 標準</option>
-                                <option value="140">140m 遠</option>
-                                <option value="200">200m 超遠</option>
-                            </select>
-                        </label>
-                    </div>
-                    <div id="match-map-hint" class="match-setup-hint">內建地圖可直接選用（含預烘焙 AI 摘要）。自訂圖：先用 Map Editor 匯出 JSON，再按「加入」；僅存於本機瀏覽器。起始高度／相對距離在 ENGAGE 時套用雙方起飛位置。</div>
-                </div>
-                <div class="match-setup-section">
-                    <div class="match-setup-label">機組配置</div>
-                    <div id="match-seat-list" class="match-seat-list"></div>
-                </div>
-                <button type="button" id="btn-match-engage" class="match-engage-btn">ENGAGE</button>
-            </div>
+        </div>
+        <div id="startup-setup-footer" hidden>
+            <button type="button" id="btn-match-engage" class="match-engage-btn">ENGAGE</button>
         </div>
     </div>
     
