@@ -2,7 +2,8 @@
    垂直空域 (Vertical Airspace) - 終極側翼 MFD 軍規控制面板樣式表 (完整修復版)
    ============================================================================ */
 
-body { margin: 0; padding: 0; overflow: hidden; background-color: #0c0c0c; font-family: 'Courier New', monospace; user-select: none; }
+body { margin: 0; padding: 0; overflow: hidden; background-color: #0c0c0c; font-family: 'Courier New', monospace; user-select: none; touch-action: none; -webkit-user-select: none; overscroll-behavior: none; }
+html { touch-action: none; overscroll-behavior: none; height: 100%; width: 100%; overflow: hidden; }
 
 /* 3D 畫布鋪滿底層 — 禁止瀏覽器手勢縮放／捲動搶觸控 */
 #canvas-container { position: fixed !important; top: 0; left: 0; right: 0; bottom: 0; z-index: 0; pointer-events: auto !important; touch-action: none; }
@@ -24,6 +25,7 @@ body { margin: 0; padding: 0; overflow: hidden; background-color: #0c0c0c; font-
     z-index: 10050; box-shadow: 0 8px 28px rgba(0,0,0,0.28); color: #fff;
     width: min(1040px, 98vw); box-sizing: border-box; pointer-events: auto;
     backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    touch-action: manipulation;
 }
 .replay-control-chrome {
     display: flex;
@@ -516,10 +518,21 @@ html.startup-lock body {
     touch-action: none;
     -webkit-user-select: none;
     user-select: none;
+    -webkit-touch-callout: none;
 }
 #lcos-pipper svg,
 #lcos-grab-ring {
     touch-action: none;
+}
+#lcos-drag-shield {
+    position: fixed;
+    inset: 0;
+    z-index: 8990;
+    display: none;
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+    background: transparent;
 }
 #lcos-pipper.lcos-dragging #lcos-cone-circle { opacity: 1; filter: drop-shadow(0 0 4px rgba(255, 255, 255, 0.85)); }
 #lcos-grab-ring:hover { fill: rgba(255, 255, 255, 0.12) !important; }
@@ -625,8 +638,42 @@ html.startup-lock body {
     display: flex; flex-direction: column; align-items: center; padding: 4px; box-shadow: 0 -4px 15px rgba(0,0,0,0.7); box-sizing: border-box;
     z-index: 100 !important; /* 🟢 關鍵修復：提高層級，確保 SMS 永遠蓋在藍色底盤上方 */
 }
-#sms-header { display: flex; justify-content: space-between; align-items: center; width: 100%; padding: 4px 8px; box-sizing: border-box; border-bottom: 1px solid #222; margin-bottom: 4px; }
+#sms-header { display: flex; justify-content: space-between; align-items: center; width: 100%; padding: 4px 8px; box-sizing: border-box; border-bottom: 1px solid #222; margin-bottom: 4px; gap: 4px; }
 #sms-title { font-size: 11px; color: #777; font-weight: bold; letter-spacing: 2px; }
+.sms-exec-btn {
+    flex: 1;
+    min-width: 0;
+    margin: 0 6px;
+    font-family: inherit;
+    font-size: 11px;
+    font-weight: bold;
+    letter-spacing: 1px;
+    padding: 4px 8px;
+    cursor: pointer;
+    color: #0a0a0a;
+    background: #ffeb3b;
+    border: 1px solid #c6b000;
+    border-radius: 4px;
+    box-shadow: 0 0 8px rgba(255, 235, 59, 0.35);
+    white-space: nowrap;
+}
+.sms-exec-btn.is-ready {
+    color: #fff;
+    background: #00897b;
+    border-color: #00e5c0;
+    box-shadow: 0 0 10px rgba(0, 229, 192, 0.45);
+}
+.sms-exec-btn.is-ai {
+    color: #ffbb00;
+    background: #1a1a1a;
+    border-color: #ffbb00;
+    box-shadow: none;
+    cursor: default;
+}
+.sms-exec-btn:disabled {
+    opacity: 0.55;
+    cursor: wait;
+}
 .sms-top-btn { background: #111; color: #ffeb3b; border: 1px solid #555; border-radius: 4px; font-size: 10px; font-family: monospace; font-weight: bold; cursor: pointer; padding: 3px 8px; }
 #btn-flare { color: #ff9800; border-color: #ff9800; }
 #btn-chaff { color: #888; border-color: #444; } 
@@ -999,6 +1046,7 @@ body:not(:has(#replay-team-roster)) .team-seat-row {
     display: none;
     flex-direction: column;
     max-height: min(78vh, 720px);
+    touch-action: pan-y;
 }
 .ai-debug-header {
     display: flex;
@@ -1023,6 +1071,7 @@ body:not(:has(#replay-team-roster)) .team-seat-row {
     max-height: min(62vh, 560px);
     overflow-y: auto;
     overflow-x: hidden;
+    touch-action: pan-y;
     scrollbar-width: thin;
     scrollbar-color: rgba(120, 150, 180, 0.45) transparent;
 }
@@ -1311,6 +1360,12 @@ body:not(:has(#replay-team-roster)) .team-seat-row {
     #sms-title {
         font-size: 9px !important;
         letter-spacing: 1px !important;
+    }
+    .sms-exec-btn {
+        font-size: 9px !important;
+        padding: 2px 6px !important;
+        margin: 0 4px !important;
+        letter-spacing: 0.5px !important;
     }
     .sms-top-btn {
         padding: 1px 5px !important;

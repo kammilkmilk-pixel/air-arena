@@ -78,7 +78,7 @@
         t.isDestroyed = false;
         t.ap = 130;
         t.speed = 130;
-        t.heat = 0;
+        t.heat = (typeof getEngineHeatIdle === 'function') ? getEngineHeatIdle() : 150;
         t.flameout = false;
         t.stalled = false;
         t.ready = false;

@@ -18,17 +18,23 @@
     pipper.style.display = 'none';
     pipper.style.transform = 'translate(-50%, -50%)';
     pipper.style.transition = 'opacity 0.2s ease-in-out';
+    pipper.style.touchAction = 'none';
+    pipper.style.webkitUserSelect = 'none';
+    pipper.style.userSelect = 'none';
     // 外圓平時顯示；倒 T / 中心點僅機砲排程後顯示
     // #lcos-grab-ring：拖曳調機頭；雙擊＝開火／飛彈排程（同 SMS ENT）
+    // #lcos-grab-hit：更大透明命中區，減少邊緣滑出後觸發系統 pinch
     // #lcos-gun-heat-*：機砲過熱環（外環外側粗黑圈，溫度順時針填紅）
     pipper.innerHTML = `
-        <svg viewBox="0 0 100 100" style="width: 100%; height: 100%; overflow: visible; filter: none; pointer-events: none;">
+        <svg viewBox="0 0 100 100" style="width: 100%; height: 100%; overflow: visible; filter: none; pointer-events: none; touch-action: none;">
             <circle id="lcos-gun-heat-track" cx="50" cy="50" r="46" stroke="#ffffff" stroke-width="5.5" fill="none" opacity="0.92" style="display: none;"/>
             <circle id="lcos-gun-heat-fill" cx="50" cy="50" r="46" stroke="#ff1a1a" stroke-width="5.5" fill="none"
                 stroke-linecap="butt" transform="rotate(-90 50 50)" opacity="0.95" style="display: none;"/>
             <circle id="lcos-cone-circle" cx="50" cy="50" r="37.4" stroke="#ffffff" stroke-width="2.6" fill="none" opacity="0.9"/>
+            <circle id="lcos-grab-hit" cx="50" cy="50" r="48" stroke="none" fill="rgba(255,255,255,0.001)"
+                style="pointer-events: fill; touch-action: none; cursor: grab;"/>
             <circle id="lcos-grab-ring" cx="50" cy="50" r="37.4" stroke="none" fill="rgba(255,255,255,0.01)"
-                style="pointer-events: fill; cursor: grab;" title="拖曳調機頭｜雙擊開火／發射"/>
+                style="pointer-events: fill; touch-action: none; cursor: grab;" title="拖曳調機頭｜雙擊開火／發射"/>
             <g id="lcos-aim-group" style="display: none; pointer-events: none;">
                 <g id="lcos-inner-t" stroke="#e6c200" stroke-width="1.8" stroke-linecap="square" fill="none">
                     <line id="lcos-t-bar" x1="38" y1="52" x2="62" y2="52"/>
@@ -39,6 +45,67 @@
         </svg>
     `;
     pipper.title = '拖曳調機頭｜雙擊開火／發射';
+})();
+
+/** iOS Safari：封鎖 pinch／雙擊頁面縮放（會造成 3D 與控制面板「分離」） */
+(function installViewportZoomGuard() {
+    const blockMultiTouch = (e) => {
+        if (!e.touches || e.touches.length < 2) return;
+        if (e.cancelable) e.preventDefault();
+    };
+    const blockGesture = (e) => {
+        if (e.cancelable) e.preventDefault();
+    };
+    document.addEventListener('touchmove', blockMultiTouch, { passive: false, capture: true });
+    document.addEventListener('touchstart', blockMultiTouch, { passive: false, capture: true });
+    ['gesturestart', 'gesturechange', 'gestureend'].forEach((type) => {
+        document.addEventListener(type, blockGesture, { passive: false, capture: true });
+    });
+
+    // 雙擊縮放：僅在 3D／瞄準區攔截過密 touchend（表單／Setup 不受影響）
+    let lastTouchEndAt = 0;
+    document.addEventListener('touchend', (e) => {
+        const t = e.target;
+        const inGameTouch = !!(t && t.closest && t.closest(
+            '#canvas-container, #lcos-pipper, #lcos-drag-shield, #ui-wrapper, #dynamic-hud'
+        ));
+        if (!inGameTouch) {
+            lastTouchEndAt = Date.now();
+            return;
+        }
+        const now = Date.now();
+        if (now - lastTouchEndAt < 320) {
+            if (e.cancelable) e.preventDefault();
+        }
+        lastTouchEndAt = now;
+    }, { passive: false, capture: true });
+
+    const lockViewportMeta = () => {
+        const meta = document.querySelector('meta[name="viewport"]');
+        if (!meta) return;
+        meta.setAttribute(
+            'content',
+            'width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, shrink-to-fit=no'
+        );
+    };
+    lockViewportMeta();
+
+    const vv = window.visualViewport;
+    if (vv) {
+        let recovering = false;
+        const recover = () => {
+            if (recovering) return;
+            if (Math.abs((vv.scale || 1) - 1) < 0.01 && window.scrollX === 0 && window.scrollY === 0) return;
+            recovering = true;
+            lockViewportMeta();
+            window.scrollTo(0, 0);
+            if (document.documentElement) document.documentElement.scrollTop = 0;
+            if (document.body) document.body.scrollTop = 0;
+            setTimeout(() => { recovering = false; }, 50);
+        };
+        vv.addEventListener('resize', recover);
+        vv.addEventListener('scroll', recover);
+    }
 })();
 
 // 飛彈 seeker：外環四角加粗斜槓 → 鎖定後移到敵機組成 X
@@ -278,6 +345,23 @@ function updateFox1SupportHud(team, enemy, enemyPos, enemyProj, isObscured) {
 }
 
 /** Gun overheat ring outside LCOS outer cone: black track + clockwise red fill. */
+function syncLcosGrabGeometry(cx, cy, r) {
+    const grabRing = document.getElementById('lcos-grab-ring');
+    const grabHit = document.getElementById('lcos-grab-hit');
+    const rad = Number(r) || 37.4;
+    if (grabRing) {
+        grabRing.setAttribute('cx', String(cx));
+        grabRing.setAttribute('cy', String(cy));
+        grabRing.setAttribute('r', String(rad));
+    }
+    if (grabHit) {
+        grabHit.setAttribute('cx', String(cx));
+        grabHit.setAttribute('cy', String(cy));
+        // Larger invisible pad so edge drags stay on the pipper, not the canvas.
+        grabHit.setAttribute('r', String(Math.max(rad + 12, 48)));
+    }
+}
+
 function updateLcosGunHeatRing(team, coneCx = 50, coneCy = 50, coneR = 37.4, visible = true) {
     const track = document.getElementById('lcos-gun-heat-track');
     const fill = document.getElementById('lcos-gun-heat-fill');
@@ -450,6 +534,9 @@ function updateLcosGunHeatRing(team, coneCx = 50, coneCy = 50, coneR = 37.4, vis
     function setOrbitLockedForLcosDrag(locked) {
         if (typeof controls === 'undefined' || !controls) return;
         if (!controls.userData) controls.userData = {};
+        const touchLikely = ('ontouchstart' in window)
+            || (navigator.maxTouchPoints > 0)
+            || (window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
         if (locked) {
             if (!controls.userData._lcosOrbitBackup) {
                 controls.userData._lcosOrbitBackup = {
@@ -463,10 +550,47 @@ function updateLcosGunHeatRing(team, coneCx = 50, coneCy = 50, coneR = 37.4, vis
             controls.enableRotate = false;
         } else if (controls.userData._lcosOrbitBackup) {
             const b = controls.userData._lcosOrbitBackup;
-            controls.enableZoom = b.enableZoom !== false;
+            // Touch devices keep zoom off permanently (browser pinch is the real hazard).
+            controls.enableZoom = touchLikely ? false : (b.enableZoom !== false);
             controls.enablePan = b.enablePan !== false;
             controls.enableRotate = b.enableRotate !== false;
             controls.userData._lcosOrbitBackup = null;
+        }
+    }
+
+    function getLcosDragShield() {
+        let shield = document.getElementById('lcos-drag-shield');
+        if (shield) return shield;
+        shield = document.createElement('div');
+        shield.id = 'lcos-drag-shield';
+        document.body.appendChild(shield);
+        const block = (e) => {
+            if (e.cancelable) e.preventDefault();
+            e.stopPropagation();
+        };
+        shield.addEventListener('touchstart', block, { passive: false });
+        shield.addEventListener('touchmove', block, { passive: false });
+        shield.addEventListener('gesturestart', block, { passive: false });
+        shield.addEventListener('gesturechange', block, { passive: false });
+        shield.addEventListener('pointermove', (e) => {
+            if (!window.isDraggingLcosRing) return;
+            if (activePointerId != null && e.pointerId !== activePointerId) return;
+            const dx = e.clientX - dragStartX;
+            const dy = e.clientY - dragStartY;
+            if (!dragMoved && Math.hypot(dx, dy) >= TAP_MOVE_PX) dragMoved = true;
+            if (e.cancelable) e.preventDefault();
+            applyNoseFromPointer(e.clientX, e.clientY);
+        }, { passive: false });
+        shield.addEventListener('pointerup', endDrag);
+        shield.addEventListener('pointercancel', endDrag);
+        return shield;
+    }
+
+    function setLcosDragShield(on) {
+        const shield = getLcosDragShield();
+        shield.style.display = on ? 'block' : 'none';
+        if (on && activePointerId != null) {
+            try { shield.setPointerCapture(activePointerId); } catch (_) { /* ignore */ }
         }
     }
 
@@ -477,8 +601,11 @@ function updateLcosGunHeatRing(team, coneCx = 50, coneCy = 50, coneR = 37.4, vis
         window.isDraggingLcosRing = false;
         activePointerId = null;
         setOrbitLockedForLcosDrag(false);
-        const grab = document.getElementById('lcos-grab-ring');
-        if (grab) grab.style.cursor = 'grab';
+        setLcosDragShield(false);
+        ['lcos-grab-ring', 'lcos-grab-hit'].forEach((id) => {
+            const el = document.getElementById(id);
+            if (el) el.style.cursor = 'grab';
+        });
         const pipper = document.getElementById('lcos-pipper');
         if (pipper) pipper.classList.remove('lcos-dragging');
         const cone = document.getElementById('lcos-cone-circle');
@@ -500,57 +627,70 @@ function updateLcosGunHeatRing(team, coneCx = 50, coneCy = 50, coneR = 37.4, vis
         }
     }
 
+    function onGrabPointerDown(e) {
+        if (e.button != null && e.button !== 0) return;
+        if (typeof isDraggingJoystick !== 'undefined' && isDraggingJoystick) return;
+        if (typeof isDraggingRollRing !== 'undefined' && isDraggingRollRing) return;
+        const t = canPilotActive();
+        if (!t) return;
+
+        const pipper = document.getElementById('lcos-pipper');
+        if (!pipper || pipper.style.display === 'none') return;
+
+        // Relative grab — do not snap stick to click-vs-center (that auto-centered).
+        dragStartX = e.clientX;
+        dragStartY = e.clientY;
+        startJoyX = Number(t.joyX) || 0;
+        startJoyY = Number(t.joyY) || 0;
+        dragMoved = false;
+
+        window.isDraggingLcosRing = true;
+        activePointerId = e.pointerId;
+        setOrbitLockedForLcosDrag(true);
+        setLcosDragShield(true);
+        try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
+        e.currentTarget.style.cursor = 'grabbing';
+        pipper.classList.add('lcos-dragging');
+        const cone = document.getElementById('lcos-cone-circle');
+        if (cone) cone.setAttribute('stroke-width', '3.4');
+
+        if (e.cancelable) e.preventDefault();
+        e.stopPropagation();
+        syncJoystickHandle(startJoyX, startJoyY);
+    }
+
+    function onGrabPointerMove(e) {
+        if (!window.isDraggingLcosRing) return;
+        if (activePointerId != null && e.pointerId !== activePointerId) return;
+        const dx = e.clientX - dragStartX;
+        const dy = e.clientY - dragStartY;
+        if (!dragMoved && Math.hypot(dx, dy) >= TAP_MOVE_PX) dragMoved = true;
+        if (e.cancelable) e.preventDefault();
+        e.stopPropagation();
+        applyNoseFromPointer(e.clientX, e.clientY);
+    }
+
     function bindGrabRing() {
-        const grab = document.getElementById('lcos-grab-ring');
-        if (!grab || grab.dataset.dragBound === 'true') return;
-        grab.dataset.dragBound = 'true';
-        grab.setAttribute('title', '拖曳調機頭｜雙擊開火／發射');
-
-        grab.addEventListener('pointerdown', (e) => {
-            if (e.button != null && e.button !== 0) return;
-            if (typeof isDraggingJoystick !== 'undefined' && isDraggingJoystick) return;
-            if (typeof isDraggingRollRing !== 'undefined' && isDraggingRollRing) return;
-            const t = canPilotActive();
-            if (!t) return;
-
-            const pipper = document.getElementById('lcos-pipper');
-            if (!pipper || pipper.style.display === 'none') return;
-
-            // Relative grab — do not snap stick to click-vs-center (that auto-centered).
-            dragStartX = e.clientX;
-            dragStartY = e.clientY;
-            startJoyX = Number(t.joyX) || 0;
-            startJoyY = Number(t.joyY) || 0;
-            dragMoved = false;
-
-            window.isDraggingLcosRing = true;
-            activePointerId = e.pointerId;
-            setOrbitLockedForLcosDrag(true);
-            try { grab.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
-            grab.style.cursor = 'grabbing';
-            pipper.classList.add('lcos-dragging');
-            const cone = document.getElementById('lcos-cone-circle');
-            if (cone) cone.setAttribute('stroke-width', '3.4');
-
-            if (e.cancelable) e.preventDefault();
-            e.stopPropagation();
-            syncJoystickHandle(startJoyX, startJoyY);
-        }, { passive: false });
-
-        grab.addEventListener('pointermove', (e) => {
-            if (!window.isDraggingLcosRing) return;
-            if (activePointerId != null && e.pointerId !== activePointerId) return;
-            const dx = e.clientX - dragStartX;
-            const dy = e.clientY - dragStartY;
-            if (!dragMoved && Math.hypot(dx, dy) >= TAP_MOVE_PX) dragMoved = true;
-            if (e.cancelable) e.preventDefault();
-            e.stopPropagation();
-            applyNoseFromPointer(e.clientX, e.clientY);
-        }, { passive: false });
-
-        grab.addEventListener('pointerup', endDrag);
-        grab.addEventListener('pointercancel', endDrag);
-        grab.addEventListener('lostpointercapture', endDrag);
+        const targets = [
+            document.getElementById('lcos-grab-hit'),
+            document.getElementById('lcos-grab-ring')
+        ].filter(Boolean);
+        targets.forEach((grab) => {
+            if (grab.dataset.dragBound === 'true') return;
+            grab.dataset.dragBound = 'true';
+            grab.setAttribute('title', '拖曳調機頭｜雙擊開火／發射');
+            grab.addEventListener('pointerdown', onGrabPointerDown, { passive: false });
+            grab.addEventListener('pointermove', onGrabPointerMove, { passive: false });
+            grab.addEventListener('pointerup', endDrag);
+            grab.addEventListener('pointercancel', endDrag);
+            grab.addEventListener('lostpointercapture', endDrag);
+            grab.addEventListener('touchstart', (e) => {
+                if (e.cancelable) e.preventDefault();
+            }, { passive: false });
+            grab.addEventListener('touchmove', (e) => {
+                if (e.cancelable) e.preventDefault();
+            }, { passive: false });
+        });
     }
 
     bindGrabRing();
@@ -875,12 +1015,7 @@ window.updateDynamicHUD = function() {
                     lcosConeCircle.setAttribute('r', '35.2');
                     lcosConeCircle.setAttribute('stroke', '#ffffff');
                     lcosConeCircle.setAttribute('stroke-width', '3.2');
-                    const grabRing = document.getElementById('lcos-grab-ring');
-                    if (grabRing) {
-                        grabRing.setAttribute('cx', '50');
-                        grabRing.setAttribute('cy', '50');
-                        grabRing.setAttribute('r', '35.2');
-                    }
+                    syncLcosGrabGeometry(50, 50, 35.2);
                     updateLcosGunHeatRing(t, 50, 50, 35.2, true);
                 }
                 const aimGroup = document.getElementById('lcos-aim-group');
@@ -967,12 +1102,7 @@ window.updateDynamicHUD = function() {
                     lcosConeCircle.setAttribute('cx', String(cx));
                     lcosConeCircle.setAttribute('cy', String(cy));
                     lcosConeCircle.setAttribute('r', String(funnelR));
-                    const grabRing = document.getElementById('lcos-grab-ring');
-                    if (grabRing) {
-                        grabRing.setAttribute('cx', String(cx));
-                        grabRing.setAttribute('cy', String(cy));
-                        grabRing.setAttribute('r', String(funnelR));
-                    }
+                    syncLcosGrabGeometry(cx, cy, funnelR);
                     updateLcosGunHeatRing(t, cx, cy, funnelR, true);
                 }
 
@@ -1029,12 +1159,7 @@ window.updateDynamicHUD = function() {
                     lcosConeCircle.setAttribute('r', '35.2');
                     lcosConeCircle.setAttribute('stroke', '#ffffff');
                     lcosConeCircle.setAttribute('stroke-width', '3.2');
-                    const grabRing = document.getElementById('lcos-grab-ring');
-                    if (grabRing) {
-                        grabRing.setAttribute('cx', '50');
-                        grabRing.setAttribute('cy', '50');
-                        grabRing.setAttribute('r', '35.2');
-                    }
+                    syncLcosGrabGeometry(50, 50, 35.2);
                 }
                 const aimGroup = document.getElementById('lcos-aim-group');
                 if (aimGroup) aimGroup.style.display = 'none';
@@ -1090,12 +1215,7 @@ window.updateDynamicHUD = function() {
                     lcosConeCircle.setAttribute('cx', '50');
                     lcosConeCircle.setAttribute('cy', '50');
                     lcosConeCircle.setAttribute('r', String(funnelR));
-                    const grabRing = document.getElementById('lcos-grab-ring');
-                    if (grabRing) {
-                        grabRing.setAttribute('cx', '50');
-                        grabRing.setAttribute('cy', '50');
-                        grabRing.setAttribute('r', String(funnelR));
-                    }
+                    syncLcosGrabGeometry(50, 50, funnelR);
                 }
                 const aimGroup = document.getElementById('lcos-aim-group');
                 if (aimGroup) {

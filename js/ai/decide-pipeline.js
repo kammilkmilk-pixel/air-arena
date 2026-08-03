@@ -24,6 +24,7 @@
     const MAIN_GATE_ORDER = Object.freeze([
         'obstacleEmergency', // buildings before dive pull-up
         'groundEmergency',   // pull-up / recover lock / post-ground
+        'airspaceBoundary',  // soft inward bias near combat AO edge
         'fox2Opening',       // opening shot / alignFirst / roof / prep (includes align)
         'altitudeTerrain',   // band level-out / terrain / groundAvoid / shallow
         'stallEnergy',       // stallBreakout / stallRecover / energyRecover
@@ -39,6 +40,7 @@
         sensorBlind: 'no track: search ground safety or bearing search',
         obstacleEmergency: 'high building risk escape before dive pull-up',
         groundEmergency: 'emergencyPullUp / recoverLock / navClimbOut(postGroundClimbOut commitment)',
+        airspaceBoundary: 'soft turn inward near combat airspace rim (hard kill is sim-side)',
         alignFirst: 'clear-LOS nose align (handled inside fox2Opening gate)',
         fox2Opening: 'FOX2-FIRST opening shot / alignFirst / roof dash / prep',
         altitudeTerrain: 'combat band / terrainEscape / groundAvoid / shallowDive',

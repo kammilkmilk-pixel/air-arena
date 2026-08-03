@@ -56,7 +56,7 @@ function createTeamState(id, colorMain, matchActive = true) {
         isDestroyed: false,
         ap: CONFIG.aircrafts['mig21'].baseAp || 165,
         speed: CONFIG.aircrafts['mig21'].baseAp || 165,
-        heat: 0,
+        heat: (typeof getEngineHeatIdle === 'function') ? getEngineHeatIdle() : 150,
         /** Machine-gun barrel heat 0–1 (overheat blocks fire). */
         gunHeat: 0,
         flameout: false,

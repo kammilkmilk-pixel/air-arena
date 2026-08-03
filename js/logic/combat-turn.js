@@ -161,6 +161,14 @@ function finishTurnSimultaneously() {
             if (!t.isDestroyed && destroyedByLog) {
                 GameContext.stateMachine.applyDamage(id, Math.max(100, t.hp || 100), deathMeta);
             }
+            if (
+                (destroyedByLog || (t.isDestroyed && inferredCause === 'airspace')) &&
+                inferredCause === 'airspace' &&
+                !t.aiEnabled &&
+                typeof showSMSAlert === 'function'
+            ) {
+                showSMSAlert(`${String(id).toUpperCase()} 離開作戰空域 — 判定擊落`, '#ffeb3b');
+            }
 
             const finalPos = (t.flightCurve && t.pathQuats && t.pathQuats.length)
                 ? t.flightCurve.getPointAt(1.0)
@@ -259,11 +267,15 @@ function finishTurnSimultaneously() {
             // Delay game-over until soft wrecks finish their fall + debris burst.
             // Single auto-path only — do not also schedule the both-AI planner.
             GameContext.stateMachine.advanceTurn();
-            const living = GameContext.getLivingTeamIds ? GameContext.getLivingTeamIds() : [];
-            const humanIds = living.filter((id) => teams[id] && !teams[id].aiEnabled);
-            let nextControlTeam = humanIds[0] || GameContext.getActiveTeamId() || 'red';
-            if (humanIds.includes(GameContext.getActiveTeamId())) nextControlTeam = GameContext.getActiveTeamId();
-            if (typeof selectTeam === 'function') selectTeam(nextControlTeam);
+            if (typeof window.uiForceHumanControlView === 'function') {
+                window.uiForceHumanControlView();
+            } else {
+                const living = GameContext.getLivingTeamIds ? GameContext.getLivingTeamIds() : [];
+                const humanIds = living.filter((id) => teams[id] && !teams[id].aiEnabled);
+                let nextControlTeam = humanIds[0] || GameContext.getActiveTeamId() || 'red';
+                if (humanIds.includes(GameContext.getActiveTeamId())) nextControlTeam = GameContext.getActiveTeamId();
+                if (typeof selectTeam === 'function') selectTeam(nextControlTeam);
+            }
             window.dispatchEvent(new CustomEvent('EnginePhaseChanged', { detail: { phase: 'planning', turn: currentTurn, wreckFall: true } }));
             scheduleWreckFallTurn(450);
             return;
@@ -288,10 +300,15 @@ function finishTurnSimultaneously() {
     }
     
     GameContext.stateMachine.advanceTurn();
-    const living = GameContext.getLivingTeamIds ? GameContext.getLivingTeamIds() : combatActiveIds();
-    const humanIds = living.filter((id) => teams[id] && !teams[id].aiEnabled);
-    let nextControlTeam = humanIds[0] || GameContext.getActiveTeamId() || 'red';
-    if (humanIds.includes(GameContext.getActiveTeamId())) nextControlTeam = GameContext.getActiveTeamId();
-    selectTeam(nextControlTeam);
+    // Prefer living human seat + stick panel (planning event also re-asserts this).
+    if (typeof window.uiForceHumanControlView === 'function') {
+        window.uiForceHumanControlView();
+    } else {
+        const living = GameContext.getLivingTeamIds ? GameContext.getLivingTeamIds() : combatActiveIds();
+        const humanIds = living.filter((id) => teams[id] && !teams[id].aiEnabled);
+        let nextControlTeam = humanIds[0] || GameContext.getActiveTeamId() || 'red';
+        if (humanIds.includes(GameContext.getActiveTeamId())) nextControlTeam = GameContext.getActiveTeamId();
+        selectTeam(nextControlTeam);
+    }
     window.dispatchEvent(new CustomEvent('EnginePhaseChanged', { detail: { phase: 'planning', turn: currentTurn } }));
 }

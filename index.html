@@ -2,7 +2,7 @@
 <html lang="zh-Hant" class="startup-lock">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, shrink-to-fit=no">
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect fill='%2300bcd4' width='16' height='16'/%3E%3C/svg%3E">
     <title>垂直空域 (Vertical Airspace) - 側翼 MFD 完全體</title>
     <link rel="stylesheet" href="css/style.css">
@@ -267,9 +267,9 @@
             <!-- 💻 TACTICAL SYS 戰術電腦 -->
             <div id="tactical-computer-module">
                 <div id="sms-header">
-                    <button class="sms-top-btn" id="btn-flare">FLARE [3]</button>
-                    <div id="sms-title">TACTICAL SYS</div>
-                    <button class="sms-top-btn" id="btn-chaff">CHAFF [3]</button>
+                    <button type="button" class="sms-top-btn" id="btn-flare">FLARE [3]</button>
+                    <button type="button" id="sms-exec-btn" class="sms-exec-btn" title="確認規劃／執行回合">規劃中 ▶</button>
+                    <button type="button" class="sms-top-btn" id="btn-chaff">CHAFF [3]</button>
                 </div>
                 
                 <div id="pylon-weapons-bay">
@@ -343,17 +343,17 @@
                                     <line x1="95" y1="50" x2="90" y2="50" />
                                 </g>
                                 <g fill="#222" font-size="6" font-family="monospace" font-weight="bold">
-                                    <text x="14" y="52" text-anchor="start">0</text>
-                                    <text x="24" y="31" text-anchor="start">50</text>
-                                    <text x="50" y="21" text-anchor="middle">100</text>
-                                    <text x="76" y="31" text-anchor="end">150</text>
-                                    <text x="86" y="52" text-anchor="end">200</text>
+                                    <text x="14" y="52" text-anchor="start">150</text>
+                                    <text x="24" y="31" text-anchor="start">175</text>
+                                    <text x="50" y="21" text-anchor="middle">200</text>
+                                    <text x="76" y="31" text-anchor="end">225</text>
+                                    <text x="86" y="52" text-anchor="end">250</text>
                                 </g>
                                 <text x="50" y="74" text-anchor="middle" fill="#111" font-size="8" font-weight="900">CORE TEMP</text>
-                                <line class="dial-needle" id="needle-heat" x1="50" y1="50" x2="50" y2="22" stroke="#ff9800" stroke-width="3" stroke-linecap="round"/>
+                                <line class="dial-needle" id="needle-heat" x1="50" y1="50" x2="22" y2="50" stroke="#ff9800" stroke-width="3" stroke-linecap="round"/>
                                 <circle cx="50" cy="50" r="3" fill="#fff"/>
                             </svg>
-                            <div class="digital-val"><span id="hud-val-heat">0</span>°C</div>
+                            <div class="digital-val"><span id="hud-val-heat">150</span>°C</div>
                         </div>
 
                         <!-- 正中央控制桿與滾轉環 -->
@@ -406,6 +406,7 @@
 
     <!-- 模組化遊戲組件 -->
     <script src="js/core/config.js"></script>
+    <script src="js/core/combat-airspace.js"></script>
     <script src="js/ai/weapon-envelope.js"></script>
     <script src="js/ai/building-risk.js"></script>
     <script src="js/ai/ai-map.js"></script>

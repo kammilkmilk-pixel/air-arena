@@ -962,7 +962,7 @@ window.AirArenaAI = {
     pickThrottleForTurn(requestedThrottle, joyX, opts = {}) {
         let thr = Math.max(1, Math.min(5, Math.round(Number(requestedThrottle) || 4)));
         const turnAuth = Math.abs(Number(joyX) || 0);
-        const heat = Number(opts.heat || 0);
+        const heat = (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(opts.heat) : Number(opts.heat || 0));
         const ap = Number(opts.ap);
         const energyTight = (Number.isFinite(ap) && ap < Number(opts.lowAp || 65))
             || !!opts.energyCritical
@@ -1099,7 +1099,7 @@ window.AirArenaAI = {
         const lowEnergyEscape = !!opts.lowEnergyEscape;
         const climbTowardRoof = !!opts.climbTowardRoof;
         const energyCritical = !!opts.energyCritical;
-        const heat = Number(opts.heat) || 0;
+        const heat = (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(opts.heat) : (Number(opts.heat) || 0));
         const flareWhileEscape = !!opts.flareWhileEscape;
         const mandatoryClimb = !!opts.mandatoryClimb || this.wantsMandatoryClimb(alt, {
             roofClearance: opts.roofClearance,
@@ -1498,7 +1498,7 @@ window.AirArenaAI = {
         const side = (gapAsym.strength >= 1 && gapSide) ? gapSide : memSide;
         const alt = Number.isFinite(Number(opts.altitude)) ? Number(opts.altitude) : 40;
         const forwardY = Number(opts.forwardY) || 0;
-        const heat = Number(opts.heat) || 0;
+        const heat = (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(opts.heat) : (Number(opts.heat) || 0));
         const thr = opts.energyCritical || heat > 82 || opts.lowEnergyEscape ? 3 : 4;
         const fwd = Number(coverInfo.forwardDistance);
         const facadeClosing =
@@ -1997,7 +1997,7 @@ window.AirArenaAI = {
         const altitude = Number(ctx.altitude) || 40;
         const hard = distance <= 12;
         const side = this.getMidairDivergeSide(ctx);
-        const heat = Number(ctx.heat) || 0;
+        const heat = (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(ctx.heat) : (Number(ctx.heat) || 0));
         const noseDown = Number(ctx.forwardY);
         const divingHard = Number.isFinite(noseDown) && noseDown < -0.35;
         const divingSoft = Number.isFinite(noseDown) && noseDown < -0.25;
@@ -2299,7 +2299,7 @@ window.AirArenaAI = {
                 return this.withDebug({
                     state: 'wingmanCeilingLevel',
                     statusText: `NPC: 僚機頂空受限｜${label}`,
-                    throttle: self.heat > 75 ? 3 : 4,
+                    throttle: getEngineHeatLevel(self.heat) > 75 ? 3 : 4,
                     joyX: this.clamp(steerOut.joyX, -0.55, 0.55),
                     joyY: this.maxJoyYForHeadroom(headroomNow),
                     roll: this.clamp(steerOut.roll, -0.35, 0.35),
@@ -2314,7 +2314,7 @@ window.AirArenaAI = {
             return this.withDebug({
                 state: 'wingmanPullUp',
                 statusText: `NPC: 僚機拉起｜${label}`,
-                throttle: self.heat > 75 ? 4 : 5,
+                throttle: getEngineHeatLevel(self.heat) > 75 ? 4 : 5,
                 joyX: 0,
                 joyY: 0.9,
                 roll: 0,
@@ -2343,7 +2343,7 @@ window.AirArenaAI = {
             return this.withDebug({
                 state: 'wingmanBreak',
                 statusText: farEnough ? `NPC: 僚機重整｜${label}` : `NPC: 僚機脫離｜${label}`,
-                throttle: farEnough ? 3 : (self.heat > 78 ? 4 : 5),
+                throttle: farEnough ? 3 : (getEngineHeatLevel(self.heat) > 78 ? 4 : 5),
                 joyX: steer.joyX,
                 joyY: farEnough ? Math.min(0.2, steer.joyY) : Math.max(0.15, steer.joyY),
                 roll: steer.roll,
@@ -3252,10 +3252,10 @@ window.AirArenaAI = {
         const maxJoyY = energyBad ? 0.42 : 0.72;
         const rollScale = stepIndex === 1 ? 0.7 : (stepIndex === 2 ? 0.55 : (stepIndex === 3 ? 0.45 : 0.35));
         const thr = candidate.brakeTurn
-            ? (team.heat > 78 ? 3 : (energyBad ? 3 : 5))
+            ? (getEngineHeatLevel(team.heat) > 78 ? 3 : (energyBad ? 3 : 5))
             : (energyBad
                 ? this.pickThrottleForTurn(candidate.throttle || 3, (candidate.joyX || 0) * scale, {
-                    heat: team.heat || 0,
+                    heat: (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(team.heat) : (team.heat || 0)),
                     ap: team.ap,
                     energyCritical: true,
                     lowAp: this.getTuning().lowAp
@@ -3301,7 +3301,7 @@ window.AirArenaAI = {
             ...base,
             state: `${candidate.state}Climb${stepIndex}`,
             branch: 'climb',
-            throttle: team.heat > 78 ? 3 : (energyBad ? 3 : 4),
+            throttle: getEngineHeatLevel(team.heat) > 78 ? 3 : (energyBad ? 3 : 4),
             joyX: this.clamp(side * climbAuth, -0.36, 0.36),
             joyY: climbY,
             roll: this.clamp(side * Math.PI / 12, -Math.PI / 12, Math.PI / 12),
@@ -3313,7 +3313,7 @@ window.AirArenaAI = {
             ...base,
             state: `${candidate.state}Level${stepIndex}`,
             branch: 'levelHold',
-            throttle: team.heat > 82 ? 3 : 4,
+            throttle: getEngineHeatLevel(team.heat) > 82 ? 3 : 4,
             joyX: this.clamp(side * (energyBad ? 0.26 : 0.34), -0.42, 0.42),
             joyY: levelY,
             roll: this.clamp(side * Math.PI / 11, -Math.PI / 11, Math.PI / 11),
@@ -3647,7 +3647,7 @@ window.AirArenaAI = {
         const side = Math.sign(ctx.preferredSide || ctx.breakSide || 1) || 1;
         const hx = Number(ctx.horizontalBias) || 0;
         const vy = Number(ctx.verticalBias) || 0;
-        const heat = Number(team.heat) || 0;
+        const heat = (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(team.heat) : (Number(team.heat) || 0));
         const energyBad = !!ctx.energyLow || (Number(team.ap) || 0) < (tuning.lowAp || 65);
         const bandMin = Number(tuning.combatBandMin) || 35;
         const cruiseThr = heat > 78 ? 4 : 5;
@@ -4368,10 +4368,10 @@ window.AirArenaAI = {
             (hardContact && Number.isFinite(Number(coverInfo.distance)) && Number(coverInfo.distance) < 2);
         let candidates = [
             action,
-            { ...base, state: 'safetyLevelOut', statusText: 'NPC: 安全預演-放平加速', throttle: team.heat > 78 ? 3 : 5, joyX: 0, joyY: 0.05, roll: 0, reason: 'Safety fallback level-out' },
-            { ...base, state: 'safetyShallowClimb', statusText: 'NPC: 安全預演-淺爬升', throttle: team.heat > 78 ? 3 : 4, joyX: 0, joyY: 0.18, roll: 0, reason: 'Safety fallback shallow climb' },
-            { ...base, state: 'safetyUnclimb', statusText: 'NPC: 安全預演-放平回能', throttle: team.heat > 78 ? 3 : 4, joyX: 0, joyY: team.wrapper && team.wrapper.position.y > 24 ? -0.08 : 0, roll: 0, reason: 'Safety fallback break climb loop' },
-            { ...base, state: 'safetyStallBreakout', statusText: 'NPC: 安全預演-失速改出', throttle: team.heat > 78 ? 4 : 5, joyX: 0, joyY: selfPos && selfPos.y < 22 ? 0.62 : (selfPos && selfPos.y > 38 ? -0.45 : -0.08), pitchCmd: selfPos && selfPos.y < 22 ? -(maxPitchCmd * 0.5) : (selfPos && selfPos.y > 38 ? Math.PI / 7 : Math.PI / 10), roll: 0, reason: `Safety fallback stall breakout bonus=${Number(tuning.stallRecoverBonus).toFixed(2)}` },
+            { ...base, state: 'safetyLevelOut', statusText: 'NPC: 安全預演-放平加速', throttle: getEngineHeatLevel(team.heat) > 78 ? 3 : 5, joyX: 0, joyY: 0.05, roll: 0, reason: 'Safety fallback level-out' },
+            { ...base, state: 'safetyShallowClimb', statusText: 'NPC: 安全預演-淺爬升', throttle: getEngineHeatLevel(team.heat) > 78 ? 3 : 4, joyX: 0, joyY: 0.18, roll: 0, reason: 'Safety fallback shallow climb' },
+            { ...base, state: 'safetyUnclimb', statusText: 'NPC: 安全預演-放平回能', throttle: getEngineHeatLevel(team.heat) > 78 ? 3 : 4, joyX: 0, joyY: team.wrapper && team.wrapper.position.y > 24 ? -0.08 : 0, roll: 0, reason: 'Safety fallback break climb loop' },
+            { ...base, state: 'safetyStallBreakout', statusText: 'NPC: 安全預演-失速改出', throttle: getEngineHeatLevel(team.heat) > 78 ? 4 : 5, joyX: 0, joyY: selfPos && selfPos.y < 22 ? 0.62 : (selfPos && selfPos.y > 38 ? -0.45 : -0.08), pitchCmd: selfPos && selfPos.y < 22 ? -(maxPitchCmd * 0.5) : (selfPos && selfPos.y > 38 ? Math.PI / 7 : Math.PI / 10), roll: 0, reason: `Safety fallback stall breakout bonus=${Number(tuning.stallRecoverBonus).toFixed(2)}` },
             { ...base, state: 'safetyBreakLeft', statusText: 'NPC: 安全預演-左脫離', throttle: 4, joyX: -0.55, joyY: 0.12, roll: -Math.PI / 6, reason: 'Safety fallback left break' },
             { ...base, state: 'safetyBreakRight', statusText: 'NPC: 安全預演-右脫離', throttle: 4, joyX: 0.55, joyY: 0.12, roll: Math.PI / 6, reason: 'Safety fallback right break' }
         ];
@@ -4422,7 +4422,7 @@ window.AirArenaAI = {
                 ...base,
                 state: 'safetyEmbedPushOut',
                 statusText: 'NPC: 安全預演-嵌樓推出',
-                throttle: team.heat > 82 ? 3 : 4,
+                throttle: getEngineHeatLevel(team.heat) > 82 ? 3 : 4,
                 joyX: this.clamp(pushSide * (deepEmbedSafety ? 0.56 : 0.52), -0.62, 0.62),
                 joyY: embedJoyY,
                 pitchCmd: -maxPitchCmd * embedPitchScale,
@@ -4455,7 +4455,7 @@ window.AirArenaAI = {
                     ...base,
                     state: 'safetyGroundPull',
                     statusText: 'NPC: 安全預演-近地拉起',
-                    throttle: team.heat > 86 ? 4 : 5,
+                    throttle: getEngineHeatLevel(team.heat) > 86 ? 4 : 5,
                     joyX: this.clamp(pullSide * 0.28, -0.4, 0.4),
                     joyY: pullY,
                     pitchCmd: -maxPitchCmd * (dirtDiveHard || nearDirtCrisis ? 0.85 : 0.7),
@@ -4467,7 +4467,7 @@ window.AirArenaAI = {
                     ...base,
                     state: 'safetyGroundPullLat',
                     statusText: 'NPC: 安全預演-近地側拉',
-                    throttle: team.heat > 86 ? 4 : 5,
+                    throttle: getEngineHeatLevel(team.heat) > 86 ? 4 : 5,
                     joyX: this.clamp(pullSide * 0.55, -0.7, 0.7),
                     joyY: Math.max(0.7, pullY * 0.9),
                     pitchCmd: -maxPitchCmd * 0.72,
@@ -4524,8 +4524,8 @@ window.AirArenaAI = {
             const escapeThrottle = energyCriticalNow
                 ? 3
                 : ((embedded || underRoof)
-                    ? (team.heat > 82 ? 3 : 4)
-                    : (divingAtBldg ? 4 : (team.heat > 76 ? 4 : 5)));
+                    ? (getEngineHeatLevel(team.heat) > 82 ? 3 : 4)
+                    : (divingAtBldg ? 4 : (getEngineHeatLevel(team.heat) > 76 ? 4 : 5)));
             const escapeRoll = embedded || underRoof || divingAtBldg ? Math.PI / 8 : Math.PI / 5.5;
             const obstacleCandidates = [
                 { ...base, state: 'safetyObstacleEscapePrimary', statusText: 'NPC: 安全預演-建築主脫離', throttle: escapeThrottle, joyX: this.clamp(defaultSide * escapeJoy, -1, 1), joyY: escapePitch, pitchCmd: -maxPitchCmd * ((embedded || underRoof) ? (teamForwardY < -0.35 ? 0.28 : 0.12) : (divingAtBldg ? 0.55 : (hardContact || energyCriticalNow ? 0.16 : 0.62))), roll: this.clamp(defaultSide * escapeRoll, -escapeRoll, escapeRoll), obstacleFallback: true, reason: (embedded || underRoof) ? 'Safety embed/under-roof: lateral push-out, low climb' : (hardContact ? 'Safety hard-contact lateral around building' : 'Safety fallback keeps obstacle escape direction') },
@@ -4767,7 +4767,7 @@ window.AirArenaAI = {
                 ? [{
                     ...base,
                     state: `${candidate.state}Continue`,
-                    throttle: team.heat > 78 ? 3 : 5,
+                    throttle: getEngineHeatLevel(team.heat) > 78 ? 3 : 5,
                     joyX: this.clamp((candidate.joyX || 0) * 0.45, -0.45, 0.45),
                     joyY: this.clamp((candidate.joyY || 0) * 0.7, 0.08, 0.5),
                     pitchCmd: -maxPitchCmd * 0.38,
@@ -5102,7 +5102,7 @@ window.AirArenaAI = {
         if (!team) return ctx.defaultSide || 1;
         const base = { weapon: 'gun', queueAction: 'none', ready: true };
         const altitude = Number(ctx.altitude || (team.wrapper && team.wrapper.position ? team.wrapper.position.y : 40));
-        const heat = Number(team.heat || 0);
+        const heat = (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(team.heat) : Number(team.heat || 0));
         let best = { side: ctx.defaultSide || 1, score: -Infinity };
         for (const side of [-1, 1]) {
             const probeSteps = [
@@ -5477,7 +5477,7 @@ window.AirArenaAI = {
             : (preferStraightClimb
                 ? (altitude < 30 ? 0.2 : (altitude < 50 ? 0.12 : 0.04))
                 : (altitude < 26 ? 0.18 : (altitude < 40 ? 0.06 : 0.0)));
-        const throttle = team.heat > 78
+        const throttle = getEngineHeatLevel(team.heat) > 78
             ? 3
             : (meshEmbed ? 4 : (energyLow || energyCruisePreferred || combatPressure ? 5 : 4));
         const candidates = [];
@@ -5511,7 +5511,7 @@ window.AirArenaAI = {
                     ...base,
                     state: 'urbanClimbingTurn',
                     statusText: 'NPC: 城市規劃-爬升轉向',
-                    throttle: team.heat > 78 ? 4 : 5,
+                    throttle: getEngineHeatLevel(team.heat) > 78 ? 4 : 5,
                     joyX: this.clamp(side * climbAuth, -0.62, 0.62),
                     joyY: preferStraightClimb
                         ? (altitudeLane.climbJoyY || (altitude < 36 ? 0.48 : 0.36))
@@ -5536,7 +5536,7 @@ window.AirArenaAI = {
                     ...base,
                     state: energyLow ? 'obstacleEnergyClimbRoute' : 'obstacleEmergencyRoute',
                     statusText: energyLow ? 'NPC: 城市規劃-低能繞脫' : (meshEmbed ? 'NPC: 城市規劃-嵌樓推出' : (earlyApproach && !hardBuilding ? 'NPC: 城市規劃-提前繞樓' : 'NPC: 城市規劃-緊急脫離')),
-                    throttle: team.heat > 78 ? 4 : (meshEmbed ? 4 : 5),
+                    throttle: getEngineHeatLevel(team.heat) > 78 ? 4 : (meshEmbed ? 4 : 5),
                     joyX: this.clamp(side * escAuth, -1, 1),
                     joyY: meshEmbed
                         ? sideJoyY
@@ -5569,7 +5569,7 @@ window.AirArenaAI = {
                 ...base,
                 state: 'urbanEmbedPushOut',
                 statusText: 'NPC: 城市規劃-單側嵌樓推出',
-                throttle: team.heat > 82 ? 3 : 4,
+                throttle: getEngineHeatLevel(team.heat) > 82 ? 3 : 4,
                 joyX: this.clamp(pushSide * 0.48, -0.52, 0.52),
                 joyY: pushY,
                 roll: this.clamp(pushSide * Math.PI / 9, -Math.PI / 9, Math.PI / 9),
@@ -5582,7 +5582,7 @@ window.AirArenaAI = {
                 ...base,
                 state: 'urbanEmbedPushOut',
                 statusText: 'NPC: 城市規劃-單側嵌樓推出',
-                throttle: team.heat > 82 ? 3 : 4,
+                throttle: getEngineHeatLevel(team.heat) > 82 ? 3 : 4,
                 joyX: this.clamp(pushSide * 0.42, -0.48, 0.48),
                 joyY: levelPull ? Math.min(0.42, Math.max(0.28, pushY * 0.85)) : Math.min(0.22, pushY),
                 roll: this.clamp(pushSide * Math.PI / 10, -Math.PI / 10, Math.PI / 10),
@@ -5608,7 +5608,7 @@ window.AirArenaAI = {
                 ...base,
                 state: 'urbanRouteClimbOut',
                 statusText: 'NPC: 城市規劃-爬升脫離',
-                throttle: team.heat > 78 ? 4 : 5,
+                throttle: getEngineHeatLevel(team.heat) > 78 ? 4 : 5,
                 joyX: this.clamp(breakSide * climbOutAuth, -0.55, 0.55),
                 joyY: preferStraightClimb
                     ? Math.max(0.44, altitudeLane.climbJoyY || 0.44)
@@ -5626,7 +5626,7 @@ window.AirArenaAI = {
 
         // Straight / mild-climb energy rebuild (player doctrine) — competes on score, not forced.
         if (!hardBuilding && !underRoof) {
-            const cruiseThr = team.heat > 82 ? 4 : 5;
+            const cruiseThr = getEngineHeatLevel(team.heat) > 82 ? 4 : 5;
             const cruiseClimb = preferStraightClimb
                 ? (altitude < 28 ? 0.28 : (altitude < 52 ? 0.2 : 0.1))
                 : (altitude < 22 ? 0.16 : (altitude < 48 ? 0.12 : 0.06));
@@ -5668,7 +5668,7 @@ window.AirArenaAI = {
             altitude >= 24 &&
             Number(coverInfo.distance || Infinity) >= 18;
         if (brakeTurnAllowed) {
-            const brakeThrottle = team.heat > 74 ? 2 : 3;
+            const brakeThrottle = getEngineHeatLevel(team.heat) > 74 ? 2 : 3;
             const brakeJoyY = altitude < 32 ? 0.18 : 0.02;
             const brakeRoll = Math.PI / 4.8;
             candidates.push(
@@ -5747,7 +5747,7 @@ window.AirArenaAI = {
                     statusText: (corridorClear || gapTier === 'wide' || gapTier === 'ok')
                         ? 'NPC: 城市規劃-縫道穿梭'
                         : 'NPC: 城市規劃-建築穿梭',
-                    throttle: team.heat > 78 ? 3 : (combatPressure ? 5 : 4),
+                    throttle: getEngineHeatLevel(team.heat) > 78 ? 3 : (combatPressure ? 5 : 4),
                     joyX: this.clamp(side * weaveJoyScale, -0.62, 0.62),
                     joyY: weaveJoyY,
                     roll: this.clamp(side * Math.PI / 8, -Math.PI / 8, Math.PI / 8),
@@ -5776,7 +5776,7 @@ window.AirArenaAI = {
             || (Number.isFinite(routeSelfAp) && routeSelfAp < Number(tuning.energyCriticalAp || 52));
         const energyBad = energyLow || energyCriticalNow;
         const thrOpts = {
-            heat: team.heat || 0,
+            heat: (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(team.heat) : (team.heat || 0)),
             ap: routeSelfAp,
             energyCritical: energyCriticalNow,
             lowAp: tuning.lowAp,
@@ -7328,7 +7328,7 @@ window.AirArenaAI = {
                 (selfPos.y < 52 && selfForward.y < -0.55);
             if (searchGroundRisk) {
                 const ultraLow = selfPos.y < 12;
-                const recoveryThrottle = this.getEmergencyRecoveryThrottle(selfPos.y, selfForward.y, self.heat || 0);
+                const recoveryThrottle = this.getEmergencyRecoveryThrottle(selfPos.y, selfForward.y, (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(self.heat) : (self.heat || 0)));
                 const noseHighBlind = selfForward.y > 0.22;
                 const diveBlind = selfForward.y < -0.2;
                 return this.withDebug({
@@ -7374,7 +7374,7 @@ window.AirArenaAI = {
             return this.withDebug({
                 state: 'search',
                 statusText: `NPC: 遠距搜索 ${Math.floor(sensor.distance)}m`,
-                throttle: self.heat > 78 ? 3 : 4,
+                throttle: getEngineHeatLevel(self.heat) > 78 ? 3 : 4,
                 joyX: searchYaw,
                 joyY: this.clamp(blindLocal.y * 0.35 + (selfPos.y < 24 ? 0.18 : 0.04), -0.25, 0.35),
                 roll: this.clamp(searchYaw * Math.PI / 6, -Math.PI / 6, Math.PI / 6),
@@ -7997,7 +7997,7 @@ window.AirArenaAI = {
             localToEnemy,
             breakSide: urbanAvoidSide || breakSide,
             teamId,
-            heat: self.heat || 0,
+            heat: (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(self.heat) : (self.heat || 0)),
             ap: self.ap,
             lowAp: tuning.lowAp
         };
@@ -8175,7 +8175,7 @@ window.AirArenaAI = {
                                         this.buildNavClimbOutAction({
                                             altitude,
                                             forwardY: selfForward.y,
-                                            heat: self.heat || 0,
+                                            heat: (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(self.heat) : (self.heat || 0)),
                                             side: climbSide,
                                             targetAlt: climbTarget,
                                             maxPitchCmd,
@@ -8417,7 +8417,7 @@ window.AirArenaAI = {
                                     diveOwnsStick: diveOwnsForScore,
                                     energyCritical,
                                     lowEnergyEscape,
-                                    heat: self.heat || 0,
+                                    heat: (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(self.heat) : (self.heat || 0)),
                                     coverLabel: `${debugBase.coverDistance}m`,
                                     coverInfo
                                 })
@@ -8476,7 +8476,7 @@ window.AirArenaAI = {
                                 lowEnergyEscape,
                                 climbTowardRoof,
                                 energyCritical,
-                                heat: self.heat || 0,
+                                heat: (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(self.heat) : (self.heat || 0)),
                                 flareWhileEscape,
                                 coverLabel: `${debugBase.coverDistance}m`,
                                 gapOpen: gapOpenPrefer,
@@ -8546,7 +8546,7 @@ window.AirArenaAI = {
                         this.buildNavClimbOutAction({
                             altitude,
                             forwardY: selfForward.y,
-                            heat: self.heat || 0,
+                            heat: (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(self.heat) : (self.heat || 0)),
                             side: climbSide,
                             targetAlt: climbTarget,
                             maxPitchCmd,
@@ -8711,8 +8711,8 @@ window.AirArenaAI = {
                                     throttle: stalledNow
                                         ? 3
                                         : (embedOrHardLow && !mandClimbLow
-                                            ? (extremeLow || self.heat > 82 ? 3 : 4)
-                                            : (self.heat > 76 ? 3 : 4)),
+                                            ? (extremeLow || getEngineHeatLevel(self.heat) > 82 ? 3 : 4)
+                                            : (getEngineHeatLevel(self.heat) > 76 ? 3 : 4)),
                                     joyX: lowJoyXClamped,
                                     joyY: lowJoyY,
                                     pitchCmd: noseHigh
@@ -8743,7 +8743,7 @@ window.AirArenaAI = {
                             }
                             if (canyonDiveAbort && urbanArenaMode) {
                                 const side = urbanAvoidSide || breakSide || 1;
-                                const recoveryThrottle = this.getEmergencyRecoveryThrottle(altitude, selfForward.y, self.heat || 0);
+                                const recoveryThrottle = this.getEmergencyRecoveryThrottle(altitude, selfForward.y, (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(self.heat) : (self.heat || 0)));
                                 const divePull = steepDive
                                     ? (altitude < 18 ? 0.88 : (altitude < 28 ? 0.78 : 0.7))
                                     : (altitude < 22 ? 0.72 : 0.62);
@@ -8762,7 +8762,7 @@ window.AirArenaAI = {
                                     reason: 'Canyon steep/moderate dive: pull level before building lateral thrash'
                                 }, debugBase, [...tree, 'selected: emergencyPullUp-canyonDive'], 'emergencyPullUp');
                             }
-                            const recoveryThrottle = this.getEmergencyRecoveryThrottle(altitude, selfForward.y, self.heat || 0);
+                            const recoveryThrottle = this.getEmergencyRecoveryThrottle(altitude, selfForward.y, (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(self.heat) : (self.heat || 0)));
                             const lateral = this.getEmergencyPullUpLateral({
                                 distance,
                                 headOnFactor,
@@ -8888,7 +8888,7 @@ window.AirArenaAI = {
 
                         if (lowAltRecoverLock.active) {
                             const lowAltRecover = altitude < 10;
-                            const recoveryThrottle = this.getEmergencyRecoveryThrottle(altitude, selfForward.y, self.heat || 0);
+                            const recoveryThrottle = this.getEmergencyRecoveryThrottle(altitude, selfForward.y, (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(self.heat) : (self.heat || 0)));
                             const noseHighLock = selfForward.y > 0.22;
                             const stalledLock = !!self.stalled || energyCritical;
                             const side = urbanAvoidSide || breakSide || 1;
@@ -8909,7 +8909,7 @@ window.AirArenaAI = {
                             return this.withDebug({
                                 state: 'emergencyRecoverLock',
                                 statusText: `NPC: 低空保命鎖定 ${altitude.toFixed(1)}m`,
-                                throttle: (stalledLock && !lowAltRecover) ? 3 : (lowAltRecover ? recoveryThrottle : (self.heat > 40 ? 4 : recoveryThrottle)),
+                                throttle: (stalledLock && !lowAltRecover) ? 3 : (lowAltRecover ? recoveryThrottle : (getEngineHeatLevel(self.heat) > 40 ? 4 : recoveryThrottle)),
                                 joyX,
                                 joyY,
                                 pitchCmd: noseHighLock ? maxPitchCmd * 0.18 : (lowAltRecover ? -maxPitchCmd * 0.55 : -(maxPitchCmd * 0.4)),
@@ -8966,7 +8966,7 @@ window.AirArenaAI = {
                                     this.buildNavClimbOutAction({
                                         altitude,
                                         forwardY: selfForward.y,
-                                        heat: self.heat || 0,
+                                        heat: (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(self.heat) : (self.heat || 0)),
                                         side: climbSide,
                                         targetAlt: climbTarget,
                                         maxPitchCmd,
@@ -8985,6 +8985,56 @@ window.AirArenaAI = {
                             }
                         }
                 return null;
+            }],
+            ['airspaceBoundary', () => {
+                if (typeof getAirspacePressure !== 'function') return null;
+                const pressure = getAirspacePressure(selfPos);
+                if (!pressure || !pressure.airspace || !pressure.airspace.enabled) return null;
+                if (pressure.band === 'clear') {
+                    tree.push(`airspaceGate: clear r=${pressure.radial.toFixed(1)} soft=${pressure.airspace.softRadius}`);
+                    return null;
+                }
+                // Hard outside is resolved in combat-resolution; here only soft steer-in.
+                const ox = pressure.outward.x;
+                const oz = pressure.outward.z;
+                const fwdFlat = selfForward.clone();
+                fwdFlat.y = 0;
+                if (fwdFlat.lengthSq() < 1e-6) fwdFlat.set(0, 0, 1);
+                else fwdFlat.normalize();
+                const outFlat = new THREE.Vector3(ox, 0, oz);
+                if (outFlat.lengthSq() < 1e-6) return null;
+                outFlat.normalize();
+                const outboundDot = fwdFlat.dot(outFlat);
+                const crossY = fwdFlat.clone().cross(outFlat).y;
+                // Turn opposite of outward (toward center).
+                const inwardSide = crossY >= 0 ? -1 : 1;
+                const urgency = pressure.band === 'outside' ? 1 : (pressure.band === 'warn' ? 0.55 + 0.45 * pressure.t : 0.25 + 0.45 * pressure.t);
+                // Only take the stick when heading outboard or already deep in soft/warn band.
+                if (pressure.band === 'soft' && outboundDot < 0.12 && pressure.t < 0.35) {
+                    tree.push(`airspaceGate: softSkip r=${pressure.radial.toFixed(1)} outDot=${outboundDot.toFixed(2)}`);
+                    return null;
+                }
+                const joyX = this.clamp(inwardSide * (0.42 + 0.5 * urgency), -0.95, 0.95);
+                const joyY = this.clamp(0.08 + (altitude < 28 ? 0.18 : 0.04), -0.2, 0.45);
+                const thr = getEngineHeatLevel(self.heat) > 78 ? 3 : (urgency > 0.7 ? 4 : 5);
+                tree.push(
+                    `airspaceGate: band=${pressure.band} r=${pressure.radial.toFixed(1)} soft=${pressure.airspace.softRadius.toFixed(0)} hard=${pressure.airspace.radius.toFixed(0)} outDot=${outboundDot.toFixed(2)} side=${inwardSide}`
+                );
+                return this.withDebug({
+                    state: 'airspaceAvoid',
+                    statusText: pressure.band === 'warn' || pressure.band === 'outside'
+                        ? `NPC: 空域邊界迴避 ${Math.floor(pressure.radial)}m`
+                        : `NPC: 空域軟限制 ${Math.floor(pressure.radial)}m`,
+                    throttle: thr,
+                    joyX,
+                    joyY,
+                    pitchCmd: -maxPitchCmd * 0.08,
+                    roll: this.clamp(inwardSide * Math.PI / 7, -Math.PI / 5, Math.PI / 5),
+                    weapon: 'gun',
+                    queueAction: 'none',
+                    ready: true,
+                    reason: 'Soft combat-airspace rim: turn inward'
+                }, debugBase, [...tree, 'selected: airspaceAvoid'], 'airspaceAvoid');
             }],
             ['fox2Opening', () => {
                 // Prefer planner/emergency while urban pressure remains (少強制、優選路 — T76).
@@ -9114,7 +9164,7 @@ window.AirArenaAI = {
                             return this.withDebug({
                                 state: 'missileAttack',
                                 statusText: `NPC: 開局 FOX-2 ${Math.floor(distance)}m`,
-                                throttle: self.heat > 86 ? 4 : 5,
+                                throttle: getEngineHeatLevel(self.heat) > 86 ? 4 : 5,
                                 joyX: shootJoyX,
                                 joyY: this.clamp(baseVerticalBias * 0.2, -0.18, 0.22),
                                 roll: this.clamp(shootJoyX * Math.PI / 8, -Math.PI / 8, Math.PI / 8),
@@ -9193,7 +9243,7 @@ window.AirArenaAI = {
                             const aspectOk = localToEnemy.z > 0.45 && angleToTargetDeg < 55;
                             const noseSeeking = !aspectOk || angleToTargetDeg > 40 || localToEnemy.z < 0.35;
                             const openingTurnBias = noseSeeking ? baseHorizontalBias : horizontalBias;
-                            const abThrottle = self.heat > 86 ? 4 : 5;
+                            const abThrottle = getEngineHeatLevel(self.heat) > 86 ? 4 : 5;
                             const turnThrottle = 3;
                             const rushThrottle = noseSeeking ? turnThrottle : abThrottle;
                             const missileAngleRadRush = (tuning.missileAngle * Math.PI / 180);
@@ -9312,7 +9362,7 @@ window.AirArenaAI = {
                             return this.withDebug({
                                 state: 'altitudeBandLevelOut',
                                 statusText: `NPC: 作戰高度回收 ${altitude.toFixed(1)}m`,
-                                throttle: self.heat > 78 ? 3 : (altitudeBand.levelOutThrottle || 4),
+                                throttle: getEngineHeatLevel(self.heat) > 78 ? 3 : (altitudeBand.levelOutThrottle || 4),
                                 joyX: this.clamp(horizontalBias * 0.18, -0.28, 0.28),
                                 joyY: altitudeBand.levelOutJoyY,
                                 pitchCmd: maxPitchCmd * altitudeBand.levelOutPitch,
@@ -9337,7 +9387,7 @@ window.AirArenaAI = {
                             return this.withDebug({
                                 state: 'terrainEscape',
                                 statusText: `NPC: 地形脫離 ALT ${altitude.toFixed(1)} CVR ${debugBase.coverDistance}m`,
-                                throttle: self.heat > 78 ? 3 : 5,
+                                throttle: getEngineHeatLevel(self.heat) > 78 ? 3 : 5,
                                 joyX: this.clamp(sideSign * (urbanHard ? 0.88 : 0.34), -1, 1),
                                 joyY: urbanHard
                                     ? (steepInto ? 0.08 : 0.22)
@@ -9364,7 +9414,7 @@ window.AirArenaAI = {
                                     midairOverGround.state
                                 );
                             }
-                            const recoveryThrottle = this.getEmergencyRecoveryThrottle(altitude, selfForward.y, self.heat || 0);
+                            const recoveryThrottle = this.getEmergencyRecoveryThrottle(altitude, selfForward.y, (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(self.heat) : (self.heat || 0)));
                             const safePull = altitude < 28 ? 0.82 : (energyLow ? 0.46 : 0.62);
                             // Above ~28m: keep some turn toward target while pulling up (avoid joyX=0 freeze).
                             const canSteer = altitude >= 28 && sensor.hasContact && coverInfo.collisionRisk !== 'high';
@@ -9424,7 +9474,7 @@ window.AirArenaAI = {
                             return this.withDebug({
                                 state: 'defensiveFlare',
                                 statusText: `NPC: 飛彈威脅，釋放熱焰`,
-                                throttle: self.heat > 70 ? 3 : 4,
+                                throttle: getEngineHeatLevel(self.heat) > 70 ? 3 : 4,
                                 joyX: breakJoyX,
                                 joyY: altitude < 22 ? 0.48 : this.clamp(verticalBias * 0.15 + 0.22, -0.2, 0.45),
                                 roll: this.clamp(breakJoyX * Math.PI / 4.5, -Math.PI / 4, Math.PI / 4),
@@ -9466,7 +9516,7 @@ window.AirArenaAI = {
                                 statusText: nearMissileLock
                                     ? `NPC: 改平 FOX-2 ${Math.floor(distance)}m`
                                     : `NPC: 淺俯衝改平 ${altitude.toFixed(1)}m`,
-                                throttle: self.heat > 78 ? 3 : 4,
+                                throttle: getEngineHeatLevel(self.heat) > 78 ? 3 : 4,
                                 joyX: this.clamp(horizontalBias * (nearMissileLock ? 0.35 : (selfForward.y < -0.45 ? 0.28 : 0.55)), -diveBankCap, diveBankCap),
                                 joyY: divePullY,
                                 pitchCmd: -maxPitchCmd * (selfForward.y < -0.45 ? 0.55 : 0.28),
@@ -9519,8 +9569,8 @@ window.AirArenaAI = {
                     return this.withDebug({
                         state: 'stallRecoverNoRoll',
                         statusText: `NPC: 失速繞樓脫離 AP ${Math.floor(self.ap)} ALT ${altitude.toFixed(1)}`,
-                        throttle: diveDirt ? (self.heat > 86 ? 4 : 5) : this.pickThrottleForTurn(3, 0.55, {
-                            heat: self.heat || 0,
+                        throttle: diveDirt ? (getEngineHeatLevel(self.heat) > 86 ? 4 : 5) : this.pickThrottleForTurn(3, 0.55, {
+                            heat: (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(self.heat) : (self.heat || 0)),
                             ap: self.ap,
                             stalled: true,
                             energyCritical: true
@@ -9543,11 +9593,11 @@ window.AirArenaAI = {
                             const unloadPitch = divingIntoDirt ? 0.08 : (altitude > 40 ? 0.4 : 0.18);
                             const breakJoyX = this.clamp(horizontalBias * (divingIntoDirt ? 0.12 : 0.28), -0.28, 0.28);
                             const breakThr = divingIntoDirt
-                                ? (self.heat > 86 ? 4 : 5)
+                                ? (getEngineHeatLevel(self.heat) > 86 ? 4 : 5)
                                 : this.pickThrottleForTurn(
-                                    self.heat > 78 ? 3 : 4,
+                                    getEngineHeatLevel(self.heat) > 78 ? 3 : 4,
                                     breakJoyX,
-                                    { heat: self.heat || 0, ap: self.ap, energyCritical: true }
+                                    { heat: (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(self.heat) : (self.heat || 0)), ap: self.ap, energyCritical: true }
                                 );
                             return this.withDebug({
                                 state: 'stallBreakout',
@@ -9581,8 +9631,8 @@ window.AirArenaAI = {
                                         ? -maxPitchCmd * 0.28
                                         : maxPitchCmd * 0.26));
                             const recoveryThrottle = divingIntoDirt
-                                ? this.getEmergencyRecoveryThrottle(altitude, selfForward.y, self.heat || 0)
-                                : this.pickThrottleForTurn(3, 0.45, { heat: self.heat || 0, ap: self.ap, stalled: true, energyCritical: true });
+                                ? this.getEmergencyRecoveryThrottle(altitude, selfForward.y, (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(self.heat) : (self.heat || 0)))
+                                : this.pickThrottleForTurn(3, 0.45, { heat: (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(self.heat) : (self.heat || 0)), ap: self.ap, stalled: true, energyCritical: true });
                             const recoverJoyX = divingIntoDirt
                                 ? this.clamp(horizontalBias * 0.18, -0.24, 0.24)
                                 : this.clamp(horizontalBias * 0.42, -0.48, 0.48);
@@ -9628,9 +9678,9 @@ window.AirArenaAI = {
                             // Phase A: rebuild energy while ECO-turning toward target (not joyX=0 freeze).
                             const recoverJoyX = this.clamp(horizontalBias * 0.55, -0.62, 0.62);
                             const recoverThr = this.pickThrottleForTurn(
-                                self.heat > 78 ? 3 : 3,
+                                getEngineHeatLevel(self.heat) > 78 ? 3 : 3,
                                 recoverJoyX,
-                                { heat: self.heat || 0, ap: self.ap, energyCritical: true, lowAp: tuning.lowAp }
+                                { heat: (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(self.heat) : (self.heat || 0)), ap: self.ap, energyCritical: true, lowAp: tuning.lowAp }
                             );
                             return this.withDebug({
                                 state: 'energyRecover',
@@ -9674,7 +9724,7 @@ window.AirArenaAI = {
                             return this.withDebug({
                                 state: 'defensiveFlare',
                                 statusText: `NPC: 飛彈威脅，釋放熱焰`,
-                                throttle: self.heat > 70 ? 3 : 4,
+                                throttle: getEngineHeatLevel(self.heat) > 70 ? 3 : 4,
                                 joyX: breakJoyX,
                                 joyY: altitude < 22 ? 0.48 : this.clamp(verticalBias * 0.15 + 0.22, -0.2, 0.45),
                                 roll: this.clamp(breakJoyX * Math.PI / 4.5, -Math.PI / 4, Math.PI / 4),
@@ -9733,7 +9783,7 @@ window.AirArenaAI = {
                             return this.withDebug({
                                 state: 'urbanPreemptiveAvoid',
                                 statusText: `NPC: 城市提前繞行 ${debugBase.coverDistance}m`,
-                                throttle: self.heat > 78 ? 3 : (wideTurn ? 3 : 4),
+                                throttle: getEngineHeatLevel(self.heat) > 78 ? 3 : (wideTurn ? 3 : 4),
                                 joyX: this.clamp(urbanAvoidSide * (wideTurn ? 0.74 : 0.62), -0.82, 0.82),
                                 joyY: altitude < 28 ? 0.22 : (wideTurn ? 0.08 : 0.14),
                                 roll: this.clamp(preemptJoyX * Math.PI / 5.5, -Math.PI / 5.5, Math.PI / 5.5),
@@ -9772,7 +9822,7 @@ window.AirArenaAI = {
                                 statusText: flareWhileEscape
                                     ? `NPC: 避撞熱焰 ${debugBase.coverForwardDistance}m`
                                     : (disengage ? `NPC: 建築脫離 AP ${Math.floor(self.ap)}` : `NPC: 建築物避撞 ${debugBase.coverForwardDistance}m`),
-                                throttle: self.heat > 78 ? 3 : (lowAltitude || energyLow ? 5 : 4),
+                                throttle: getEngineHeatLevel(self.heat) > 78 ? 3 : (lowAltitude || energyLow ? 5 : 4),
                                 joyX: escapeJoyX,
                                 joyY: escapeJoyY,
                                 pitchCmd: -maxPitchCmd * (lowAltitude ? 0.55 : 0.34),
@@ -9790,7 +9840,7 @@ window.AirArenaAI = {
                             return this.withDebug({
                                 state: 'manualEvadeRecover',
                                 statusText: `NPC: 人工迴避-恢復能量 AP ${Math.floor(self.ap)}`,
-                                throttle: self.heat > 75 ? 3 : 5,
+                                throttle: getEngineHeatLevel(self.heat) > 75 ? 3 : 5,
                                 joyX: this.clamp(breakSide * 0.25, -0.35, 0.35),
                                 joyY: altitude < 18 ? 0.28 : 0,
                                 roll: this.clamp(breakSide * Math.PI / 6, -Math.PI / 6, Math.PI / 6),
@@ -9805,7 +9855,7 @@ window.AirArenaAI = {
                             return this.withDebug({
                                 state: 'manualEvade',
                                 statusText: `NPC: 人工干預 EVADE`,
-                                throttle: self.heat > 72 ? 3 : 4,
+                                throttle: getEngineHeatLevel(self.heat) > 72 ? 3 : 4,
                                 joyX: this.clamp(breakSide * 0.7, -0.8, 0.8),
                                 joyY: altitude < 24 ? 0.35 : 0.08,
                                 roll: this.clamp(breakSide * Math.PI / 5, -Math.PI / 5, Math.PI / 5),
@@ -9820,9 +9870,9 @@ window.AirArenaAI = {
                             const antiLoopFlare = canUseFlare && flareCooldownReady && !lineOfSightBlocked && actualMissileThreat;
                             const antiJoyX = this.clamp(breakSide * 0.9, -1, 1);
                             const antiThr = this.pickThrottleForTurn(
-                                self.heat > 76 ? 3 : 4,
+                                getEngineHeatLevel(self.heat) > 76 ? 3 : 4,
                                 antiJoyX,
-                                { heat: self.heat || 0, ap: self.ap, lowAp: tuning.lowAp }
+                                { heat: (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(self.heat) : (self.heat || 0)), ap: self.ap, lowAp: tuning.lowAp }
                             );
                             return this.withDebug({
                                 state: 'antiLoopBreak',
@@ -9865,7 +9915,7 @@ window.AirArenaAI = {
                                 this.buildNavClimbOutAction({
                                     altitude,
                                     forwardY: selfForward.y,
-                                    heat: self.heat || 0,
+                                    heat: (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(self.heat) : (self.heat || 0)),
                                     side: climbSide,
                                     targetAlt: navClimbOut.targetAlt || tuning.combatBandMin || 35,
                                     maxPitchCmd,
@@ -10000,7 +10050,7 @@ window.AirArenaAI = {
                                 statusText: shouldShootMissile
                                     ? `NPC: ${mslTag} LOCK ${Math.floor(distance)}m`
                                     : `NPC: ${mslTag} 通電/對準 ${Math.floor(distance)}m`,
-                                throttle: self.heat > 72 ? 3 : 4,
+                                throttle: getEngineHeatLevel(self.heat) > 72 ? 3 : 4,
                                 joyX: prepJoyX,
                                 joyY: prepJoyY,
                                 roll: this.clamp(prepJoyX * (shouldShootMissile ? Math.PI / 8 : (fox1Prep ? Math.PI / 6 : Math.PI / 4)), -Math.PI / 4, Math.PI / 4),
@@ -10100,11 +10150,11 @@ window.AirArenaAI = {
                                 urbanAvoidSide || breakSide,
                                 openSkyOrbitBoost > 1.0 ? 0.88 : 0.72
                             );
-                            const openSkyCutThrottle = !urbanArenaMode && self.heat < 62 && distance > 70 ? 5 : 4;
+                            const openSkyCutThrottle = !urbanArenaMode && getEngineHeatLevel(self.heat) < 62 && distance > 70 ? 5 : 4;
                             const orbitThr = this.pickThrottleForTurn(
-                                self.heat > 72 ? 3 : (openSkyOrbitBoost > 1.0 ? openSkyCutThrottle : 4),
+                                getEngineHeatLevel(self.heat) > 72 ? 3 : (openSkyOrbitBoost > 1.0 ? openSkyCutThrottle : 4),
                                 cutJoyX,
-                                { heat: self.heat || 0, ap: self.ap, lowAp: tuning.lowAp }
+                                { heat: (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(self.heat) : (self.heat || 0)), ap: self.ap, lowAp: tuning.lowAp }
                             );
                             return this.withDebug({
                                 state: 'orbitCutIn',
@@ -10222,7 +10272,7 @@ window.AirArenaAI = {
                                 return this.withDebug({
                                     state: 'urbanBuildingWeave',
                                     statusText: `NPC: 側向建築穿梭 ${Math.floor(Number(coverInfo.distance))}m`,
-                                    throttle: self.heat > 78 ? 3 : 4,
+                                    throttle: getEngineHeatLevel(self.heat) > 78 ? 3 : 4,
                                     joyX: weaveJoyX,
                                     joyY: altitude < 30 ? 0.18 : 0.05,
                                     roll: this.clamp(weaveJoyX * Math.PI / 8, -Math.PI / 8, Math.PI / 8),
@@ -10255,9 +10305,9 @@ window.AirArenaAI = {
                             });
                             const mergeJoyX = this.clamp(mergeSide * (hardBreak ? 0.95 : 0.72), -1, 1);
                             const mergeThr = this.pickThrottleForTurn(
-                                self.heat > 76 ? 3 : 4,
+                                getEngineHeatLevel(self.heat) > 76 ? 3 : 4,
                                 mergeJoyX,
-                                { heat: self.heat || 0, ap: self.ap, lowAp: tuning.lowAp }
+                                { heat: (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(self.heat) : (self.heat || 0)), ap: self.ap, lowAp: tuning.lowAp }
                             );
                             return this.withDebug({
                                 state: flareOnMerge ? 'defensiveFlare' : (hardBreak ? 'mandatoryMergeBreak' : 'mergeBreak'),
@@ -10286,7 +10336,7 @@ window.AirArenaAI = {
                                 3,
                                 recoverJoyX,
                                 {
-                                    heat: self.heat || 0,
+                                    heat: (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(self.heat) : (self.heat || 0)),
                                     ap: self.ap,
                                     energyCritical: self.ap < tuning.energyCriticalAp,
                                     stalled: !!self.stalled,
@@ -10307,7 +10357,7 @@ window.AirArenaAI = {
                             }, debugBase, [...tree, `selected: recover thr=${recoverThr} joyX=${recoverJoyX.toFixed(2)}`], 'recover');
                         }
 
-                        if (self.heat > 82) {
+                        if (getEngineHeatLevel(self.heat) > 82) {
                             return this.withDebug({
                                 state: 'cooldown',
                                 statusText: `NPC: 降溫 ${Math.floor(self.heat)}°C`,
@@ -10415,7 +10465,7 @@ window.AirArenaAI = {
                                     statusText: forceShoot
                                         ? `NPC: 人工 FOX-2 LOCK`
                                         : `NPC: 人工飛彈回轉 ${Math.floor(angleToTargetDeg)}°`,
-                                    throttle: distance > 120 ? (self.heat > 72 ? 4 : 5) : (behindTarget ? 4 : 3),
+                                    throttle: distance > 120 ? (getEngineHeatLevel(self.heat) > 72 ? 4 : 5) : (behindTarget ? 4 : 3),
                                     joyX: reacquireJoyX,
                                     joyY: reacquireJoyY,
                                     roll: this.clamp(reacquireJoyX * Math.PI / 4, -Math.PI / 4, Math.PI / 4),
@@ -10443,7 +10493,7 @@ window.AirArenaAI = {
                                 statusText: passiveSearchBearing
                                     ? `NPC: 搜索接敵 ${Math.floor(distance)}m`
                                     : `NPC: 重新索敵 ${Math.floor(angleToTarget * 180 / Math.PI)}°`,
-                                throttle: distance > 120 ? (self.heat > 72 ? 4 : 5) : (behindTarget ? 4 : 3),
+                                throttle: distance > 120 ? (getEngineHeatLevel(self.heat) > 72 ? 4 : 5) : (behindTarget ? 4 : 3),
                                 joyX: reacquireJoyX,
                                 joyY: reacquireJoyY,
                                 roll: this.clamp(reacquireJoyX * Math.PI / 4, -Math.PI / 4, Math.PI / 4),
@@ -10463,7 +10513,7 @@ window.AirArenaAI = {
                             return this.withDebug({
                                 state: 'memoryTrack',
                                 statusText: `NPC: 記憶追蹤 ${sensor.memoryTurnsLeft}T`,
-                                throttle: self.heat > 72 ? 3 : 4,
+                                throttle: getEngineHeatLevel(self.heat) > 72 ? 3 : 4,
                                 joyX: this.clamp(horizontalBias * 0.85, -0.8, 0.8),
                                 joyY: altitude < 24 ? 0.2 : this.clamp(verticalBias * 0.3, -0.2, 0.22),
                                 roll: this.clamp(horizontalBias * Math.PI / 5, -Math.PI / 5, Math.PI / 5),
@@ -10521,7 +10571,7 @@ window.AirArenaAI = {
                                             : (emptyCmPanic ? 'NPC: 無干擾硬脫離' : 'NPC: 飛彈威脅，急轉規避'))),
                                 throttle: useMaskPoint
                                     ? (maskState === 'maskIngress' ? 4 : 3)
-                                    : (emptyCmPanic ? (self.heat > 78 ? 3 : 4) : (self.heat > 70 ? 3 : 4)),
+                                    : (emptyCmPanic ? (getEngineHeatLevel(self.heat) > 78 ? 3 : 4) : (getEngineHeatLevel(self.heat) > 70 ? 3 : 4)),
                                 joyX: evadeJoyX,
                                 joyY: evadeJoyY,
                                 roll: useMaskPoint
@@ -10607,7 +10657,7 @@ window.AirArenaAI = {
                             const gunThrottle =
                                 distance < 22 ? 2 :
                                 closeIn ? 3 :
-                                forcedGun || extendedGun ? (!urbanArenaMode && coverInfo.collisionRisk === 'low' && self.heat < 62 && distance > 45 ? 5 : 4) : 3;
+                                forcedGun || extendedGun ? (!urbanArenaMode && coverInfo.collisionRisk === 'low' && getEngineHeatLevel(self.heat) < 62 && distance > 45 ? 5 : 4) : 3;
                             const rollScale = forcedGun ? Math.PI / 5.2 : (extendedGun ? Math.PI / 4.5 : Math.PI / 5);
                             const gunLabel = forcedGun
                                 ? 'NPC: 人工干預 GUN'
@@ -10676,9 +10726,9 @@ window.AirArenaAI = {
                             }
                             const openSkyMsl = !urbanArenaMode && coverInfo.collisionRisk === 'low';
                             const mslThrottle =
-                                self.heat > (openSkyMsl ? 76 : 68) ? 3 :
+                                getEngineHeatLevel(self.heat) > (openSkyMsl ? 76 : 68) ? 3 :
                                 shouldShootMissile ? 3 :
-                                (openSkyMsl && self.heat < 60 && distance > 55 ? 5 : 4);
+                                (openSkyMsl && getEngineHeatLevel(self.heat) < 60 && distance > 55 ? 5 : 4);
                             const mslTag = aiMissileType === 'fox1' ? 'FOX-1' : 'FOX-2';
                             const mslStatus = forcedMissile
                                 ? (shouldShootMissile ? `NPC: 人工 ${mslTag} LOCK` : `NPC: 人工飛彈對準中`)
@@ -10729,8 +10779,8 @@ window.AirArenaAI = {
                         const openSkyAggression = !urbanArenaMode && coverInfo.collisionRisk === 'low' ? 1.45 : 1.0;
                         const interceptGain = (0.8 + tuning.interceptTurnGain + (notClosing ? 0.28 : 0)) * openSkyAggression * offenseAssist.interceptMul;
                         const interceptThrottle = distance > 45
-                            ? (self.heat > 78 ? 3 : (self.heat < 62 ? 5 : 4))
-                            : (notClosing && distance > 55 ? (self.heat > 72 ? 4 : 5) : 4);
+                            ? (getEngineHeatLevel(self.heat) > 78 ? 3 : (getEngineHeatLevel(self.heat) < 62 ? 5 : 4))
+                            : (notClosing && distance > 55 ? (getEngineHeatLevel(self.heat) > 72 ? 4 : 5) : 4);
                         const interceptJoyY = this.capCombatVerticalJoy(
                             this.clamp(verticalBias * (0.75 + tuning.interceptTurnGain * 0.4 + (notClosing ? 0.08 : 0)) * openSkyAggression, -0.7, 0.7),
                             altitude,
@@ -10902,7 +10952,7 @@ window.AirArenaAI = {
             ...baseAction,
             state: 'hybridPress',
             statusText: `NPC: HYBRID 壓制 ${Math.floor(dist)}m`,
-            throttle: self.heat > 70 ? 3 : (dist > 60 && !urbanPressure && self.heat < 58 ? 5 : 4),
+            throttle: getEngineHeatLevel(self.heat) > 70 ? 3 : (dist > 60 && !urbanPressure && getEngineHeatLevel(self.heat) < 58 ? 5 : 4),
             joyX: this.clamp(hBias * (0.72 + aggression * 0.85), -1, 1),
             joyY: this.clamp(vBias * (0.85 + aggression * 0.2), -0.42, 0.42),
             roll: this.clamp(hBias * (Math.PI / 3.8), -Math.PI / 3.8, Math.PI / 3.8),
@@ -10916,7 +10966,7 @@ window.AirArenaAI = {
             ...baseAction,
             state: 'hybridBlitz',
             statusText: `NPC: HYBRID 閃擊 ${Math.floor(dist)}m`,
-            throttle: self.heat > 65 ? 3 : (urbanPressure ? 4 : 5),
+            throttle: getEngineHeatLevel(self.heat) > 65 ? 3 : (urbanPressure ? 4 : 5),
             joyX: this.clamp(hBias * (0.92 + aggression), -1, 1),
             joyY: this.clamp(vBias * 0.9, -0.5, 0.5),
             roll: this.clamp(hBias * Math.PI / 3.5, -Math.PI / 3.5, Math.PI / 3.5),
@@ -10930,7 +10980,7 @@ window.AirArenaAI = {
             ...baseAction,
             state: 'hybridConserve',
             statusText: `NPC: HYBRID 節能轉位`,
-            throttle: self.heat > 80 ? 2 : 3,
+            throttle: getEngineHeatLevel(self.heat) > 80 ? 2 : 3,
             joyX: this.clamp(hBias * 0.5, -0.55, 0.55),
             joyY: selfPos.y < 24 ? 0.18 : this.clamp(vBias * 0.25, -0.18, 0.22),
             roll: this.clamp(hBias * Math.PI / 8, -Math.PI / 8, Math.PI / 8),
@@ -11233,7 +11283,7 @@ window.AirArenaAI = {
                 safeAction.state === 'safetyEmbedPushOut' ||
                 (typeof safeAction.joyX === 'number' && Math.abs(safeAction.joyX) >= 0.7);
             this.enforceEnergyTurnConsistency(safeAction, {
-                heat: team.heat || 0,
+                heat: (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(team.heat) : (team.heat || 0)),
                 ap: typeof team.ap === 'number' ? team.ap : null,
                 energyCritical: typeof team.ap === 'number' && team.ap < tuning.energyCriticalAp,
                 energyCriticalAp: tuning.energyCriticalAp,

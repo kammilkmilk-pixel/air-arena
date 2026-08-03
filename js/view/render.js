@@ -16,7 +16,19 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 document.getElementById('canvas-container').appendChild(renderer.domElement);
 const controls = new THREE.OrbitControls(camera, renderer.domElement); 
 controls.minPolarAngle = Math.PI / 6; controls.maxPolarAngle = Math.PI / 1.6; controls.enableDamping = true;
-controls.target.set(10, 25, -30); controls.update(); 
+controls.target.set(10, 25, -30); controls.update();
+// iPhone／觸控：關閉雙指 dolly，避免與瀏覽器 pinch 疊加造成「畫面與面板分離」
+(function disableTouchOrbitZoom() {
+    const touchLikely = ('ontouchstart' in window)
+        || (navigator.maxTouchPoints > 0)
+        || (window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+    if (!touchLikely) return;
+    controls.enableZoom = false;
+    if (controls.touches && THREE.TOUCH) {
+        controls.touches.ONE = THREE.TOUCH.ROTATE;
+        controls.touches.TWO = THREE.TOUCH.ROTATE;
+    }
+})();
 
 // Sky fill + warm ground bounce (kept soft, nudged darker).
 const hemiLight = new THREE.HemisphereLight(0xc4d8ef, 0x5a564c, 0.98);
@@ -1817,6 +1829,215 @@ function initCityMapModel() {
 
 // 啟動城市地圖（原版）
 initCityMapModel();
+
+// ============================================================================
+// 作戰空域：地面硬邊圈 + 人類接近邊界時的半透明黃色斜槓封鎖膠帶
+// ============================================================================
+(function initCombatAirspaceVfx() {
+    const TAPE_H = 12;
+    const TAPE_STYLE = 3; // bump when stripe/text look changes
+    const state = {
+        group: null,
+        rim: null,
+        tape: null,
+        tapeTex: null,
+        tapeMat: null,
+        tapeStyle: 0,
+        builtRadius: -1,
+        builtCx: null,
+        builtCz: null,
+        builtTapeH: -1
+    };
+
+    function makeCautionTapeTexture() {
+        // One period: 10 elongated yellow diagonals (wide gaps) + warning caption.
+        const stripeW = 42;
+        const gapW = 36;
+        const stripeCount = 10;
+        const textPanelW = 320;
+        const slant = 38;
+        const h = 64;
+        const period = stripeCount * (stripeW + gapW) + textPanelW;
+        const canvas = document.createElement('canvas');
+        canvas.width = period;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, period, h);
+
+        ctx.fillStyle = 'rgba(255, 214, 0, 0.88)';
+        let x = 0;
+        for (let i = 0; i < stripeCount; i++) {
+            ctx.beginPath();
+            ctx.moveTo(x, 0);
+            ctx.lineTo(x + stripeW, 0);
+            ctx.lineTo(x + stripeW + slant, h);
+            ctx.lineTo(x + slant, h);
+            ctx.closePath();
+            ctx.fill();
+            x += stripeW + gapW;
+        }
+
+        ctx.font = 'bold 26px "Microsoft JhengHei","PingFang TC","Noto Sans TC",sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = 'rgba(255, 220, 40, 0.95)';
+        ctx.fillText('離開作戰空域警告', x + textPanelW * 0.5, h * 0.5);
+
+        const tex = new THREE.CanvasTexture(canvas);
+        tex.wrapS = THREE.RepeatWrapping;
+        tex.wrapT = THREE.ClampToEdgeWrapping;
+        // ~2πR / period periods around the hard ring (R≈450 → ~3–4 cycles).
+        const approxR = 450;
+        const repeats = Math.max(2, Math.round((2 * Math.PI * approxR) / period));
+        tex.repeat.set(repeats, 1);
+        tex.needsUpdate = true;
+        return tex;
+    }
+
+    function clearChild(mesh) {
+        if (!mesh) return;
+        if (state.group) state.group.remove(mesh);
+        if (mesh.geometry) mesh.geometry.dispose();
+        if (mesh.material && mesh.material !== state.tapeMat) {
+            if (mesh.material.map && mesh.material.map !== state.tapeTex) mesh.material.map.dispose();
+            mesh.material.dispose();
+        }
+    }
+
+    function ensureTapeMaterial() {
+        if (state.tapeStyle === TAPE_STYLE && state.tapeTex && state.tapeMat) return;
+        if (state.tapeTex) {
+            state.tapeTex.dispose();
+            state.tapeTex = null;
+        }
+        state.tapeTex = makeCautionTapeTexture();
+        if (!state.tapeMat) {
+            state.tapeMat = new THREE.MeshBasicMaterial({
+                map: state.tapeTex,
+                transparent: true,
+                opacity: 0.55,
+                side: THREE.DoubleSide,
+                depthWrite: false,
+                fog: true
+            });
+        } else {
+            state.tapeMat.map = state.tapeTex;
+            state.tapeMat.needsUpdate = true;
+        }
+        state.tapeStyle = TAPE_STYLE;
+        state.builtTapeH = -1; // force cylinder rebuild with new look
+    }
+
+    function ensureCombatAirspaceMeshes(a) {
+        if (!state.group) {
+            state.group = new THREE.Group();
+            state.group.name = 'COMBAT_AIRSPACE_VFX';
+            state.group.renderOrder = 2;
+            scene.add(state.group);
+        }
+        ensureTapeMaterial();
+
+        const needRebuild =
+            Math.abs(state.builtRadius - a.radius) > 0.5 ||
+            state.builtCx !== a.cx ||
+            state.builtCz !== a.cz ||
+            state.builtTapeH !== TAPE_H;
+
+        if (!needRebuild) return;
+
+        clearChild(state.rim);
+        clearChild(state.tape);
+        state.rim = null;
+        state.tape = null;
+
+        const rimInner = Math.max(1, a.radius - 1.8);
+        const rimOuter = a.radius + 1.8;
+        const rimGeo = new THREE.RingGeometry(rimInner, rimOuter, 128);
+        const rimMat = new THREE.MeshBasicMaterial({
+            color: 0xffe066,
+            transparent: true,
+            opacity: 0.14,
+            side: THREE.DoubleSide,
+            depthWrite: false,
+            fog: true
+        });
+        state.rim = new THREE.Mesh(rimGeo, rimMat);
+        state.rim.name = 'COMBAT_AIRSPACE_RIM';
+        state.rim.rotation.x = -Math.PI / 2;
+        state.rim.position.y = 0.35;
+        state.group.add(state.rim);
+
+        const tapeGeo = new THREE.CylinderGeometry(a.radius, a.radius, TAPE_H, 96, 1, true);
+        state.tape = new THREE.Mesh(tapeGeo, state.tapeMat);
+        state.tape.name = 'COMBAT_AIRSPACE_TAPE';
+        state.tape.visible = false;
+        state.group.add(state.tape);
+
+        state.group.position.set(a.cx, 0, a.cz);
+        state.builtRadius = a.radius;
+        state.builtCx = a.cx;
+        state.builtCz = a.cz;
+        state.builtTapeH = TAPE_H;
+    }
+
+    function updateCombatAirspaceVfx() {
+        if (typeof getCombatAirspace !== 'function') return;
+        const a = getCombatAirspace();
+        if (!a || !a.enabled) {
+            if (state.group) state.group.visible = false;
+            return;
+        }
+
+        ensureCombatAirspaceMeshes(a);
+        state.group.visible = true;
+        state.group.position.set(a.cx, 0, a.cz);
+
+        if (state.rim) {
+            state.rim.visible = true;
+            if (state.rim.material) state.rim.material.opacity = 0.12;
+        }
+
+        let showTape = false;
+        let pressureT = 0;
+        let alt = 36;
+        try {
+            const id = (typeof GameContext !== 'undefined' && GameContext.getActiveTeamId)
+                ? GameContext.getActiveTeamId()
+                : null;
+            const t = (id && typeof teams !== 'undefined') ? teams[id] : null;
+            if (
+                t &&
+                t.wrapper &&
+                !t.isDestroyed &&
+                !t.aiEnabled &&
+                typeof getAirspacePressure === 'function'
+            ) {
+                const p = getAirspacePressure(t.wrapper.position);
+                // Show from warnMargin (200) inward of hard edge.
+                if (p && (p.band === 'warn' || p.band === 'outside')) {
+                    showTape = true;
+                    pressureT = Number(p.t) || 0;
+                    alt = Math.max(10, Math.min(140, Number(t.wrapper.position.y) || 36));
+                }
+            }
+        } catch (_) { /* ignore */ }
+
+        if (!state.tape) return;
+        state.tape.visible = showTape;
+        if (!showTape) return;
+
+        state.tape.position.y = alt;
+        if (state.tapeMat) {
+            state.tapeMat.opacity = 0.32 + 0.42 * Math.max(0, Math.min(1, pressureT));
+        }
+        if (state.tapeTex) {
+            state.tapeTex.offset.x = (performance.now() * 0.00009) % 1;
+            state.tapeTex.needsUpdate = true;
+        }
+    }
+
+    window.updateCombatAirspaceVfx = updateCombatAirspaceVfx;
+})();
 
 GameContext.three = {
     scene,

@@ -27,25 +27,27 @@ GameContext.stateMachine = {
     updateHeat(teamId, delta) {
         const t = GameContext.getTeam(teamId);
         if (!t) return;
-        const maxH = MAX_HEAT;
+        const minH = (typeof getEngineHeatIdle === 'function') ? getEngineHeatIdle() : 150;
+        const maxH = (typeof getEngineHeatMax === 'function') ? getEngineHeatMax() : (typeof MAX_HEAT === 'number' ? MAX_HEAT : 250);
+        const abRecover = minH + 40;
         const throttle = t.throttle || 4;
 
         if (t.flameout === undefined) t.flameout = false;
 
         if (t.flameout) {
-            t.heat = Math.max(0, (t.heat || 0) - 15);
-            if (t.heat < 40) {
+            t.heat = Math.max(minH, (t.heat || minH) - 15);
+            if ((t.heat || minH) < abRecover) {
                 t.flameout = false;
                 if (CONFIG.debug) console.log(`❄️ [系統提示] ${teamId.toUpperCase()} 引擎冷卻完成，重新點火！`);
             }
         } else if (delta !== undefined) {
-            t.heat = Math.max(0, Math.min(maxH, (t.heat || 0) + delta));
+            t.heat = Math.max(minH, Math.min(maxH, (t.heat || minH) + delta));
         } else {
-            if (throttle === 5) t.heat = (t.heat || 0) + 22;
-            else if (throttle === 4) t.heat = Math.max(0, (t.heat || 0) - 2);
-            else if (throttle === 3) t.heat = Math.max(0, (t.heat || 0) - 6);
-            else if (throttle === 2) t.heat = Math.max(0, (t.heat || 0) - 12);
-            else if (throttle === 1) t.heat = Math.max(0, (t.heat || 0) - 18);
+            if (throttle === 5) t.heat = (t.heat || minH) + 22;
+            else if (throttle === 4) t.heat = Math.max(minH, (t.heat || minH) - 2);
+            else if (throttle === 3) t.heat = Math.max(minH, (t.heat || minH) - 6);
+            else if (throttle === 2) t.heat = Math.max(minH, (t.heat || minH) - 12);
+            else if (throttle === 1) t.heat = Math.max(minH, (t.heat || minH) - 18);
 
             if (t.heat >= maxH) {
                 t.flameout = true;
@@ -114,7 +116,7 @@ GameContext.stateMachine = {
         const t = this.getTeamOrNull(teamId);
         if (!t || t.isDestroyed || GameContext.isAnimating() || t.ready) return false;
         const nextLevel = Math.max(1, Math.min(5, Math.round(level)));
-        if (nextLevel === 5 && t.heat > 40) return false;
+        if (nextLevel === 5 && (typeof getEngineHeatLevel === 'function' ? getEngineHeatLevel(t.heat) : ((t.heat || 0) - 150)) > 40) return false;
         t.throttle = nextLevel;
         return true;
     },
@@ -482,6 +484,9 @@ GameContext.stateMachine = {
         } else if (cause === 'midair') {
             statusText = '空中相撞';
             reason = 'Mid-air collision';
+        } else if (cause === 'airspace') {
+            statusText = '離開作戰空域';
+            reason = 'Left combat airspace';
         } else if (cause === 'impact') {
             statusText = stalled ? '失速撞毀' : '撞擊墜毀';
             reason = stalled ? 'Stall impact (unspecified)' : 'Impact destruction';

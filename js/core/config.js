@@ -25,15 +25,31 @@ const CONFIG = {
     },
 
     rules: {
-        maxSteps: 3,         
-        maxHeat: 100,        
+        maxSteps: 3,
+        /** Idle / floor engine temp (°C). Stored heat is absolute; AI uses getEngineHeatLevel(). */
+        minHeat: 150,
+        maxHeat: 250,        // was 100; span unchanged (+150 idle offset)
+        abLockHeatOffset: 40, // cannot light AB when level (heat - minHeat) > this
         maxAp: 300,
         stepsPerTurn: 100,       // 每回合推演的總影格數 (時間解析度)
         maxEngagementTurns: 150,   // 雙 AI 長局上限，超過判和
         gravity: 9.8,            // 遊戲世界的重力常數
         missileLaunchDelay: 12,  // 飛彈連續齊射的間隔幀數 (防相撞)
         stallSpeedAP: 35,        // 觸發失速的最低 AP 門檻（放寬：原 45）
-        minFlightHeight: 0.5     // 強制判定墜機/失速的最低高度 (m)
+        minFlightHeight: 0.5,    // 強制判定墜機/失速的最低高度 (m)
+        /**
+         * Combat airspace cylinder (XZ). Diameter matches tactical ground plane (900).
+         * Outside hardRadius = leave airspace → destroyed. Soft band steers AI inward.
+         */
+        combatAirspace: {
+            enabled: true,
+            diameter: 900,
+            softMargin: 220,  // AI bias starts at radius - softMargin
+            warnMargin: 200,  // human caution tape from radius - warnMargin
+            // null → use battlefield / ground center at runtime
+            centerX: null,
+            centerZ: null
+        }
     },
 
     aircrafts: {
@@ -295,6 +311,35 @@ const CONFIG = {
         ]
     }
 };
+
+/** Absolute idle engine temperature (°C). */
+function getEngineHeatIdle() {
+    const v = (typeof CONFIG !== 'undefined' && CONFIG.rules) ? Number(CONFIG.rules.minHeat) : NaN;
+    return Number.isFinite(v) ? v : 150;
+}
+
+/** Absolute max engine temperature (°C). */
+function getEngineHeatMax() {
+    const v = (typeof CONFIG !== 'undefined' && CONFIG.rules) ? Number(CONFIG.rules.maxHeat) : NaN;
+    return Number.isFinite(v) ? v : 250;
+}
+
+/**
+ * Normalize absolute °C to the legacy 0–100 decision scale
+ * (idle → 0, max → 100) so AI / AB-lock thresholds stay unchanged.
+ */
+function getEngineHeatLevel(heat) {
+    const idle = getEngineHeatIdle();
+    return (Number(heat) || idle) - idle;
+}
+
+/** Absolute °C above which AB ignition is blocked. */
+function getEngineHeatAbLock() {
+    const offset = (typeof CONFIG !== 'undefined' && CONFIG.rules && Number.isFinite(Number(CONFIG.rules.abLockHeatOffset)))
+        ? Number(CONFIG.rules.abLockHeatOffset)
+        : 40;
+    return getEngineHeatIdle() + offset;
+}
 
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = CONFIG;

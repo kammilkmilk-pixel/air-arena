@@ -405,7 +405,7 @@ function checkInit() {
                 let t = teams[id];
                 if (!t || !t.wrapper) return;
                 t.ap = (CONFIG.aircrafts[t.type || 'mig21'] && CONFIG.aircrafts[t.type || 'mig21'].baseAp) || 165;   
-                t.heat = 0;
+                t.heat = (typeof getEngineHeatIdle === 'function') ? getEngineHeatIdle() : 150;
                 t.gunHeat = 0;
                 t.hp = 100;  
                 t.chain = [{yaw:0, pitch:0, roll:0, throttle:t.throttle, fire:'none'}];
@@ -730,7 +730,8 @@ function animate() {
     });
 
     if (typeof updateSpatialHelpers === 'function') updateSpatialHelpers();
-    if (typeof updateDynamicHUD === 'function') updateDynamicHUD(); 
+    if (typeof updateDynamicHUD === 'function') updateDynamicHUD();
+    if (typeof window.updateCombatAirspaceVfx === 'function') window.updateCombatAirspaceVfx();
 
     // ==========================================
     // 1. ACMI 重播模式

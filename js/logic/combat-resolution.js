@@ -340,6 +340,18 @@ function resolveDamageAndDeathForStep(step, ratio, ctx) {
             hasCollided = true; collisionType = "ground";
         }
 
+        // Left combat airspace (horizontal cylinder around battlefield center).
+        if (
+            !isFallingWreck &&
+            ctx.death[id] === -1 &&
+            !hasCollided &&
+            typeof isOutsideCombatAirspace === 'function' &&
+            isOutsideCombatAirspace(currentPos)
+        ) {
+            hasCollided = true;
+            collisionType = 'airspace';
+        }
+
         if (isFallingWreck && currentPos.y <= minH + 0.15) {
             if (!ctx.log.wreckGroundBurst) ctx.log.wreckGroundBurst = {};
             ctx.log.wreckGroundBurst[id] = true;
@@ -355,7 +367,9 @@ function resolveDamageAndDeathForStep(step, ratio, ctx) {
             if (!ctx.log.softWreck) ctx.log.softWreck = {};
             ctx.log.softWreck[id] = false;
             if (!ctx.log.deathCause) ctx.log.deathCause = {};
-            ctx.log.deathCause[id] = collisionType === 'ground' ? 'ground' : 'building';
+            ctx.log.deathCause[id] = collisionType === 'ground'
+                ? 'ground'
+                : (collisionType === 'airspace' ? 'airspace' : 'building');
             if (!ctx.log.deathFlags) ctx.log.deathFlags = {};
             const stallAp = (typeof CONFIG !== 'undefined' && CONFIG.rules && CONFIG.rules.stallSpeedAP) ? CONFIG.rules.stallSpeedAP : 35;
             const pathAp = (t.chain && t.chain[0] && typeof t.chain[0].resultingAP === 'number') ? t.chain[0].resultingAP : null;
@@ -364,10 +378,15 @@ function resolveDamageAndDeathForStep(step, ratio, ctx) {
                 stalled: stalledAtImpact,
                 ap: Number.isFinite(pathAp) ? pathAp : (typeof t.ap === 'number' ? t.ap : null)
             };
-            ctx.log.vfxTriggers.push({ type: 'explosion', step: step, pos: currentPos.clone(), scale: 2.3, rot: Math.random()*Math.PI*2 });
-            ctx.log.vfxTriggers.push({ type: 'spark_explosion', step: step, pos: currentPos.clone(), velocities: genSparks(60, 0.7), wind: new THREE.Vector3(0,0,0) });
-            ctx.log.vfxTriggers.push({ type: 'flash', step: step, pos: currentPos.clone(), rot: Math.random()*Math.PI*2, scale: 1.5 });
-            if (CONFIG.debug) console.log(`💥 [撞擊事故] ${id.toUpperCase()} 戰機規避失敗，直接撞毀於 ${collisionType === 'building' ? '城市建築' : '地面'}！`);
+            if (collisionType === 'airspace') {
+                ctx.log.vfxTriggers.push({ type: 'flash', step: step, pos: currentPos.clone(), rot: Math.random()*Math.PI*2, scale: 1.2 });
+                if (CONFIG.debug) console.log(`🚫 [空域] ${id.toUpperCase()} 離開作戰空域，判定擊落！`);
+            } else {
+                ctx.log.vfxTriggers.push({ type: 'explosion', step: step, pos: currentPos.clone(), scale: 2.3, rot: Math.random()*Math.PI*2 });
+                ctx.log.vfxTriggers.push({ type: 'spark_explosion', step: step, pos: currentPos.clone(), velocities: genSparks(60, 0.7), wind: new THREE.Vector3(0,0,0) });
+                ctx.log.vfxTriggers.push({ type: 'flash', step: step, pos: currentPos.clone(), rot: Math.random()*Math.PI*2, scale: 1.5 });
+                if (CONFIG.debug) console.log(`💥 [撞擊事故] ${id.toUpperCase()} 戰機規避失敗，直接撞毀於 ${collisionType === 'building' ? '城市建築' : '地面'}！`);
+            }
         }
 
         // Combat kill (gun/missile): mark death this step and soft-wreck fall for remaining path.

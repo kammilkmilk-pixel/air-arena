@@ -71,7 +71,9 @@ function buildMissileHeatSources(shooterId, ratio, currentFlares) {
             id,
             pos,
             quat,
-            baseHeat: 100 + (Number(t.heat) || 0)
+            baseHeat: 100 + ((typeof getEngineHeatLevel === 'function')
+                ? getEngineHeatLevel(t.heat)
+                : Math.max(0, (Number(t.heat) || 150) - 150))
         });
     });
 
@@ -264,7 +266,9 @@ function simulateMissileStep(mPos, mQuat, targetPos, targetQuat, mAP, teamObj, e
                 id: enemyObj.id,
                 pos: targetPos.clone ? targetPos.clone() : targetPos,
                 quat: targetQuat,
-                baseHeat: 100 + (Number(enemyObj.heat) || 0)
+                baseHeat: 100 + ((typeof getEngineHeatLevel === 'function')
+                    ? getEngineHeatLevel(enemyObj.heat)
+                    : Math.max(0, (Number(enemyObj.heat) || 150) - 150))
             }];
             (currentFlares || []).forEach((flare, idx) => {
                 if (!flare || !flare.pos) return;

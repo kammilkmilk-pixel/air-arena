@@ -63,6 +63,62 @@ function uiHideComputingOverlay() {
     }
 }
 
+function uiGetLivingHumanTeamIds() {
+    const living = (GameContext.getLivingTeamIds && GameContext.getLivingTeamIds())
+        || (typeof uiLivingTeamIds === 'function' ? uiLivingTeamIds() : []);
+    return living.filter((id) => {
+        const t = teams[id];
+        return !!(t && !t.aiEnabled && !t.isDestroyed && t.matchActive !== false);
+    });
+}
+
+/** Prefer current human seat, else same-faction human, else first living human. */
+function uiPickControlTeamAfterSettle(preferredId) {
+    const humans = uiGetLivingHumanTeamIds();
+    if (!humans.length) {
+        return preferredId || GameContext.getActiveTeamId() || 'red';
+    }
+    if (preferredId && humans.includes(preferredId)) return preferredId;
+    const active = GameContext.getActiveTeamId();
+    if (humans.includes(active)) return active;
+    if (active && GameContext.getFaction) {
+        const af = GameContext.getFaction(active);
+        const same = humans.find((id) => GameContext.getFaction(id) === af);
+        if (same) return same;
+    }
+    return humans[0];
+}
+
+/**
+ * After combat settle: if any human is alive, force their seat + camera and show stick panel.
+ * Fixes occasional stuck state when active seat was AI (or computing overlay hid controls).
+ */
+function uiForceHumanControlView() {
+    const humans = uiGetLivingHumanTeamIds();
+    if (!humans.length) {
+        if (typeof uiSyncSelectionChrome === 'function') uiSyncSelectionChrome(uiCurrentTeamId());
+        return null;
+    }
+    const next = uiPickControlTeamAfterSettle(GameContext.getActiveTeamId());
+    if (typeof selectTeam === 'function') {
+        selectTeam(next);
+    } else {
+        GameContext.setActiveTeamId(next);
+    }
+    // Guarantee panel even if selectTeam no-op'd (replay/matchActive edge cases).
+    if (!GameContext.isAnimating() && !GameContext.isReplayMode()) {
+        uiSetControlsVisible(true);
+        const t = teams[next];
+        if (t && typeof updateDashboardUI === 'function') updateDashboardUI(t);
+        if (t && typeof uiRefreshPreview === 'function') uiRefreshPreview(t);
+    } else if (typeof uiSyncSelectionChrome === 'function') {
+        uiSyncSelectionChrome(next);
+    }
+    return next;
+}
+window.uiForceHumanControlView = uiForceHumanControlView;
+window.uiPickControlTeamAfterSettle = uiPickControlTeamAfterSettle;
+
 function uiSetComputeSub(subtitle) {
     const sub = document.getElementById('compute-lock-sub');
     if (!sub) return;
@@ -2011,10 +2067,12 @@ document.addEventListener("DOMContentLoaded", () => {
             else if (percent > 0.2) newLevel = 2; // IDL
             else newLevel = 1;                    // BRK (空氣減速板)
 
-            // 後燃器過熱保險鎖定
-            if (newLevel === 5 && t.heat > 40) {
+            // 後燃器過熱保險鎖定（絕對溫標：idle+40，預設 190°C）
+            const abLockAbs = (typeof getEngineHeatAbLock === 'function') ? getEngineHeatAbLock() : 190;
+            const heatLv = (typeof getEngineHeatLevel === 'function') ? getEngineHeatLevel(t.heat) : ((Number(t.heat) || 150) - 150);
+            if (newLevel === 5 && heatLv > 40) {
                 newLevel = 4; 
-                showSMSAlert("🛑 溫度過高：必須低於 40°C 才能點火後燃器！", "#ff0055");
+                showSMSAlert(`🛑 溫度過高：必須低於 ${abLockAbs}°C 才能點火後燃器！`, "#ff0055");
             }
 
             if (t.throttle !== newLevel) {
@@ -2101,6 +2159,22 @@ document.addEventListener("DOMContentLoaded", () => {
     if(btnEnt) btnEnt.addEventListener('click', () => {
         uiToggleWeaponFireQueue();
     });
+
+    // 戰術電腦中央：規劃中 ▶／執行（等同席位「規劃中／待命中」）
+    const btnSmsExec = document.getElementById('sms-exec-btn');
+    if (btnSmsExec) {
+        btnSmsExec.addEventListener('click', () => {
+            const teamId = uiCurrentTeamId();
+            if (!uiIsSeatLive(teamId)) return;
+            const t = teams[teamId];
+            if (!t || t.isDestroyed || GameContext.isAnimating() || GameContext.isReplayMode()) return;
+            if (t.aiEnabled) {
+                uiToggleAIDebugForTeam(teamId);
+                return;
+            }
+            toggleReadyState(teamId);
+        });
+    }
 
     // 🌟 頂部 Flare 釋放與武裝事件
     const btnFlare = document.getElementById('btn-flare');
@@ -2260,9 +2334,13 @@ function updateDashboardUI(teamObj) {
     let costAp = (typeof teamObj.previewCostAp === 'number' && !isNaN(teamObj.previewCostAp)) ? teamObj.previewCostAp : 0;
     let previewAp = Math.max(0, baseAp - costAp);
 
-    let baseHeat = (typeof teamObj.heat === 'number' && !isNaN(teamObj.heat)) ? teamObj.heat : 0;
+    let baseHeat = (typeof teamObj.heat === 'number' && !isNaN(teamObj.heat))
+        ? teamObj.heat
+        : ((typeof getEngineHeatIdle === 'function') ? getEngineHeatIdle() : 150);
     let accHeat = (typeof teamObj.previewAccumHeat === 'number' && !isNaN(teamObj.previewAccumHeat)) ? teamObj.previewAccumHeat : 0;
-    let previewHeat = Math.min(100, baseHeat + accHeat);
+    const heatIdle = (typeof getEngineHeatIdle === 'function') ? getEngineHeatIdle() : 150;
+    const heatMax = (typeof getEngineHeatMax === 'function') ? getEngineHeatMax() : 250;
+    let previewHeat = Math.min(heatMax, Math.max(heatIdle, baseHeat + accHeat));
 
     let apVal = document.getElementById('hud-val-ap'); let apNeedle = document.getElementById('needle-ap');
     if (apVal) apVal.innerText = Math.floor(previewAp);
@@ -2276,9 +2354,14 @@ function updateDashboardUI(teamObj) {
 
     let heatVal = document.getElementById('hud-val-heat'); let heatNeedle = document.getElementById('needle-heat');
     if (heatVal) heatVal.innerText = Math.floor(previewHeat);
-    // 🌟 指針上限調整至 100 滿表
+    // 指針：idle(150)→左端，max(250)→右端
     if (heatNeedle) {
-        let maxGaugeHeat = 100; let deg = -90 + (previewHeat / maxGaugeHeat) * 180; if (isNaN(deg)) deg = -90; deg = Math.max(-90, Math.min(90, deg));
+        const minH = (typeof getEngineHeatIdle === 'function') ? getEngineHeatIdle() : 150;
+        const maxH = (typeof getEngineHeatMax === 'function') ? getEngineHeatMax() : 250;
+        const span = Math.max(1, maxH - minH);
+        let deg = -90 + ((previewHeat - minH) / span) * 180;
+        if (isNaN(deg)) deg = -90;
+        deg = Math.max(-90, Math.min(90, deg));
         let theta = deg * Math.PI / 180; let x2 = 50 + 28 * Math.sin(theta); let y2 = 50 - 28 * Math.cos(theta);
         heatNeedle.setAttribute('x2', x2); heatNeedle.setAttribute('y2', y2); heatNeedle.style.transform = ''; 
     }
@@ -2397,6 +2480,30 @@ function updateDashboardUI(teamObj) {
             btnChaff.style.borderColor = '#00e5ff';
             btnChaff.style.background = '#111';
             btnChaff.style.boxShadow = 'none';
+        }
+    }
+
+    // 戰術電腦中央執行鈕：規劃中 ▶ ↔ 待命中／執行
+    const btnSmsExec = document.getElementById('sms-exec-btn');
+    if (btnSmsExec) {
+        const live = uiIsSeatLive(teamObj.id);
+        btnSmsExec.classList.remove('is-ready', 'is-ai');
+        btnSmsExec.disabled = !live || !!teamObj.isDestroyed || GameContext.isAnimating() || GameContext.isReplayMode();
+        if (!live || teamObj.isDestroyed) {
+            btnSmsExec.innerText = '—';
+            btnSmsExec.title = '';
+        } else if (teamObj.aiEnabled) {
+            btnSmsExec.classList.add('is-ai');
+            btnSmsExec.innerText = 'AI 決策';
+            btnSmsExec.title = '點擊打開／收合決策樹';
+            btnSmsExec.disabled = false;
+        } else if (teamObj.ready) {
+            btnSmsExec.classList.add('is-ready');
+            btnSmsExec.innerText = '待命中';
+            btnSmsExec.title = '取消待命／返回規劃';
+        } else {
+            btnSmsExec.innerText = '規劃中 ▶';
+            btnSmsExec.title = '確認規劃並執行';
         }
     }
 
@@ -2597,6 +2704,8 @@ function uiOnEnginePhaseChanged(e) {
         case 'playing':
             uiClearAutoAIBattleTimer();
             uiHideComputingOverlay();
+            // Playback: keep stick panel tucked away regardless of active seat.
+            uiSetControlsVisible(false);
             if(repStatus) { repStatus.innerText = "狀態: 播放中"; repStatus.style.color = "#aaa"; }
             if(repSlider) { 
                 repSlider.min = 1; 
@@ -2604,7 +2713,6 @@ function uiOnEnginePhaseChanged(e) {
                 repSlider.step = 0.01; 
                 repSlider.disabled = false; 
             }
-            uiSyncSelectionChrome(uiCurrentTeamId());
             break;
         case 'planning':
             uiHideComputingOverlay();
@@ -2614,12 +2722,14 @@ function uiOnEnginePhaseChanged(e) {
                 uiClearAutoAIBattleTimer();
                 if(repStatus) { repStatus.innerText = "狀態: 殘骸墜落中"; repStatus.style.color = "#ff9800"; }
                 uiShowPhaseBanner(`ROUND ${data.turn}<br><span style="font-size: 20px; color: #eee; letter-spacing: 4px; text-shadow: 2px 2px 4px #000;">殘骸墜落</span>`);
-                uiSyncSelectionChrome(uiCurrentTeamId());
+                if (typeof uiForceHumanControlView === 'function') uiForceHumanControlView();
+                else uiSyncSelectionChrome(uiCurrentTeamId());
                 break;
             }
             if(repStatus) { repStatus.innerText = "狀態: 戰術規劃中"; repStatus.style.color = "#aaa"; }
             uiShowPhaseBanner(`ROUND ${data.turn}<br><span style="font-size: 20px; color: #eee; letter-spacing: 4px; text-shadow: 2px 2px 4px #000;">戰術規劃階段</span>`);
-            uiSyncSelectionChrome(uiCurrentTeamId());
+            if (typeof uiForceHumanControlView === 'function') uiForceHumanControlView();
+            else uiSyncSelectionChrome(uiCurrentTeamId());
             if (uiAreBothTeamsAI()) {
                 uiScheduleBothAITurn();
             } else {
