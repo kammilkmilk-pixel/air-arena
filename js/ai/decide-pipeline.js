@@ -40,7 +40,7 @@
         sensorBlind: 'no track: search ground safety or bearing search',
         obstacleEmergency: 'high building risk escape before dive pull-up',
         groundEmergency: 'emergencyPullUp / recoverLock / navClimbOut(postGroundClimbOut commitment)',
-        airspaceBoundary: 'soft turn inward near combat airspace rim (hard kill is sim-side)',
+        airspaceBoundary: 'AO rim inward; yield to buildings; punch-out only near hard with open cover',
         alignFirst: 'clear-LOS nose align (handled inside fox2Opening gate)',
         fox2Opening: 'FOX2-FIRST opening shot / alignFirst / roof dash / prep',
         altitudeTerrain: 'combat band / terrainEscape / groundAvoid / shallowDive',

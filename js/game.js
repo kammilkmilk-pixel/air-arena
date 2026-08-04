@@ -195,6 +195,8 @@ function zoomToAircraft(teamId) {
 
 /** Predetermined chase distance from selected aircraft (world units). */
 const CHASE_CAM_DIST = 8;
+/** Seat-select default: place aircraft this fraction of viewport height lower in frame. */
+const CHASE_CAM_FRAME_DOWN = 0.10;
 const _chaseAway = new THREE.Vector3();
 
 /** Prefer explicit camera override, else the selected aircraft's locked target. */
@@ -216,6 +218,7 @@ function resolveChaseLookTeam(host) {
 /**
  * Camera CHASE_CAM_DIST from selected aircraft; when a lock exists, sit on the aircraft→target axis
  * (aircraft as pivot) and aim at the locked target.
+ * No-lock (team-button default): bias look-at up so the jet sits ~10% lower in frame.
  */
 function getAircraftChaseCamPose(host, lookTeam) {
     const hostPos = host.wrapper.position;
@@ -238,6 +241,12 @@ function getAircraftChaseCamPose(host, lookTeam) {
     if (_chaseAway.lengthSq() < 1e-6) _chaseAway.set(0, 0.35, -1).applyQuaternion(quat);
     _chaseAway.normalize();
     const camPos = hostPos.clone().addScaledVector(_chaseAway, CHASE_CAM_DIST);
+    // Default seat framing: raise look-at so aircraft sits ~10% lower on screen.
+    if (!lookTeam) {
+        const fovDeg = (typeof camera !== 'undefined' && Number.isFinite(camera.fov)) ? camera.fov : 60;
+        const viewHalfH = CHASE_CAM_DIST * Math.tan((fovDeg * Math.PI / 180) * 0.5);
+        targetPos.y += viewHalfH * 2 * CHASE_CAM_FRAME_DOWN;
+    }
     return { camPos, targetPos };
 }
 

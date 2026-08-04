@@ -80,12 +80,17 @@
         engageHandoffMediumAlt: 30,
         engageHandoffHighAlt: 32,
         engageHandoffDiveAltMax: 52,
+        engageHandoffContactDist: 14,
+        engageHandoffContactDiveFy: -0.42,
         // Missile salvo vs enemy flares: prefer single when foe can waste both FOX-2s.
         enemyFlareLikelyAmmo: 2,
         missileSalvoDualChance: 0.22,
         missileSalvoDualChanceNoFlare: 0.48,
         // Flare decision jitter (1 = always keep when gate says flare).
         flareUrgentKeepChance: 0.96,
-        flareSoftKeepChance: 0.72
+        flareSoftKeepChance: 0.72,
+        // Tactical approach: random among near-ties only (|Δscore|≤eps). 0 disables.
+        tacticalTieEps: 12,
+        tacticalTieRandom: 1
     };
 });

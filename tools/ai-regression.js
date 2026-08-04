@@ -19,6 +19,7 @@ const TUNING_FILE = path.join(ROOT, 'js', 'ai', 'pilot-tuning.local.js');
 const sharedDefaults = require(path.join(ROOT, 'js', 'ai', 'pilot-tuning-defaults.js'));
 const weaponEnvelope = require(path.join(ROOT, 'js', 'ai', 'weapon-envelope.js'));
 const buildingRisk = require(path.join(ROOT, 'js', 'ai', 'building-risk.js'));
+const aiMapApi = require(path.join(ROOT, 'js', 'ai', 'ai-map.js'));
 const PARAM_KEYS = sharedDefaults.PARAM_KEYS;
 const DEFAULT_PARAMS = Object.fromEntries(PARAM_KEYS.map((key) => [key, sharedDefaults[key]]));
 const ENVELOPE = weaponEnvelope.getCombatRanges();
@@ -115,7 +116,86 @@ function distanceToEnemy(state) {
 }
 
 function makeObstacle(x, z, radius, height = 70, id = 'building') {
-    return { id, x, z, radius, height };
+    return {
+        id,
+        x,
+        z,
+        radius,
+        height,
+        // Phase 1: box for AirArenaAiMap.bakeFromObstacles (regression spatial OS).
+        _box: {
+            min: { x: x - radius, y: 0, z: z - radius },
+            max: { x: x + radius, y: height, z: z + radius }
+        }
+    };
+}
+
+/** Bake thin AI map from episode obstacles (mirrors live sidecar / bakeFromObstacles). */
+function bakeAiMapForObstacles(obstacles) {
+    if (!obstacles || !obstacles.length || !aiMapApi || typeof aiMapApi.bakeFromObstacles !== 'function') {
+        return null;
+    }
+    return aiMapApi.bakeFromObstacles(obstacles, {
+        mapId: 'regression',
+        cellSize: 10,
+        pad: 80
+    });
+}
+
+/**
+ * Phase 1 bake soft-clear sample (same contract as PilotAI.sampleAiMapContext).
+ * Used to suppress false urbanPressure / energy-climb thrash in the surrogate FSM.
+ */
+function sampleBakeClear(state, aiMap) {
+    const empty = {
+        available: false,
+        clearAbove: false,
+        skyOpen: false,
+        mapLane: null,
+        margin: null,
+        corridor: null
+    };
+    if (!aiMap || !state || typeof aiMapApi.query !== 'function') return empty;
+    const cell = aiMapApi.query(aiMap, state.x, state.z);
+    const local = aiMapApi.queryRoofMaxInRadius
+        ? aiMapApi.queryRoofMaxInRadius(aiMap, state.x, state.z, 80)
+        : null;
+    if (!cell && !(local && local.ok)) return empty;
+    const cellRoof = cell && cell.ok ? Number(cell.roofMax) || 0 : 0;
+    const localRoof = (local && local.ok) ? Number(local.roofMax) || 0 : cellRoof;
+    const alt = Number(state.altitude);
+    const margin = Number.isFinite(alt) ? alt - localRoof : null;
+    const cellSky = !!(cell && cell.ok && cell.skyOpen);
+    const skyOpen = cellSky || (Number.isFinite(margin) && margin >= 8 && localRoof < 40);
+    const sarhPerch = !!(cell && cell.ok && cell.sarhPerch)
+        || (Number.isFinite(margin) && margin >= 12 && localRoof < 32);
+    const clearAbove =
+        Number.isFinite(margin) &&
+        margin >= 8 &&
+        (skyOpen || sarhPerch || localRoof < 40);
+    let corridor = null;
+    if (typeof aiMapApi.samplePlannerCorridor === 'function') {
+        const heading = typeof headingToVector === 'function'
+            ? headingToVector(state.heading)
+            : { x: Math.sin(state.heading || 0), z: Math.cos(state.heading || 0) };
+        corridor = aiMapApi.samplePlannerCorridor(
+            aiMap,
+            state.x,
+            state.z,
+            heading.x,
+            heading.z,
+            alt,
+            { margin: 8 }
+        );
+    }
+    return {
+        available: true,
+        clearAbove,
+        skyOpen,
+        mapLane: cell && cell.ok && cell.lane ? cell.lane : null,
+        margin: Number.isFinite(margin) ? Number(margin.toFixed(1)) : null,
+        corridor
+    };
 }
 
 const CONFIG_DEFAULT_BUILDINGS = [
@@ -249,7 +329,7 @@ function distancePointToSegment(px, pz, ax, az, bx, bz) {
     return Math.hypot(px - cx, pz - cz);
 }
 
-function scoreUrbanAction(state, action, params, obstacles, cover = {}) {
+function scoreUrbanAction(state, action, params, obstacles, cover = {}, bake = null) {
     const sim = cloneProbeState(state);
     sim._obstacles = obstacles;
     let minClearance = Infinity;
@@ -318,6 +398,40 @@ function scoreUrbanAction(state, action, params, obstacles, cover = {}) {
     if (action.state === 'obstacleClimbGate') {
         if (!shouldAllowUrbanClimb(state.altitude, cover, obstacles.length >= 8, params)) score -= 130;
         else if (cover.collisionRisk === 'medium') score -= 35;
+    }
+    // Phase 2: bake corridor / soft-clear score bias (mirror live planner).
+    if (bake && bake.available) {
+        if (bake.clearAbove && cover.collisionRisk !== 'high') {
+            if (action.state === 'urbanPreemptiveAvoid' || action.state === 'obstacleEnergyClimb') score -= 160;
+            if (action.state === 'urbanBuildingWeave' && (action.joyY || 0) <= 0.22) score += 24;
+            if (action.state === 'urbanRouteEscape' && Math.abs(action.joyX || 0) <= 0.55) score += 18;
+        }
+        const corr = bake.corridor;
+        if (corr && corr.ok) {
+            const sx = Math.sign(Number(action.joyX) || 0) || 0;
+            if (corr.strength >= 1 && corr.preferredSide && sx) {
+                if (sx === corr.preferredSide) score += corr.strength >= 2 ? 40 : 22;
+                else if (sx === -corr.preferredSide) score -= corr.strength >= 2 ? 52 : 28;
+            }
+            if (corr.corridorOpen && action.state === 'urbanBuildingWeave') score += 28;
+            if (corr.forwardClear && (action.state === 'urbanClimbingTurn' || action.state === 'obstacleClimbGate')) {
+                score += bake.clearAbove ? 10 : 22;
+            }
+            if (!corr.forwardClear && action.state === 'urbanClimbingTurn' && (action.joyY || 0) >= 0.5) {
+                score -= 36;
+            }
+        }
+    }
+    // H7: low AP — prefer mild thr3 routes over weave / energy climb.
+    if (state.ap < Number(params.lowAp || 65) || state.stalled) {
+        if (action.state === 'obstacleEnergyClimb') score -= 180;
+        if (action.state === 'urbanBuildingWeave') score -= 70;
+        if (action.state === 'urbanClimbingTurn' && (action.joyY || 0) > 0.35) score -= 50;
+        if (Math.abs(action.joyX || 0) > 0.55) score -= 40;
+        if ((action.throttle || 0) >= 5) score -= 55;
+        if (action.state === 'urbanRouteEscape' && (action.throttle || 0) <= 3 && Math.abs(action.joyX || 0) <= 0.5) {
+            score += 36;
+        }
     }
     return { action, score };
 }
@@ -396,7 +510,82 @@ function adjustActionForCombatBand(action, state, cover, params) {
     return action;
 }
 
-function planUrbanAction(state, params, obstacles, cover, preferredSide) {
+function applyEnergyEscapeCap(action, state, params) {
+    if (!action || typeof action !== 'object') return action;
+    const soft = new Set([
+        'obstacleEmergencyEscape',
+        'obstacleEnergyClimb',
+        'urbanRouteEscape',
+        'urbanBuildingWeave',
+        'urbanPreemptiveAvoid',
+        'urbanClimbingTurn',
+        'urbanBrakeTurn',
+        'obstacleClimbGate',
+        'safetyObstacleEscapePrimary'
+    ]);
+    if (!soft.has(action.state)) return action;
+    const energyBad = !!state.stalled || state.ap < Number(params.energyCriticalAp || 52);
+    const energyTight = energyBad || state.ap < Number(params.lowAp || 65);
+    if (!energyTight) return action;
+    if (typeof action.throttle === 'number') {
+        action.throttle = Math.min(action.throttle, 3);
+    }
+    const joyCap = energyBad ? 0.28 : 0.36;
+    if (Math.abs(Number(action.joyX) || 0) > joyCap) {
+        action.joyX = clamp(action.joyX, -joyCap, joyCap);
+    }
+    if (Number(action.joyY) > (energyBad ? 0.12 : 0.2)) {
+        action.joyY = energyBad ? 0.12 : 0.2;
+    }
+    return action;
+}
+
+/** True contact that must keep a lateral stick (cannot pure energyRecover). */
+function isTrueContactEscape(cover = {}) {
+    const dist = Number(cover.distance);
+    const fwd = Number(cover.forwardDistance);
+    if (Number.isFinite(dist) && dist < 8) return true;
+    if (Number.isFinite(fwd) && fwd > 0 && fwd < 10) return true;
+    return false;
+}
+
+/**
+ * H7: after repeated escape while AP falls, unload to energyRecover.
+ * Surrogate sticks even at ECO still net-bleed ~3 AP/turn at |joyX|≈0.4.
+ */
+function shouldAbortEscapeBleed(state, cover, params) {
+    const streak = Number(state._escapeBleedStreak) || 0;
+    if (streak < 1) return false;
+    if (state.ap >= Number(params.lowAp || 65)) return false;
+    if (state.altitude < 14) return false;
+    const trueContact = isTrueContactEscape(cover);
+    const nearCrit = state.ap < Number(params.energyCriticalAp || 52) + 6;
+    // Soft pressure: abort early. True contact may keep a few sticks, then must unload.
+    if (!trueContact && (streak >= 2 || (streak >= 1 && nearCrit))) return true;
+    if (trueContact && streak >= 4) return true;
+    return false;
+}
+
+function noteEscapeBleed(state, action, prevAp) {
+    const soft = (
+        action && (
+            String(action.state).indexOf('obstacle') === 0 ||
+            String(action.state).indexOf('urban') === 0
+        ) &&
+        action.state !== 'energyRecover'
+    );
+    if (!soft) {
+        state._escapeBleedStreak = 0;
+        return;
+    }
+    if (Number.isFinite(prevAp) && state.ap < prevAp - 0.5) {
+        state._escapeBleedStreak = (Number(state._escapeBleedStreak) || 0) + 1;
+    } else if (Number.isFinite(prevAp) && state.ap >= prevAp) {
+        state._escapeBleedStreak = Math.max(0, (Number(state._escapeBleedStreak) || 0) - 1);
+    }
+}
+
+function planUrbanAction(state, params, obstacles, cover, preferredSide, bake = null) {
     const lowAltitude = state.altitude < 30;
     const lowEnergy = state.ap < params.lowAp + 4;
     const denseObstacles = obstacles.length >= 8;
@@ -407,39 +596,63 @@ function planUrbanAction(state, params, obstacles, cover, preferredSide) {
     const sideJoyY = lowAltitude ? 0.42 : (belowBand ? 0.24 : (inBand ? 0.04 : 0.16));
     const preemptJoyY = lowAltitude ? 0.34 : (belowBand ? 0.16 : (inBand ? 0.02 : 0.1));
     const tightForward = cover.forwardDistance < 38;
-    const sideOrder = [preferredSide || cover.side || 1, -(preferredSide || cover.side || 1)];
+    const bakeSoft = !!(bake && bake.available && bake.clearAbove && cover.collisionRisk !== 'high');
+    const bakeCorr = bake && bake.corridor && bake.corridor.ok ? bake.corridor : null;
+    const bakeSide = bakeCorr && bakeCorr.strength >= 1 ? Math.sign(bakeCorr.preferredSide || 0) : 0;
+    const sideOrder = [
+        bakeSide || preferredSide || cover.side || 1,
+        -(bakeSide || preferredSide || cover.side || 1)
+    ];
     const candidates = [];
+    const energyCriticalNow = state.ap < Number(params.energyCriticalAp || 52) || !!state.stalled;
     for (const side of sideOrder) {
-        candidates.push({
-            state: lowEnergy ? 'obstacleEnergyClimb' : 'obstacleEmergencyEscape',
-            throttle: state.heat > 78 ? 4 : 5,
-            joyX: clamp(side * (lowEnergy ? 0.42 : (cover.collisionRisk === 'high' ? 0.78 : 0.52)), -1, 1),
-            joyY: lowAltitude ? 0.7 : (lowEnergy ? 0.34 : (cover.collisionRisk === 'high' ? 0.48 : 0.3)),
-            fire: 'none'
-        });
+        // H7: never emit obstacleEnergyClimb when AP already low — thr3 shallow escape only.
+        if (!bakeSoft) {
+            candidates.push({
+                state: 'obstacleEmergencyEscape',
+                throttle: energyCriticalNow || lowEnergy ? 3 : (state.heat > 78 ? 4 : 5),
+                joyX: clamp(side * (lowEnergy ? 0.4 : (cover.collisionRisk === 'high' ? 0.62 : 0.5)), -0.72, 0.72),
+                joyY: lowAltitude
+                    ? (energyCriticalNow ? 0.36 : 0.55)
+                    : (lowEnergy ? 0.28 : (cover.collisionRisk === 'high' ? 0.42 : 0.28)),
+                fire: 'none'
+            });
+        }
         candidates.push({
             state: 'urbanRouteEscape',
-            throttle: state.heat > 78 ? 3 : 4,
-            joyX: clamp(side * (tightForward ? 0.72 : 0.66), -0.82, 0.82),
+            throttle: state.heat > 78 || lowEnergy ? 3 : 4,
+            joyX: clamp(side * (tightForward ? (lowEnergy ? 0.52 : 0.66) : (lowEnergy ? 0.48 : 0.58)), -0.72, 0.72),
             joyY: sideJoyY,
             fire: 'none'
         });
-        candidates.push({
-            state: 'urbanPreemptiveAvoid',
-            throttle: state.heat > 78 ? 3 : 4,
-            joyX: clamp(side * (tightForward ? 0.68 : 0.58), -0.72, 0.72),
-            joyY: preemptJoyY,
-            fire: 'none'
-        });
+        if (!bakeSoft && !energyCriticalNow) {
+            candidates.push({
+                state: 'urbanPreemptiveAvoid',
+                throttle: state.heat > 78 ? 3 : 4,
+                joyX: clamp(side * (tightForward ? 0.68 : 0.58), -0.72, 0.72),
+                joyY: preemptJoyY,
+                fire: 'none'
+            });
+        }
         // Keep forward-clear medium weave; side-lane weave is gated in live pilot-ai (P0),
         // where 3D cover + avoid memory are stronger than this 2D proxy.
         const weaveEligible =
-            cover.collisionRisk === 'medium' &&
-            cover.distance >= 10 &&
-            cover.distance <= 40 &&
-            state.altitude >= 26 &&
-            Number.isFinite(cover.forwardDistance) &&
-            cover.forwardDistance > 14;
+            (
+                cover.collisionRisk === 'medium' &&
+                cover.distance >= 10 &&
+                cover.distance <= 40 &&
+                state.altitude >= 26 &&
+                Number.isFinite(cover.forwardDistance) &&
+                cover.forwardDistance > 14
+            ) ||
+            (
+                !!bakeCorr &&
+                bakeCorr.corridorOpen &&
+                cover.collisionRisk !== 'high' &&
+                cover.distance >= 8 &&
+                cover.distance <= 36 &&
+                state.altitude >= 16
+            );
         if (weaveEligible) {
             candidates.push({
                 state: 'urbanBuildingWeave',
@@ -487,15 +700,25 @@ function planUrbanAction(state, params, obstacles, cover, preferredSide) {
         });
     }
 
+    if (!candidates.length) {
+        return applyEnergyEscapeCap({
+            state: 'urbanRouteEscape',
+            throttle: state.heat > 78 ? 3 : 4,
+            joyX: clamp((preferredSide || cover.side || 1) * 0.4, -0.55, 0.55),
+            joyY: sideJoyY,
+            fire: 'none'
+        }, state, params);
+    }
+
     const ranked = candidates
         .map((action) => {
             adjustActionForCombatBand(action, state, cover, params);
-            return scoreUrbanAction(state, action, params, obstacles, cover);
+            return scoreUrbanAction(state, action, params, obstacles, cover, bake);
         })
         .sort((a, b) => b.score - a.score);
     const best = ranked[0];
     if (best && best.action.state === 'urbanBrakeTurn') state.lastBrakeTurn = state.turn;
-    return best.action;
+    return applyEnergyEscapeCap(best.action, state, params);
 }
 
 function chooseAvoidSideByClearance(state, params, obstacles, defaultSide) {
@@ -691,22 +914,25 @@ function getRangeMode(distance, params, openSky = false, policyMode = 'heuristic
 
 function wantsAlignBeforeAccel(ctx = {}) {
     if (ctx.energyCritical || ctx.stalled || ctx.groundRisk) return false;
+    if (ctx.energyLow) return false;
     if (ctx.collisionRisk === 'high') return false;
     const angleDeg = Number(ctx.angleDeg || 0);
     const localZ = Number(ctx.localZ);
     return angleDeg > 38 || (Number.isFinite(localZ) && localZ < 0.42);
 }
 
-function buildAlignBeforeAccelAction(state, turnTowardTarget, localToEnemy, angleDeg, preferMissile) {
+function buildAlignBeforeAccelAction(state, turnTowardTarget, localToEnemy, angleDeg, preferMissile, params = null) {
     const fwdY = getForwardY(state);
-    const throttle = (angleDeg > 55 || fwdY > 0.45) ? 2 : 3;
+    const lowAp = params && state.ap < Number(params.lowAp || 65);
+    const throttle = lowAp ? 3 : ((angleDeg > 55 || fwdY > 0.45) ? 2 : 3);
     let joyY = clamp((localToEnemy.y || 0) * 0.32, -0.35, 0.35);
     if (fwdY > 0.28) joyY = Math.min(joyY, -0.28);
     else if (fwdY < -0.28 && state.altitude > 28) joyY = Math.max(joyY, 0.12);
+    const joyGain = lowAp ? 0.55 : 1.15;
     return {
         state: 'alignFirst',
         throttle,
-        joyX: clamp(turnTowardTarget * 1.15, -1, 1),
+        joyX: clamp(turnTowardTarget * joyGain, lowAp ? -0.48 : -1, lowAp ? 0.48 : 1),
         joyY: clamp(joyY, -0.75, 0.42),
         fire: preferMissile && angleDeg < 28 && state.missiles > 0 ? 'missile' : 'none'
     };
@@ -720,6 +946,17 @@ function decideFox2Opening(state, params, cover, ctx) {
     const hasMissile = state.missiles > 0;
     const ambush = !!state.fox2Ambush;
     const windowTurns = 28;
+    const energyLow = state.ap < Number(params.lowAp || 65);
+    // F opening: don't align-thrash while bleeding AP — unload first.
+    if ((energyCritical || (energyLow && state.ap < Number(params.energyCriticalAp || 52) + 8)) && !groundRisk && cover.collisionRisk !== 'high') {
+        return {
+            state: 'energyRecover',
+            throttle: 5,
+            joyX: 0.04,
+            joyY: params.recoverPitchBias,
+            fire: 'none'
+        };
+    }
     const openingRush = ambush && hasMissile && state.turn <= windowTurns && !energyCritical && !state.stalled && !groundRisk && cover.collisionRisk !== 'high' && state.altitude >= 16;
     const rangeMode = getRangeMode(distance, params, openSky, 'fox2-first');
 
@@ -727,11 +964,12 @@ function decideFox2Opening(state, params, cover, ctx) {
         angleDeg,
         localZ: localToEnemy.z,
         energyCritical,
+        energyLow,
         stalled: state.stalled,
         groundRisk,
         collisionRisk: cover.collisionRisk
     })) {
-        return buildAlignBeforeAccelAction(state, turnTowardTarget, localToEnemy, angleDeg, hasMissile);
+        return buildAlignBeforeAccelAction(state, turnTowardTarget, localToEnemy, angleDeg, hasMissile, params);
     }
 
     const inEnvelope =
@@ -1021,7 +1259,17 @@ function decideAction(state, policyMode, params, obstacles) {
             cover.distance < earlyDist ||
             (Number.isFinite(cover.forwardDistance) && cover.forwardDistance > 2 && cover.forwardDistance < earlyForward)
         );
-    const urbanPressure = cover.collisionRisk === 'medium' || cover.collisionRisk === 'high' || highEnergyEarlyAvoid;
+    // Phase 1: bake clearAbove suppresses soft urbanPressure (AABB false beside-tall).
+    const bake = sampleBakeClear(state, state._aiMap);
+    const bakeSoftClear =
+        bake.available &&
+        bake.clearAbove &&
+        cover.collisionRisk !== 'high' &&
+        !(Number.isFinite(cover.forwardDistance) && cover.forwardDistance > 0 && cover.forwardDistance < 14);
+    let urbanPressure = cover.collisionRisk === 'medium' || cover.collisionRisk === 'high' || highEnergyEarlyAvoid;
+    if (bakeSoftClear && cover.collisionRisk !== 'high') {
+        urbanPressure = false;
+    }
     const threatScore = clamp((1 - distance / 180) * 0.4 + (1 - angleDeg / 180) * 0.3, 0, 1);
     const closeCombatDefer = isCloseCombatUrbanDefer({
         coverInfo: cover,
@@ -1044,6 +1292,18 @@ function decideAction(state, policyMode, params, obstacles) {
     const openSky = obstacles.length === 0;
     const openSkyAggression = openSky ? 1.15 : 1.0;
     const rangeMode = getRangeMode(distance, params, openSky, policyMode);
+
+    // H7: escape bleed abort — unload after repeated AP-losing urban sticks.
+    if (shouldAbortEscapeBleed(state, cover, params)) {
+        state._escapeBleedStreak = 0;
+        return {
+            state: 'energyRecover',
+            throttle: 5,
+            joyX: clamp(avoidSide * 0.08, -0.16, 0.16),
+            joyY: params.recoverPitchBias,
+            fire: 'none'
+        };
+    }
 
     if (state.altitude < 20 || (state.altitude < 45 && forwardY < -0.2)) {
         const lateral = getEmergencyPullUpLateral({
@@ -1094,38 +1354,74 @@ function decideAction(state, policyMode, params, obstacles) {
     }
 
     if (cover.collisionRisk === 'high') {
-        const planned = planUrbanAction(state, params, obstacles, cover, avoidSide);
+        // H7: bake corridor/clear + mid distance is not smash — ECO plan, not thr5 yank.
+        const softHigh =
+            (bake.available && bake.clearAbove && cover.distance >= 10) ||
+            (bake.corridor && bake.corridor.ok && bake.corridor.corridorOpen && cover.distance >= 12);
+        if (softHigh && !(cover.distance < 8 || (Number.isFinite(cover.forwardDistance) && cover.forwardDistance > 0 && cover.forwardDistance < 10))) {
+            const plannedSoft = planUrbanAction(
+                state,
+                params,
+                obstacles,
+                { ...cover, collisionRisk: 'medium' },
+                avoidSide,
+                bake
+            );
+            state.avoidSide = plannedSoft.joyX >= 0 ? 1 : -1;
+            state.avoidUntil = Math.max(state.avoidUntil, state.turn + 4);
+            return applyEnergyEscapeCap(plannedSoft, state, params);
+        }
+        const planned = planUrbanAction(state, params, obstacles, cover, avoidSide, bake);
         state.avoidSide = planned.joyX >= 0 ? 1 : -1;
         state.avoidUntil = Math.max(state.avoidUntil, state.turn + 5);
         if (
             planned.state !== 'obstacleEmergencyEscape' &&
             planned.state !== 'obstacleEnergyClimb' &&
-            (cover.distance < 18 || cover.forwardDistance < 16)
+            (cover.distance < 18 || cover.forwardDistance < 16) &&
+            !energyCritical &&
+            !energyLow
         ) {
-            return {
+            return applyEnergyEscapeCap({
                 state: 'obstacleEmergencyEscape',
                 throttle: state.heat > 78 ? 4 : 5,
-                joyX: clamp(avoidSide * 0.76, -1, 1),
-                joyY: state.altitude < 30 ? 0.62 : 0.44,
+                joyX: clamp(avoidSide * 0.58, -0.68, 0.68),
+                joyY: state.altitude < 30 ? 0.48 : 0.32,
                 fire: 'none'
-            };
+            }, state, params);
         }
-        return planned;
+        return applyEnergyEscapeCap(planned, state, params);
     }
 
     if (state.stalled || (state.pitch > params.stallPitchThreshold && state.ap < params.lowAp)) {
-        if (denseUrban && urbanPressure && !closeCombatDefer) {
-            const planned = planUrbanAction(state, params, obstacles, cover, avoidSide);
-            planned.joyY = Math.max(planned.joyY || 0, state.altitude < 32 ? 0.28 : (state.altitude < 42 ? 0.12 : 0));
-            planned.throttle = Math.max(planned.throttle || 4, 4);
+        // H7: do not force thr4 urban weave while stalled — unload or mild ECO escape.
+        if (
+            denseUrban &&
+            urbanPressure &&
+            !closeCombatDefer &&
+            cover.collisionRisk === 'high' &&
+            !(bake.available && bake.clearAbove)
+        ) {
+            const planned = planUrbanAction(state, params, obstacles, cover, avoidSide, bake);
+            planned.joyY = Math.max(Math.min(planned.joyY || 0, 0.28), state.altitude < 32 ? 0.16 : 0);
+            planned.throttle = Math.min(planned.throttle || 3, 3);
+            planned.joyX = clamp(planned.joyX || 0, -0.42, 0.42);
             state.avoidSide = planned.joyX >= 0 ? 1 : -1;
             state.avoidUntil = Math.max(state.avoidUntil, state.turn + 4);
-            return planned;
+            return applyEnergyEscapeCap(planned, state, params);
         }
         return { state: 'stallBreakout', throttle: 5, joyX: 0, joyY: state.altitude > 34 ? -0.38 : -0.12, fire: 'none' };
     }
 
-    if (energyCritical && !urbanPressure) {
+    // H7: energy recover even under soft urban pressure (was blocked → weave spiral).
+    if (
+        energyCritical &&
+        (
+            !urbanPressure ||
+            cover.collisionRisk !== 'high' ||
+            (bake.available && bake.clearAbove)
+        ) &&
+        !(cover.collisionRisk === 'high' && cover.distance < 12)
+    ) {
         return { state: 'energyRecover', throttle: 5, joyX: 0.04, joyY: params.recoverPitchBias, fire: 'none' };
     }
 
@@ -1235,8 +1531,38 @@ function decideAction(state, policyMode, params, obstacles) {
         };
     }
 
+    // H7: low-AP under soft/medium urban — rebuild before weave (critical already handled above).
+    if (
+        energyLow &&
+        !energyCritical &&
+        cover.collisionRisk !== 'high' &&
+        state.altitude > 20 &&
+        (
+            (bake.available && bake.clearAbove) ||
+            cover.distance >= 16 ||
+            cover.collisionRisk === 'low'
+        )
+    ) {
+        return {
+            state: 'energyRecover',
+            throttle: state.heat > 78 ? 3 : 5,
+            joyX: 0.04,
+            joyY: params.recoverPitchBias,
+            fire: 'none'
+        };
+    }
+
     if (urbanPressure && !closeCombatDefer) {
-        const planned = planUrbanAction(state, params, obstacles, cover, avoidSide);
+        if (energyLow && cover.collisionRisk === 'medium' && cover.distance >= 12) {
+            return {
+                state: 'energyRecover',
+                throttle: 4,
+                joyX: clamp(avoidSide * 0.18, -0.28, 0.28),
+                joyY: params.recoverPitchBias,
+                fire: 'none'
+            };
+        }
+        const planned = planUrbanAction(state, params, obstacles, cover, avoidSide, bake);
         if (cover.collisionRisk === 'low' && distance < params.gunRange && angleDeg < params.gunAngle) {
             planned.fire = 'gun';
         } else if (
@@ -1373,7 +1699,7 @@ function decideAction(state, policyMode, params, obstacles) {
     }
 
     if (policyMode === 'hybrid') {
-        const aggression = (state.ap > params.lowAp ? params.hybridAggression : 0.2) * openSkyAggression * (openSky ? 1.5 : 1.0);
+        const aggression = (state.ap > params.lowAp ? params.hybridAggression : 0.12) * openSkyAggression * (openSky ? 1.5 : 1.0);
         const inGunWindow = distance < params.gunRange * (openSky ? 2.2 : 1.2) && angleDeg < params.gunAngle * (openSky ? 2.3 : 1.2);
         const inMissileWindow =
             state.missiles > 0 &&
@@ -1386,13 +1712,15 @@ function decideAction(state, policyMode, params, obstacles) {
         const safeAltitudeForBrake = state.altitude > 52 && state.ap > 62;
         const hybridThrottle =
             state.heat > 76 ? 3 :
+            energyLow ? 3 :
             bigTurn && distance < 80 && safeAltitudeForBrake ? 2 :
             bigTurn ? 3 :
             (openSky && distance > 40 && state.heat < 65 ? 5 : 4);
+        const hybridJoyCap = energyLow ? 0.55 : 0.98;
         return {
             state: 'hybridIntercept',
             throttle: hybridThrottle,
-            joyX: clamp(turnTowardTarget * ((openSky ? 0.82 : 0.38) + aggression * (openSky ? 0.92 : 0.3)), -0.98, 0.98),
+            joyX: clamp(turnTowardTarget * ((openSky ? 0.82 : 0.38) + aggression * (openSky ? 0.92 : 0.3)), -hybridJoyCap, hybridJoyCap),
             joyY: clamp(interceptJoyY(state, params) * openSkyAggression * (openSky ? 1.32 : 1.0), -0.55, 0.55),
             fire: fireNow
         };
@@ -1510,6 +1838,8 @@ function runEpisode(stage, policyMode, params, maxTurns, seed, runIndex, episode
     const obstacles = generateObstacles(stage, rand);
     const state = initEpisode(stage, policyMode, rand, runIndex, episodeIndex);
     state._obstacles = obstacles;
+    // Phase 1: install baked spatial OS for this episode (mirrors live GameContext.three.aiMap).
+    state._aiMap = bakeAiMapForObstacles(obstacles);
     const trace = [];
     let crash = false;
     let crashReason = null;
@@ -1528,8 +1858,18 @@ function runEpisode(stage, policyMode, params, maxTurns, seed, runIndex, episode
         maxAltitude = Math.max(maxAltitude, state.altitude);
         const highBeforeAction = state.altitude > bandMax;
         const lowBeforeAction = state.altitude < 18;
+        const apBefore = state.ap;
         const rawAction = decideAction(state, policyMode, params, obstacles);
-        const action = chooseSafeAction(state, rawAction, obstacles, params);
+        let action = chooseSafeAction(state, rawAction, obstacles, params);
+        // H7: hybrid low-AP post-cap — shave the last ~0.01 G-hybrid crash without touching heur.
+        if (
+            policyMode === 'hybrid' &&
+            state.ap < Number(params.lowAp || 65) &&
+            action &&
+            !['emergencyPullUp', 'groundAvoid', 'stallBreakout', 'energyRecover'].includes(action.state)
+        ) {
+            action = applyEnergyEscapeCap({ ...action }, state, params);
+        }
         if (trace.length < 12 || cover.collisionRisk !== 'low' || action.state.includes('urban') || action.state.includes('obstacle')) {
             trace.push({
                 turn,
@@ -1541,6 +1881,7 @@ function runEpisode(stage, policyMode, params, maxTurns, seed, runIndex, episode
             });
         }
         applyAction(state, action, params, rand);
+        noteEscapeBleed(state, action, apBefore);
         minAltitude = Math.min(minAltitude, state.altitude);
         maxAltitude = Math.max(maxAltitude, state.altitude);
         if (highBeforeAction || state.altitude > bandMax) highAltitudeTurns += 1;

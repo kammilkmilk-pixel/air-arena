@@ -280,6 +280,24 @@ const noHandoff = urbanAvoid.shouldHandoffEscapeToEngage(
     {}
 );
 if (noHandoff) fails.push('hard contact must not handoff');
+const contactHandoff = urbanAvoid.shouldHandoffEscapeToEngage(
+    { collisionRisk: 'medium', distance: 28, forwardDistance: 40, roofClearance: 6, headroom: 48 },
+    { altitude: 42, forwardY: 0.05, hardContact: false, hardLock: false, combatContact: true },
+    { engageHandoffContactDist: 14, engageHandoffContactDiveFy: -0.42 }
+);
+if (!contactHandoff) fails.push('combatContact + leveled open cov should handoff (efficiency reclaim)');
+const contactDiveUrban = urbanAvoid.shouldHandoffEscapeToEngage(
+    { collisionRisk: 'medium', distance: 22, forwardDistance: 28, roofClearance: 4, headroom: 48 },
+    { altitude: 40, forwardY: -0.25, hardContact: false, hardLock: false, combatContact: true },
+    { engageHandoffContactDist: 14, engageHandoffContactDiveFy: -0.42 }
+);
+if (contactDiveUrban) fails.push('combatContact must not handoff while diving into urban pressure');
+const contactGlued = urbanAvoid.shouldHandoffEscapeToEngage(
+    { collisionRisk: 'high', distance: 8, forwardDistance: 6, roofClearance: -2, headroom: 48 },
+    { altitude: 30, forwardY: -0.2, hardContact: false, hardLock: false, combatContact: true },
+    {}
+);
+if (contactGlued) fails.push('combatContact must not handoff while glued cov<14');
 
 const defaultsSrc = fs.readFileSync(path.join(ROOT, 'js', 'ai', 'pilot-tuning-defaults.js'), 'utf8');
 if (!defaultsSrc.includes("buildingRiskProfile: 'gap'")) {
@@ -321,7 +339,57 @@ for (const needle of [
     'enforceFacadeLateralFloor',
     'resolveAvoidSideAuthority',
     'getRoofHeightDelta',
-    'AirArenaUrbanAvoidSide'
+    'AirArenaUrbanAvoidSide',
+    'applyBakeRouteCombatScore',
+    'shouldSoftYieldCombatForBakeRoute',
+    'applyEmergencyPullUpClimbFloor',
+    'applyUrbanDiveRouteScore',
+    'findBakePath',
+    'deferred=bakeRouteScore',
+    'fox1BakeRouteYield',
+    'scoreBakeWp',
+    'shouldHoldCanyonClimbOut',
+    'armGlueEscapeLock',
+    'glueEscapeMemory',
+    'Safety stall breakout near wall',
+    'climb floor, no slab dive',
+    'applyArenaEnvelopeScore',
+    'AirArenaArenaEnvelope',
+    'illuminateYield=bakeRouteScore',
+    'true undercroft',
+    'no embedFlip',
+    'flipSuppressed=undercroft',
+    'deferred=bakeRouteScore diveUrban',
+    'isSlabClimbBlocked',
+    'no skyOpen climb',
+    'all-hit hard-stop lateral',
+    'scoreAllHitHold',
+    'shouldYieldNavClimbOutForClosingDive',
+    'dive+closing',
+    'fox1BakeYieldMemory',
+    'armFox1BakeYieldLock',
+    'yield=diveClosing',
+    'hard-cut (thr↓ lateral↑',
+    'armDiveClosingYieldLock',
+    'diveClosingYieldMemory',
+    'hardCut=1',
+    'Never thr4-bump diveClosingYield',
+    'diveClosingYield must keep thr≤3',
+    'pull>bank near dirt',
+    'shouldReleaseDiveClosingYieldForHandoff',
+    'handoff=diveClosingRelease',
+    'releaseDiveClosingYieldHandoff',
+    'T38 early undercroft',
+    'deferred=earlyUndercroft',
+    'ban=bakeForwardClimb',
+    'isCombatContactForEngageHandoff',
+    'releaseEscapeLocksForEngageHandoff',
+    'deferred=engageHandoff',
+    'contact=1',
+    'EARLY_UNDERCROFT_COV',
+    'yield=diveClosing hardCut=1',
+    'diveClosingYield-fox2',
+    'Escape / combat stick priority'
 ]) {
     if (!pilotSrc.includes(needle)) fails.push(`pilot-ai.js missing contract: ${needle}`);
 }
@@ -330,8 +398,17 @@ for (const needle of [
 if (!pilotSrc.includes('One-sided street opening')) {
     fails.push('pilot-ai.js missing getCorridorGapAsymmetry doctrine comment');
 }
-if (!pilotSrc.includes('all-hit — gap-side cut bias')) {
-    fails.push('pilot-ai.js missing all-hit gapForce fallback');
+if (!pilotSrc.includes('all-hit hard-stop lateral')) {
+    fails.push('pilot-ai.js missing all-hit hard-stop lateral (P0)');
+}
+if (!pilotSrc.includes('no skyOpen climb')) {
+    fails.push('pilot-ai.js missing tableUndercroft no skyOpen climb (P0)');
+}
+if (!pilotSrc.includes('isSlabClimbBlocked')) {
+    fails.push('pilot-ai.js missing isSlabClimbBlocked helper (P0)');
+}
+if (!pilotSrc.includes('scoreAllHitHold')) {
+    fails.push('pilot-ai.js missing scoreAllHitHold mode (P0)');
 }
 
 const indexSrc = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');

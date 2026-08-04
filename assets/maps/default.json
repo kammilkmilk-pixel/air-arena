@@ -8,6 +8,24 @@
     "centerX": 10,
     "centerZ": 20
   },
+  "envelope": {
+    "diameter": 900,
+    "softMargin": 220,
+    "warnMargin": 200,
+    "centerX": 10,
+    "centerZ": 20,
+    "altitude": {
+      "bandMin": 35,
+      "bandMax": 92,
+      "bandHardMax": 108,
+      "mandatoryClimbAlt": 36
+    },
+    "score": {
+      "radialWeight": 1,
+      "altitudeWeight": 1,
+      "highAltFox1Scale": 0.35
+    }
+  },
   "lighting": {
     "hemiSky": 12890351,
     "hemiGround": 5920332,

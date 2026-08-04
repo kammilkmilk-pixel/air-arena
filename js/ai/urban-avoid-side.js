@@ -24,7 +24,10 @@
         highFy: 0.22,
         mediumAlt: 30,
         highAlt: 32,
-        diveAltMax: 52
+        diveAltMax: 52,
+        // Combat reclaim: weapon-envelope contact can hand off sooner than pure escape-clear.
+        contactDist: 14,
+        contactDiveFy: -0.42
     };
 
     const EMBED_FLIP_COOLDOWN = 8;
@@ -87,7 +90,11 @@
                 : ENGAGE_HANDOFF_DEFAULTS.highFy,
             mediumAlt: Number(tuning.engageHandoffMediumAlt) || ENGAGE_HANDOFF_DEFAULTS.mediumAlt,
             highAlt: Number(tuning.engageHandoffHighAlt) || ENGAGE_HANDOFF_DEFAULTS.highAlt,
-            diveAltMax: Number(tuning.engageHandoffDiveAltMax) || ENGAGE_HANDOFF_DEFAULTS.diveAltMax
+            diveAltMax: Number(tuning.engageHandoffDiveAltMax) || ENGAGE_HANDOFF_DEFAULTS.diveAltMax,
+            contactDist: Number(tuning.engageHandoffContactDist) || ENGAGE_HANDOFF_DEFAULTS.contactDist,
+            contactDiveFy: Number.isFinite(Number(tuning.engageHandoffContactDiveFy))
+                ? Number(tuning.engageHandoffContactDiveFy)
+                : ENGAGE_HANDOFF_DEFAULTS.contactDiveFy
         };
     }
 
@@ -98,7 +105,8 @@
     function shouldHandoffEscapeToEngage(coverInfo = {}, opts = {}, tuning = {}) {
         if (opts.hardContact) return false;
         if (opts.trueUndercroft || isTrueUndercroft(coverInfo, opts)) return false;
-        if (opts.hardLock) return false;
+        // Combat reclaim may ignore soft hardLock (AABB proximity) — never hardContact/undercroft.
+        if (opts.hardLock && !opts.combatContact) return false;
         const h = mergeHandoffTuning(tuning);
         const risk = coverInfo.collisionRisk || 'low';
         const dist = Number(coverInfo.distance);
@@ -115,6 +123,40 @@
             !(Number.isFinite(fwd) && fwd > 0 && fwd < 14)
         ) {
             return true;
+        }
+        // Combat reclaim: LOS/weapon contact + not glued → return stick to fox2/engage.
+        // Must NOT reclaim while still diving into facade (fought diveClosing / mesh).
+        if (opts.combatContact) {
+            const contactFloor = h.contactDist;
+            const gluedClose =
+                (Number.isFinite(dist) && dist < contactFloor) ||
+                (risk === 'high' && Number.isFinite(dist) && dist < contactFloor + 2);
+            const steepThreat =
+                Number.isFinite(fy) &&
+                fy < h.contactDiveFy &&
+                Number.isFinite(alt) &&
+                alt < h.diveAltMax;
+            // Align with non-contact diveFy: mild dive into urban still belongs to escape.
+            const diveUrban =
+                Number.isFinite(fy) &&
+                fy < h.diveFy &&
+                Number.isFinite(alt) &&
+                alt < h.diveAltMax &&
+                (
+                    risk !== 'low' ||
+                    (Number.isFinite(fwd) && fwd > 0 && fwd < h.fwdBlock) ||
+                    (Number.isFinite(dist) && dist < contactFloor + 8)
+                );
+            if (
+                !gluedClose &&
+                !steepThreat &&
+                !diveUrban &&
+                Number.isFinite(dist) &&
+                dist >= contactFloor &&
+                !(Number.isFinite(fwd) && fwd > 0 && fwd < 12 && risk !== 'low')
+            ) {
+                return true;
+            }
         }
         if (Number.isFinite(fy) && fy < h.diveFy && Number.isFinite(alt) && alt < h.diveAltMax) {
             return false;

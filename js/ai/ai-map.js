@@ -1,6 +1,11 @@
 // ============================================================================
-// ai-map.js - Thin baked AI spatial summary (layer B)
+// ai-map.js - Baked AI spatial OS (Phase 1–3 MVP)
 // Sidecar: assets/maps/<mapId>.ai-map.json  |  missing → bake from obstacles/doc at load
+// Soft authority: roofMax / skyOpen / sarhPerch / mapLane (roof band).
+// Phase 2: samplePlannerCorridor feeds planUrbanRoute / scored escape (not pathfinding).
+// Phase 3a–c: sampleSurvivalWaypoints (long greedy + climbBias) + findBakePath (grid A*);
+// PilotAI consumes via scored combat/escape — pressure-armed stick bias only, no hard force.
+// Not a full stick planner — PilotAI flightBand + decide stack consume these flags.
 // ============================================================================
 (function initAiMap(root, factory) {
     const api = factory();
@@ -378,6 +383,597 @@
         return { ok: samples > 0, roofMax, samples };
     }
 
+    /**
+     * Phase 2 planner feed: forward + ±lateral roof/sky samples along heading XZ.
+     * Prefer open (low roof / skyOpen) side for joyX; not a waypoint path.
+     * preferredSide matches AABB gap convention: -1 = left more open, +1 = right.
+     */
+    function samplePlannerCorridor(map, x, z, headingX, headingZ, altitude, opts = {}) {
+        const empty = {
+            ok: false,
+            preferredSide: 0,
+            strength: 0,
+            forwardClear: false,
+            forwardSkyOpen: false,
+            forwardRoofMax: 0,
+            leftClear: false,
+            rightClear: false,
+            leftRoofMax: 0,
+            rightRoofMax: 0,
+            corridorOpen: false,
+            mapLaneAhead: null
+        };
+        if (!map) return empty;
+        let fx = Number(headingX) || 0;
+        let fz = Number(headingZ) || 0;
+        const flen = Math.hypot(fx, fz);
+        if (flen < 1e-4) {
+            fx = 0;
+            fz = 1;
+        } else {
+            fx /= flen;
+            fz /= flen;
+        }
+        // Left of forward in XZ: (-fz, fx)
+        const lx = -fz;
+        const lz = fx;
+        const cell = Math.max(4, Number(map.cellSize) || DEFAULT_CELL);
+        const look = Number(opts.lookAhead) || cell * 3;
+        const lateral = Number(opts.lateral) || cell * 1.5;
+        const margin = Number(opts.margin) || 8;
+        const alt = Number(altitude);
+        const altOk = Number.isFinite(alt);
+
+        function sampleAt(wx, wz) {
+            const q = query(map, wx, wz);
+            const roof = q && Number.isFinite(Number(q.roofMax)) ? Number(q.roofMax) : 0;
+            const sky = !!(q && (q.skyOpen || q.outOfBounds));
+            const clear = sky || (altOk && alt >= roof + margin);
+            return {
+                roofMax: roof,
+                skyOpen: sky,
+                clear,
+                mapLane: q && q.ok ? q.lane : null
+            };
+        }
+
+        const fwdDists = [look * 0.5, look, look * 1.5];
+        let forwardRoofMax = 0;
+        let forwardSkyVotes = 0;
+        let forwardClearVotes = 0;
+        let mapLaneAhead = null;
+        for (let i = 0; i < fwdDists.length; i++) {
+            const d = fwdDists[i];
+            const s = sampleAt(x + fx * d, z + fz * d);
+            if (s.roofMax > forwardRoofMax) forwardRoofMax = s.roofMax;
+            if (s.skyOpen) forwardSkyVotes += 1;
+            if (s.clear) forwardClearVotes += 1;
+            if (!mapLaneAhead && s.mapLane) mapLaneAhead = s.mapLane;
+        }
+        const forwardSkyOpen = forwardSkyVotes >= 2;
+        const forwardClear = forwardClearVotes >= 2 || (forwardSkyOpen && altOk && alt >= forwardRoofMax + margin);
+
+        function sideStats(sign) {
+            let roofMax = 0;
+            let clearVotes = 0;
+            let skyVotes = 0;
+            for (let i = 0; i < fwdDists.length; i++) {
+                const d = fwdDists[i];
+                const s = sampleAt(
+                    x + fx * d + lx * lateral * sign,
+                    z + fz * d + lz * lateral * sign
+                );
+                if (s.roofMax > roofMax) roofMax = s.roofMax;
+                if (s.clear) clearVotes += 1;
+                if (s.skyOpen) skyVotes += 1;
+            }
+            return {
+                roofMax,
+                clear: clearVotes >= 2,
+                skyOpen: skyVotes >= 2,
+                clearVotes
+            };
+        }
+        // sign +1 = world-left samples (lx,lz); sign -1 = world-right
+        const left = sideStats(1);
+        const right = sideStats(-1);
+        const leftOpen = left.clearVotes + (left.skyOpen ? 1 : 0);
+        const rightOpen = right.clearVotes + (right.skyOpen ? 1 : 0);
+        const openDiff = leftOpen - rightOpen;
+        const roofDiff = right.roofMax - left.roofMax; // positive → left lower roof (prefer left)
+        let preferredSide = 0;
+        let strength = 0;
+        if (Math.abs(openDiff) >= 2 || Math.abs(roofDiff) >= 12) {
+            preferredSide = openDiff !== 0
+                ? (openDiff > 0 ? -1 : 1)
+                : (roofDiff > 0 ? -1 : 1);
+            strength = (Math.abs(openDiff) >= 3 || Math.abs(roofDiff) >= 24) ? 2 : 1;
+        } else if (Math.abs(openDiff) >= 1 || Math.abs(roofDiff) >= 6) {
+            preferredSide = openDiff !== 0
+                ? (openDiff > 0 ? -1 : 1)
+                : (roofDiff > 0 ? -1 : 1);
+            strength = 1;
+        }
+        const corridorOpen =
+            (left.clear && right.clear) ||
+            (forwardClear && (left.clear || right.clear)) ||
+            (left.clearVotes + right.clearVotes >= 4);
+
+        return {
+            ok: true,
+            preferredSide,
+            strength,
+            forwardClear,
+            forwardSkyOpen,
+            forwardRoofMax,
+            leftClear: left.clear,
+            rightClear: right.clear,
+            leftRoofMax: left.roofMax,
+            rightRoofMax: right.roofMax,
+            corridorOpen,
+            mapLaneAhead
+        };
+    }
+
+    function waypointSteerSummary(waypoints, x, z, fx, fz, stepDist, alt, margin) {
+        const empty = {
+            preferredSide: 0,
+            climbBias: 0,
+            targetAlt: null,
+            firstClear: false,
+            strength: 0
+        };
+        if (!waypoints || !waypoints.length) return empty;
+        const first = waypoints[0];
+        const firstDx = first.x - (Number(x) || 0);
+        const firstDz = first.z - (Number(z) || 0);
+        const crossY = fx * firstDz - fz * firstDx;
+        let preferredSide = 0;
+        const sideThresh = Math.max(4, (Number(stepDist) || 20) * 0.12);
+        if (Math.abs(crossY) > sideThresh) {
+            preferredSide = crossY > 0 ? -1 : 1;
+        }
+        const clearCount = waypoints.filter((w) => w.clear).length;
+        const strength = clearCount >= 3 ? 2 : (clearCount >= 1 || first.clear ? 1 : 0);
+        const peakRoof = waypoints.reduce((m, w) => Math.max(m, Number(w.roofMax) || 0), 0);
+        const m = Number(margin) || 8;
+        const a = Number(alt);
+        let climbBias = 0;
+        let targetAlt = Number.isFinite(a) ? a : null;
+        if (Number.isFinite(a)) {
+            const need = peakRoof + m + 4;
+            if (a < need) {
+                climbBias = clamp((need - a) / 24, 0.15, 1);
+                targetAlt = Number(need.toFixed(1));
+            } else if (!preferredSide && (first.clear || first.skyOpen)) {
+                climbBias = 0.35;
+                targetAlt = Number(Math.max(a, peakRoof + m).toFixed(1));
+            }
+        }
+        return {
+            preferredSide,
+            climbBias,
+            targetAlt,
+            firstClear: !!first.clear,
+            strength
+        };
+    }
+
+    /**
+     * Phase 3b: greedy open-cell chain (default 6–12 steps / ~150–250m), not A*.
+     * Returns XZ waypoints + preferredSide + climbBias / targetAlt.
+     */
+    function sampleSurvivalWaypoints(map, x, z, headingX, headingZ, altitude, opts = {}) {
+        const empty = {
+            ok: false,
+            waypoints: [],
+            preferredSide: 0,
+            strength: 0,
+            firstClear: false,
+            steps: 0,
+            climbBias: 0,
+            targetAlt: null,
+            source: 'greedy'
+        };
+        if (!map) return empty;
+        let fx = Number(headingX) || 0;
+        let fz = Number(headingZ) || 0;
+        const flen = Math.hypot(fx, fz);
+        if (flen < 1e-4) {
+            fx = 0;
+            fz = 1;
+        } else {
+            fx /= flen;
+            fz /= flen;
+        }
+        const cell = Math.max(4, Number(map.cellSize) || DEFAULT_CELL);
+        const stepDist = Number(opts.stepDist) || cell * 2;
+        const steps = Math.max(2, Math.min(12, Math.round(Number(opts.steps) || 8)));
+        const lateral = Number(opts.lateral) || cell * 1.25;
+        const margin = Number(opts.margin) || 8;
+        const alt = Number(altitude);
+        const altOk = Number.isFinite(alt);
+
+        function sampleAt(wx, wz) {
+            const q = query(map, wx, wz);
+            const roof = q && Number.isFinite(Number(q.roofMax)) ? Number(q.roofMax) : 0;
+            const sky = !!(q && (q.skyOpen || q.outOfBounds));
+            const clear = sky || (altOk && alt >= roof + margin);
+            const headroom = altOk ? alt - roof : 0;
+            return {
+                x: wx,
+                z: wz,
+                roofMax: roof,
+                skyOpen: sky,
+                clear,
+                headroom,
+                mapLane: q && q.ok ? q.lane : null
+            };
+        }
+
+        function scoreCell(s) {
+            let sc = 0;
+            if (s.clear) sc += 40;
+            if (s.skyOpen) sc += 18;
+            sc += Math.max(0, 36 - Math.min(36, s.roofMax * 0.45));
+            if (s.mapLane === 'dirt' || s.mapLane === 'canyon') sc += 4;
+            // Prefer cells with altitude margin; punish flying under/near tall roofs.
+            if (altOk) {
+                if (s.headroom >= margin) sc += Math.min(22, s.headroom * 0.55);
+                else if (s.headroom < 0) sc -= Math.min(50, -s.headroom * 0.8);
+                else sc -= Math.min(24, (margin - s.headroom) * 1.2);
+            }
+            return sc;
+        }
+
+        const offsets = [
+            { f: 1, l: 0 },
+            { f: 1, l: 0.85 },
+            { f: 1, l: -0.85 },
+            { f: 0.55, l: 1.15 },
+            { f: 0.55, l: -1.15 }
+        ];
+
+        let cx = Number(x) || 0;
+        let cz = Number(z) || 0;
+        let hfx = fx;
+        let hfz = fz;
+        const waypoints = [];
+        for (let step = 0; step < steps; step++) {
+            let best = null;
+            let bestScore = -Infinity;
+            for (let i = 0; i < offsets.length; i++) {
+                const o = offsets[i];
+                const wx = cx + hfx * stepDist * o.f + (-hfz) * lateral * o.l;
+                const wz = cz + hfz * stepDist * o.f + hfx * lateral * o.l;
+                const s = sampleAt(wx, wz);
+                const sc = scoreCell(s);
+                if (sc > bestScore) {
+                    bestScore = sc;
+                    best = s;
+                }
+            }
+            if (!best) break;
+            waypoints.push({
+                x: Number(best.x.toFixed(2)),
+                z: Number(best.z.toFixed(2)),
+                roofMax: best.roofMax,
+                skyOpen: best.skyOpen ? 1 : 0,
+                clear: best.clear ? 1 : 0,
+                score: Number(bestScore.toFixed(1)),
+                targetAlt: altOk
+                    ? Number(Math.max(alt, best.roofMax + margin).toFixed(1))
+                    : null
+            });
+            const dx = best.x - cx;
+            const dz = best.z - cz;
+            const dl = Math.hypot(dx, dz);
+            if (dl > 1e-3) {
+                hfx = dx / dl;
+                hfz = dz / dl;
+            }
+            cx = best.x;
+            cz = best.z;
+        }
+
+        if (!waypoints.length) return empty;
+        const steer = waypointSteerSummary(waypoints, x, z, fx, fz, stepDist, alt, margin);
+        return {
+            ok: steer.strength >= 1 || waypoints.length >= 2,
+            waypoints,
+            preferredSide: steer.preferredSide,
+            strength: steer.strength,
+            firstClear: steer.firstClear,
+            steps: waypoints.length,
+            climbBias: steer.climbBias,
+            targetAlt: steer.targetAlt,
+            source: 'greedy'
+        };
+    }
+
+    /**
+     * Phase 3c: short-horizon A* on bake cells toward open/low-roof goal in heading cone.
+     * Cost = travel + high roof + low altitude margin + turn. Falls back empty if no path.
+     */
+    function findBakePath(map, x, z, headingX, headingZ, altitude, opts = {}) {
+        const empty = {
+            ok: false,
+            waypoints: [],
+            preferredSide: 0,
+            strength: 0,
+            firstClear: false,
+            steps: 0,
+            climbBias: 0,
+            targetAlt: null,
+            source: 'path'
+        };
+        if (!map || !map.roofMax) return empty;
+        const cell = Math.max(4, Number(map.cellSize) || DEFAULT_CELL);
+        const cols = Number(map.cols) || 0;
+        const rows = Number(map.rows) || 0;
+        if (cols < 2 || rows < 2) return empty;
+        const originX = Number(map.originX) || 0;
+        const originZ = Number(map.originZ) || 0;
+        let fx = Number(headingX) || 0;
+        let fz = Number(headingZ) || 0;
+        const flen = Math.hypot(fx, fz);
+        if (flen < 1e-4) {
+            fx = 0;
+            fz = 1;
+        } else {
+            fx /= flen;
+            fz /= flen;
+        }
+        const margin = Number(opts.margin) || 8;
+        const alt = Number(altitude);
+        const altOk = Number.isFinite(alt);
+        const maxExpand = Math.max(40, Math.min(220, Math.round(Number(opts.maxExpand) || 140)));
+        const goalDist = Number(opts.goalDist) || cell * 10;
+        const startIdx = indexAt(map, x, z);
+        if (startIdx < 0) return empty;
+
+        function cellCenter(idx) {
+            const c = idx % cols;
+            const r = Math.floor(idx / cols);
+            return {
+                x: originX + (c + 0.5) * cell,
+                z: originZ + (r + 0.5) * cell,
+                c,
+                r
+            };
+        }
+
+        function roofAt(idx) {
+            return Number(map.roofMax[idx]) || 0;
+        }
+
+        function cellClear(idx) {
+            const roof = roofAt(idx);
+            const sky = roof < 40;
+            return sky || (altOk && alt >= roof + margin);
+        }
+
+        function stepCost(fromIdx, toIdx, fromDirC, fromDirR) {
+            const roof = roofAt(toIdx);
+            let cost = 1;
+            cost += Math.min(18, roof * 0.12);
+            if (altOk) {
+                const head = alt - roof;
+                if (head < 0) cost += Math.min(40, -head * 0.9);
+                else if (head < margin) cost += (margin - head) * 0.55;
+            }
+            if (!cellClear(toIdx)) cost += 10;
+            const to = cellCenter(toIdx);
+            const from = cellCenter(fromIdx);
+            const dc = Math.sign(to.c - from.c);
+            const dr = Math.sign(to.r - from.r);
+            if (fromDirC !== 0 || fromDirR !== 0) {
+                if (dc !== fromDirC || dr !== fromDirR) cost += 1.6;
+            }
+            // Prefer staying in forward hemisphere.
+            const dx = to.x - (Number(x) || 0);
+            const dz = to.z - (Number(z) || 0);
+            const dot = dx * fx + dz * fz;
+            if (dot < 0) cost += 4;
+            return cost;
+        }
+
+        function clampWorldToMap(wx, wz) {
+            const minX = originX + cell * 0.5;
+            const maxX = originX + cols * cell - cell * 0.5;
+            const minZ = originZ + cell * 0.5;
+            const maxZ = originZ + rows * cell - cell * 0.5;
+            return {
+                x: clamp(wx, minX, maxX),
+                z: clamp(wz, minZ, maxZ)
+            };
+        }
+
+        function scoreGoalIdx(idx) {
+            if (idx < 0 || idx === startIdx) return -Infinity;
+            const p = cellCenter(idx);
+            const dx = p.x - (Number(x) || 0);
+            const dz = p.z - (Number(z) || 0);
+            const dist = Math.hypot(dx, dz);
+            const dot = dx * fx + dz * fz;
+            const roof = roofAt(idx);
+            let sc = cellClear(idx) ? 40 : 0;
+            sc += Math.max(0, 50 - roof);
+            if (altOk && alt >= roof + margin) sc += 20;
+            sc += Math.min(30, Math.max(0, dot)); // prefer forward
+            sc += Math.min(18, dist / cell); // prefer some standoff
+            if (dot < -cell) sc -= 25;
+            return sc;
+        }
+
+        // Goal: best open/low-roof cell near look-ahead (clamped in-bounds).
+        const maxGoalR = Math.min(goalDist * 1.35, Math.hypot(cols, rows) * cell * 0.85);
+        const goalProbe = [
+            Math.min(goalDist * 0.4, maxGoalR),
+            Math.min(goalDist * 0.7, maxGoalR),
+            Math.min(goalDist, maxGoalR),
+            Math.min(goalDist * 1.2, maxGoalR)
+        ];
+        let goalIdx = -1;
+        let bestGoalScore = -Infinity;
+        for (let i = 0; i < goalProbe.length; i++) {
+            const d = goalProbe[i];
+            for (const lat of [0, cell * 1.2, -cell * 1.2, cell * 2.2, -cell * 2.2, cell * 3.5, -cell * 3.5]) {
+                const rawX = Number(x) + fx * d + (-fz) * lat;
+                const rawZ = Number(z) + fz * d + fx * lat;
+                const clamped = clampWorldToMap(rawX, rawZ);
+                const idx = indexAt(map, clamped.x, clamped.z);
+                const sc = scoreGoalIdx(idx);
+                if (sc > bestGoalScore) {
+                    bestGoalScore = sc;
+                    goalIdx = idx;
+                }
+            }
+        }
+        // Map-edge / OOB heading: scan nearby cells for a usable goal.
+        if (goalIdx < 0 || goalIdx === startIdx || bestGoalScore < 0) {
+            const start = cellCenter(startIdx);
+            const scanR = Math.max(2, Math.min(8, Math.ceil(maxGoalR / cell)));
+            for (let dr = -scanR; dr <= scanR; dr++) {
+                for (let dc = -scanR; dc <= scanR; dc++) {
+                    if (dc === 0 && dr === 0) continue;
+                    const nc = start.c + dc;
+                    const nr = start.r + dr;
+                    if (nc < 0 || nr < 0 || nc >= cols || nr >= rows) continue;
+                    const idx = nr * cols + nc;
+                    const sc = scoreGoalIdx(idx);
+                    if (sc > bestGoalScore) {
+                        bestGoalScore = sc;
+                        goalIdx = idx;
+                    }
+                }
+            }
+        }
+        if (goalIdx < 0) goalIdx = startIdx;
+
+        function heuristic(idx) {
+            const a = cellCenter(idx);
+            const b = cellCenter(goalIdx);
+            return Math.hypot(a.x - b.x, a.z - b.z) / cell;
+        }
+
+        const open = [{ idx: startIdx, g: 0, f: heuristic(startIdx), pc: 0, pr: 0, parent: -1 }];
+        const bestG = new Map([[startIdx, 0]]);
+        const parent = new Map();
+        const parentDir = new Map([[startIdx, { c: 0, r: 0 }]]);
+        let expansions = 0;
+        let found = false;
+
+        while (open.length && expansions < maxExpand) {
+            open.sort((a, b) => a.f - b.f);
+            const cur = open.shift();
+            expansions += 1;
+            if (cur.idx === goalIdx) {
+                found = true;
+                break;
+            }
+            const curPos = cellCenter(cur.idx);
+            const dirs = [
+                [1, 0], [-1, 0], [0, 1], [0, -1],
+                [1, 1], [1, -1], [-1, 1], [-1, -1]
+            ];
+            for (let i = 0; i < dirs.length; i++) {
+                const nc = curPos.c + dirs[i][0];
+                const nr = curPos.r + dirs[i][1];
+                if (nc < 0 || nr < 0 || nc >= cols || nr >= rows) continue;
+                const nIdx = nr * cols + nc;
+                const g = cur.g + stepCost(cur.idx, nIdx, cur.pc, cur.pr);
+                const prev = bestG.get(nIdx);
+                if (prev != null && g >= prev - 1e-6) continue;
+                bestG.set(nIdx, g);
+                parent.set(nIdx, cur.idx);
+                parentDir.set(nIdx, { c: dirs[i][0], r: dirs[i][1] });
+                open.push({
+                    idx: nIdx,
+                    g,
+                    f: g + heuristic(nIdx),
+                    pc: dirs[i][0],
+                    pr: dirs[i][1],
+                    parent: cur.idx
+                });
+            }
+        }
+
+        if (!found && !bestG.has(goalIdx)) {
+            // Take best expanded node by (clear + forward + low roof).
+            let bestIdx = -1;
+            let bestSc = -Infinity;
+            bestG.forEach((_, idx) => {
+                if (idx === startIdx) return;
+                const p = cellCenter(idx);
+                const dx = p.x - (Number(x) || 0);
+                const dz = p.z - (Number(z) || 0);
+                const dot = dx * fx + dz * fz;
+                if (dot < cell * 0.5) return;
+                let sc = cellClear(idx) ? 30 : 0;
+                sc += Math.max(0, 40 - roofAt(idx) * 0.5);
+                sc += Math.min(20, dot / cell);
+                if (sc > bestSc) {
+                    bestSc = sc;
+                    bestIdx = idx;
+                }
+            });
+            if (bestIdx < 0) return empty;
+            goalIdx = bestIdx;
+        }
+
+        const chain = [];
+        let walk = goalIdx;
+        let guard = 0;
+        while (walk >= 0 && guard++ < 80) {
+            chain.push(walk);
+            if (walk === startIdx) break;
+            walk = parent.has(walk) ? parent.get(walk) : -1;
+        }
+        chain.reverse();
+        if (chain.length < 2) return empty;
+
+        // Decimate to ~cell*1.6 spacing; always keep first step + goal.
+        const waypoints = [];
+        let lastX = Number(x) || 0;
+        let lastZ = Number(z) || 0;
+        const minSep = cell * 1.35;
+        for (let i = 1; i < chain.length; i++) {
+            const p = cellCenter(chain[i]);
+            const isLast = i === chain.length - 1;
+            const dist = Math.hypot(p.x - lastX, p.z - lastZ);
+            if (!isLast && dist < minSep && waypoints.length > 0) continue;
+            const roof = roofAt(chain[i]);
+            const clear = cellClear(chain[i]);
+            waypoints.push({
+                x: Number(p.x.toFixed(2)),
+                z: Number(p.z.toFixed(2)),
+                roofMax: roof,
+                skyOpen: roof < 40 ? 1 : 0,
+                clear: clear ? 1 : 0,
+                score: Number(((clear ? 40 : 0) + Math.max(0, 36 - roof * 0.45)).toFixed(1)),
+                targetAlt: altOk ? Number(Math.max(alt, roof + margin).toFixed(1)) : null
+            });
+            lastX = p.x;
+            lastZ = p.z;
+            if (waypoints.length >= 12) break;
+        }
+        if (!waypoints.length) return empty;
+        const steer = waypointSteerSummary(waypoints, x, z, fx, fz, cell * 2, alt, margin);
+        return {
+            ok: true,
+            waypoints,
+            preferredSide: steer.preferredSide,
+            strength: Math.max(1, steer.strength),
+            firstClear: steer.firstClear,
+            steps: waypoints.length,
+            climbBias: steer.climbBias,
+            targetAlt: steer.targetAlt,
+            source: 'path',
+            expansions
+        };
+    }
+
     async function tryFetchJson(url) {
         if (!url || typeof fetch !== 'function') return null;
         try {
@@ -456,6 +1052,9 @@
         indexAt,
         query,
         queryRoofMaxInRadius,
+        samplePlannerCorridor,
+        sampleSurvivalWaypoints,
+        findBakePath,
         ensureAiMap,
         installOnGameContext,
         tryFetchJson

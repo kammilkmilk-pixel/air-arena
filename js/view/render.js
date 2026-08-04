@@ -1759,6 +1759,17 @@ function applySelectedMap(mapId) {
     return resolvePlan.then((plan) => {
         if (plan.mode === 'original') {
             activeMapMeta = { id: 'original', path: null, doc: null, aiMapPath: null };
+            if (typeof AirArenaArenaEnvelope !== 'undefined' && AirArenaArenaEnvelope.applyFromMapDoc) {
+                AirArenaArenaEnvelope.applyFromMapDoc({
+                    name: 'original',
+                    ground: ORIGINAL_ENV.ground,
+                    envelope: {
+                        diameter: Math.max(ORIGINAL_ENV.ground.width, ORIGINAL_ENV.ground.depth),
+                        centerX: ORIGINAL_ENV.ground.centerX,
+                        centerZ: ORIGINAL_ENV.ground.centerZ
+                    }
+                });
+            }
             if (!usingCustomMap) {
                 if (CONFIG.debug) console.log('[Map] 維持原版地圖');
                 return refreshAirArenaAiMap({ mapId: 'original', reason: 'original-keep' });
@@ -1835,7 +1846,7 @@ initCityMapModel();
 // ============================================================================
 (function initCombatAirspaceVfx() {
     const TAPE_H = 12;
-    const TAPE_STYLE = 3; // bump when stripe/text look changes
+    const TAPE_STYLE = 4; // bump when stripe/text look changes
     const state = {
         group: null,
         rim: null,
@@ -1851,12 +1862,13 @@ initCityMapModel();
 
     function makeCautionTapeTexture() {
         // One period: 10 elongated yellow diagonals (wide gaps) + warning caption.
-        const stripeW = 42;
-        const gapW = 36;
+        // Keep period wide so UV repeats stay low and text stays readable on R≈450 ring.
+        const stripeW = 56;
+        const gapW = 48;
         const stripeCount = 10;
-        const textPanelW = 320;
-        const slant = 38;
-        const h = 64;
+        const textPanelW = 420;
+        const slant = 44;
+        const h = 128;
         const period = stripeCount * (stripeW + gapW) + textPanelW;
         const canvas = document.createElement('canvas');
         canvas.width = period;
@@ -1864,7 +1876,7 @@ initCityMapModel();
         const ctx = canvas.getContext('2d');
         ctx.clearRect(0, 0, period, h);
 
-        ctx.fillStyle = 'rgba(255, 214, 0, 0.88)';
+        ctx.fillStyle = 'rgba(255, 214, 0, 0.92)';
         let x = 0;
         for (let i = 0; i < stripeCount; i++) {
             ctx.beginPath();
@@ -1877,16 +1889,26 @@ initCityMapModel();
             x += stripeW + gapW;
         }
 
-        ctx.font = 'bold 26px "Microsoft JhengHei","PingFang TC","Noto Sans TC",sans-serif';
+        const label = '離開作戰空域警告';
+        const cx = x + textPanelW * 0.5;
+        const cy = h * 0.5;
+        ctx.font = 'bold 52px "Microsoft JhengHei","PingFang TC","Noto Sans TC",sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillStyle = 'rgba(255, 220, 40, 0.95)';
-        ctx.fillText('離開作戰空域警告', x + textPanelW * 0.5, h * 0.5);
+        // Soft outline so yellow text reads on sky / city without black bars.
+        ctx.lineWidth = 6;
+        ctx.strokeStyle = 'rgba(120, 90, 0, 0.55)';
+        ctx.strokeText(label, cx, cy);
+        ctx.fillStyle = 'rgba(255, 230, 60, 0.98)';
+        ctx.fillText(label, cx, cy);
 
         const tex = new THREE.CanvasTexture(canvas);
         tex.wrapS = THREE.RepeatWrapping;
         tex.wrapT = THREE.ClampToEdgeWrapping;
-        // ~2πR / period periods around the hard ring (R≈450 → ~3–4 cycles).
+        tex.generateMipmaps = true;
+        tex.minFilter = THREE.LinearMipmapLinearFilter;
+        tex.magFilter = THREE.LinearFilter;
+        // ~2 cycles around hard ring so each caption + 10-stripe group is large.
         const approxR = 450;
         const repeats = Math.max(2, Math.round((2 * Math.PI * approxR) / period));
         tex.repeat.set(repeats, 1);
@@ -1915,13 +1937,16 @@ initCityMapModel();
             state.tapeMat = new THREE.MeshBasicMaterial({
                 map: state.tapeTex,
                 transparent: true,
-                opacity: 0.55,
+                opacity: 0.72,
                 side: THREE.DoubleSide,
                 depthWrite: false,
+                alphaTest: 0.08,
                 fog: true
             });
         } else {
             state.tapeMat.map = state.tapeTex;
+            state.tapeMat.opacity = 0.72;
+            state.tapeMat.alphaTest = 0.08;
             state.tapeMat.needsUpdate = true;
         }
         state.tapeStyle = TAPE_STYLE;
@@ -2028,7 +2053,7 @@ initCityMapModel();
 
         state.tape.position.y = alt;
         if (state.tapeMat) {
-            state.tapeMat.opacity = 0.32 + 0.42 * Math.max(0, Math.min(1, pressureT));
+            state.tapeMat.opacity = 0.55 + 0.35 * Math.max(0, Math.min(1, pressureT));
         }
         if (state.tapeTex) {
             state.tapeTex.offset.x = (performance.now() * 0.00009) % 1;

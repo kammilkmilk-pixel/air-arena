@@ -2,7 +2,7 @@
 
 ## 目前更新狀態
 
-**版本快照：v3.0+**（文件更新 **2026-08-02**）  
+**版本快照：v3.0+**（文件更新 **2026-08-04**）  
 基於 v2.2 Stable 架構；v3.0 協作編隊／殘骸之後，續修 AI 城區、SARH／箔條、鏡頭與頂欄 UX。  
 **備份前請以本節 + [`TECH-DEBT.md`](./TECH-DEBT.md) 為準。**
 
@@ -65,9 +65,32 @@
 
 ### 目前技術債（摘要）
 
-- **High：** 無開放項。
-- **Medium 優先：** FOX-1 照射環 vs 發射窗 UX（M23）；CM 被城市逃生擠掉（M24）；T38／beam（M18/M21）；**Phase B 未開始（M8）**；ACMI 碎片（M4–M6）。
-- **詳表與計劃進度表：** [`TECH-DEBT.md`](./TECH-DEBT.md)。`docs/Tactical-Development-Memo.md` 為歷史備忘，勿當現行架構。
+- **High：** 城區 AI 回歸（H7）— Phase 1–2 後 B/D 已綠；C/F/G 仍待量測／收斂。
+- **Medium 優先：** FOX-1 照射環 vs 發射窗 UX（M23）；CM 被城市逃生擠掉（M24）；T38／beam（M18/M21）；**Phase B thin knife 已落地（M8 完整角色層仍後）**；ACMI 碎片（M4–M6）。
+- **詳表與計劃進度表：** [`TECH-DEBT.md`](./TECH-DEBT.md)（快照 **2026-08-04**）。`docs/Tactical-Development-Memo.md` 為歷史備忘，勿當現行架構。
+- **新地圖必讀：** [`docs/Arena-Map-Onboarding-Memo.md`](./docs/Arena-Map-Onboarding-Memo.md) — 每次換場地／新圖必須做 **AI 烘焙 + 場地包絡限制**；尺寸／AO／高度帶掛場地 profile（`js/core/arena-envelope.js`），勿寫進 PilotAI 核心。
+- **PilotAI／引擎預先準備：** [`docs/PilotAI-Portability-Memo.md`](./docs/PilotAI-Portability-Memo.md) — 網頁試玩優先；開發期不加深 Three 耦合、不砍感知；Godot 等為日後美術殼，試玩達標再脫鉤。
+
+### Phase 1 架構（烘焙 = 空間 OS）
+
+- **烘焙地圖**：soft `clearAbove` / `skyOpen` / `mapLane`（屋頂帶）權威；AABB 只確認硬接觸。
+- **flightBand**（舊 `altitudeLane.lane`）：依自身高度，≠ `mapLane`。
+- `clearAbove` 時禁止 `urbanPreemptiveAvoid` / `obstacleEnergyClimb` 耗能織避。
+- 回歸：`tools/ai-regression.js` 每集 bake `_aiMap`。
+
+### Phase 2（planner 吃烘焙走廊）
+
+- `AirArenaAiMap.samplePlannerCorridor`：前向／左右屋頂與 sky 採樣 → `preferredSide` / `corridorOpen` / `forwardClear`。
+- `planUrbanRoute` + `pickScoredUrbanEscapeStick` + 回歸 `planUrbanAction`：壓力／評分偏開側與開空，非 pathfinding。
+- T38／hard-lock：僅真 mesh glue；bake clear 時不因旁邊高樓 AABB 落入 flat glue。
+
+### Phase 3（生存航點 → full pathfinding）
+
+- `AirArenaAiMap.sampleSurvivalWaypoints`：貪婪 6–12 步開空／低屋頂格 + `climbBias` / `targetAlt`（非僅側向）。
+- `AirArenaAiMap.findBakePath`：bake 格短視窗 A*；代價含高屋頂／低淨空／掉頭；重規劃有 hysteresis。
+- Pilot：`applyBakeRouteCombatScore` 把立面閉合＋俯衝＋corridor／WP 寫進 escape／urban route／tactical approach 評分；`shouldSoftYieldCombatForBakeRoute` 讓 align／shallowDive **軟讓路**（非硬擋）。
+- 僅在建築壓力時 stick 偏置（`survivalWpGate`）；遠距 WP／path 可作分數特徵（`survivalWpHint`）。
+- 決策樹：`survivalWpGate` + `alignFirstGate softYield=` / `shallowDiveGate: deferred=bakeRouteScore`。
 
 ---
 
@@ -81,12 +104,16 @@ Air-Arena-v2.2-Stable/          # 目錄名保留；文件版本 v3.0+
 ├── TECH-DEBT.md                # 技術債 + 計劃進度（現行）
 ├── css/style.css
 ├── docs/
+│   ├── Arena-Map-Onboarding-Memo.md   # 新場地：bake + envelope 檢查清單（現行）
+│   ├── PilotAI-Portability-Memo.md   # PilotAI 優先／引擎預先準備（現行）
 │   └── Tactical-Development-Memo.md  # 歷史備忘（已過時）
 ├── map-editor/                 # 地圖編輯器（WIP polish）
 ├── js/
 │   ├── game.js                 # 主迴圈、點選、鏡頭、模型載入
 │   ├── core/
 │   │   ├── config.js               # 數值、資源路徑、doctrine
+│   │   ├── combat-airspace.js      # 硬／軟 AO 壓力（出界殺）
+│   │   ├── arena-envelope.js       # 場地包絡 profile + soft 分（跟地圖掛）
 │   │   ├── context.js              # GameContext、陣營/目標/對戰 API
 │   │   ├── fallbacks.js
 │   │   ├── map-catalog.js / map-loader.js
@@ -358,9 +385,11 @@ processFlightPaths → processFlares
 - [x] LCOS 相對拖曳／軸向／遮擋可見
 - [ ] ACMI 重播碎片（待辦）
 - [ ] wreck 狀態序列化（待辦）
-- [ ] Phase B 戰術定位層
-- [ ] Envelope 單一來源 + regression 對齊
+- [x] Phase B thin knife（predict soft-score）
+- [ ] Phase B 完整戰術定位層
+- [x] Envelope 單一來源 + regression 對齊
+- [ ] 城區 AI 回歸安全門（H7）
 
 ---
 
-*文件版本 v3.0+（2026-07-30）· 對應程式樹 `airarAir-Arena-v2.2-Stable` · 技術債詳 `TECH-DEBT.md`*
+*文件版本 v3.0+（2026-08-04）· 對應程式樹 `airarAir-Arena-v2.2-Stable` · 技術債詳 `TECH-DEBT.md`*

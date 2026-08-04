@@ -89,7 +89,7 @@ window.MapLoader = (function () {
 
     function normalizeDoc(raw) {
         const g = (raw && raw.ground) || {};
-        return {
+        const doc = {
             version: 1,
             name: String((raw && raw.name) || 'map'),
             ground: {
@@ -105,6 +105,14 @@ window.MapLoader = (function () {
                 ? raw.objects.map((o, i) => normalizeObject(o, i))
                 : []
         };
+        // Venue envelope (AO + altitude) — kept on doc; applied via AirArenaArenaEnvelope on load.
+        if (raw && (raw.envelope || raw.combatAirspace || raw.altitudeEnvelope)) {
+            doc.envelope = raw.envelope || raw.combatAirspace || {};
+            if (raw.altitudeEnvelope && !doc.envelope.altitude) {
+                doc.envelope.altitude = raw.altitudeEnvelope;
+            }
+        }
+        return doc;
     }
 
     function fromLegacyBuildings(buildings) {
@@ -352,6 +360,10 @@ window.MapLoader = (function () {
         applyGround(groundMesh, map.ground);
         if (envCtx) {
             applyEnvironment(envCtx, map.lighting, map.sky);
+        }
+        // Bind venue envelope from this map (diameter/center/bands) — see Arena-Map-Onboarding-Memo.
+        if (typeof AirArenaArenaEnvelope !== 'undefined' && AirArenaArenaEnvelope.applyFromMapDoc) {
+            AirArenaArenaEnvelope.applyFromMapDoc(map);
         }
 
         const root = new THREE.Group();

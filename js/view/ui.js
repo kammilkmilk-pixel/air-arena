@@ -31,8 +31,7 @@ function uiShowComputingOverlay(subtitle = '戰術結算與 AI 決策') {
     }
     const bar = document.getElementById('replay-control-bar');
     if (bar) bar.classList.add('is-computing');
-    // Status/spinner live in the fold — expand so players can see computing feedback.
-    if (uiIsReplayMainCollapsed()) uiSetReplayMainCollapsed(false);
+    // Keep user collapse: do not auto-expand roster/status/tree during engage compute.
     const repStatus = document.getElementById('replay-status');
     if (repStatus) {
         repStatus.innerText = '狀態: 運算中';
@@ -2160,7 +2159,7 @@ document.addEventListener("DOMContentLoaded", () => {
         uiToggleWeaponFireQueue();
     });
 
-    // 戰術電腦中央：規劃中 ▶／執行（等同席位「規劃中／待命中」）
+    // 戰術電腦中央：交戰開始 ▶／執行（等同席位「規劃中／待命中」）
     const btnSmsExec = document.getElementById('sms-exec-btn');
     if (btnSmsExec) {
         btnSmsExec.addEventListener('click', () => {
@@ -2483,7 +2482,7 @@ function updateDashboardUI(teamObj) {
         }
     }
 
-    // 戰術電腦中央執行鈕：規劃中 ▶ ↔ 待命中／執行
+    // 戰術電腦中央執行鈕：交戰開始 ▶ ↔ 待命中／執行
     const btnSmsExec = document.getElementById('sms-exec-btn');
     if (btnSmsExec) {
         const live = uiIsSeatLive(teamObj.id);
@@ -2502,8 +2501,8 @@ function updateDashboardUI(teamObj) {
             btnSmsExec.innerText = '待命中';
             btnSmsExec.title = '取消待命／返回規劃';
         } else {
-            btnSmsExec.innerText = '規劃中 ▶';
-            btnSmsExec.title = '確認規劃並執行';
+            btnSmsExec.innerText = '交戰開始 ▶';
+            btnSmsExec.title = '確認交戰並執行';
         }
     }
 
