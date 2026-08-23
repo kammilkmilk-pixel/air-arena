@@ -35,6 +35,12 @@ window.GameContext = {
         cameraZoomToken: 0,
         cameraZoomUntil: 0,
         cameraFollowOverrideId: null,
+        /** Ordered team ids with open chase-cam panes (multi-view). */
+        viewPaneIds: ['red'],
+        /** Remembered multi-view layout for combat (human planning collapses to single seat). */
+        viewPaneIdsSaved: ['red'],
+        /** Per-team camera shake: { [teamId]: { until: ms, amp: number } } */
+        cameraShakeByTeam: {},
         arenaMode: 'dense-urban',
         matchConfig: null,
         matchReady: false,
@@ -98,7 +104,27 @@ window.GameContext = {
     },
 
     sanitizeMatchControl(control) {
-        return control === 'ai' ? 'ai' : 'human';
+        // Model ids in the control field still mean AI (legacy / mis-set).
+        if (
+            control === 'ai' ||
+            control === 'Rei_03' ||
+            control === 'Rei_02' ||
+            control === 'Rei_01' ||
+            control === 'test_01' ||
+            control === 'ling_0' ||
+            control === 'Rei_00'
+        ) {
+            return 'ai';
+        }
+        return 'human';
+    },
+
+    sanitizeMatchAiModel(model, control) {
+        if (control !== 'ai') return null;
+        // Legacy control seats → Rei_01 (historical); keep Rei_01/Rei_02/Rei_03/test_01 as-is.
+        if (model === 'Rei_00' || model === 'ling_0') return 'Rei_01';
+        if (model === 'Rei_03' || model === 'Rei_02' || model === 'Rei_01' || model === 'test_01') return model;
+        return 'test_01';
     },
 
     sanitizeMatchLoadout(loadout) {
@@ -131,10 +157,10 @@ window.GameContext = {
             spawnAltitude: 45,
             spawnSeparation: 100,
             seats: {
-                'red-1': { control: 'human', loadout: 'standard', pylons: defaultPylons.slice(), teamId: 'red' },
-                'red-2': { control: 'ai', loadout: 'standard', pylons: defaultPylons.slice(), teamId: 'red2', deferred: matchMode !== '2v2' },
-                'blue-1': { control: 'ai', loadout: 'standard', pylons: defaultPylons.slice(), teamId: 'blue' },
-                'blue-2': { control: 'ai', loadout: 'standard', pylons: defaultPylons.slice(), teamId: 'blue2', deferred: matchMode !== '2v2' }
+                'red-1': { control: 'human', aiModel: null, loadout: 'standard', pylons: defaultPylons.slice(), teamId: 'red' },
+                'red-2': { control: 'ai', aiModel: 'test_01', loadout: 'standard', pylons: defaultPylons.slice(), teamId: 'red2', deferred: matchMode !== '2v2' },
+                'blue-1': { control: 'ai', aiModel: 'test_01', loadout: 'standard', pylons: defaultPylons.slice(), teamId: 'blue' },
+                'blue-2': { control: 'ai', aiModel: 'test_01', loadout: 'standard', pylons: defaultPylons.slice(), teamId: 'blue2', deferred: matchMode !== '2v2' }
             }
         };
     },
@@ -258,7 +284,27 @@ window.GameContext = {
         const incoming = (config && config.seats) || {};
         Object.keys(base.seats).forEach((seatId) => {
             const src = incoming[seatId] || {};
-            base.seats[seatId].control = this.sanitizeMatchControl(src.control || base.seats[seatId].control);
+            const rawControl = src.control != null ? src.control : base.seats[seatId].control;
+            const control = this.sanitizeMatchControl(rawControl);
+            // Prefer explicit aiModel; if control was a model id, peel into aiModel.
+            let aiModel = src.aiModel;
+            if (
+                (rawControl === 'Rei_03' ||
+                    rawControl === 'Rei_02' ||
+                    rawControl === 'Rei_01' ||
+                    rawControl === 'test_01' ||
+                    rawControl === 'ling_0' ||
+                    rawControl === 'Rei_00') &&
+                (aiModel == null || aiModel === '')
+            ) {
+                aiModel =
+                    rawControl === 'Rei_00' || rawControl === 'ling_0' ? 'Rei_01' : rawControl;
+            }
+            if (aiModel == null && control === 'ai') {
+                aiModel = base.seats[seatId].aiModel || 'test_01';
+            }
+            base.seats[seatId].control = control;
+            base.seats[seatId].aiModel = this.sanitizeMatchAiModel(aiModel, control);
             base.seats[seatId].loadout = this.sanitizeMatchLoadout(src.loadout || base.seats[seatId].loadout);
             base.seats[seatId].pylons = this.sanitizePylonLoadout(src.pylons || base.seats[seatId].pylons);
         });

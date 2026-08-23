@@ -150,6 +150,12 @@ function selectTeam(teamId) {
     const t = GameContext.getTeam(teamId);
     if (!t || t.matchActive === false) return;
     GameContext.setActiveTeamId(teamId);
+    if (window.AirArenaMultiView && typeof window.AirArenaMultiView.open === 'function') {
+        // Selecting a seat always keeps its chase pane open.
+        if (!(t.isDestroyed || (typeof t.hp === 'number' && t.hp <= 0))) {
+            window.AirArenaMultiView.open(teamId);
+        }
+    }
     const active = GameContext.getActiveTeam();
     const faction = (GameContext.getFaction && GameContext.getFaction(teamId)) || teamId;
     document.body.className = `theme-${faction}`;
@@ -326,9 +332,16 @@ function updateSoftCameraFollow() {
     if (GameContext.isReplayMode()) return;
     const lockFollow = !!GameContext.state.cameraFollowOverrideId;
     // Chase during combat playback, or while lock-aim mode is active in planning.
-    if (!GameContext.isAnimating() && !lockFollow) return;
+    const multi = window.AirArenaMultiView && window.AirArenaMultiView.getOpenIds
+        ? window.AirArenaMultiView.getOpenIds().length > 1
+        : false;
+    if (!GameContext.isAnimating() && !lockFollow && !multi) return;
     if (typeof camera === 'undefined' || typeof controls === 'undefined') return;
     if (performance.now() < (GameContext.state.cameraZoomUntil || 0)) return;
+    if (multi && window.AirArenaMultiView.updateCameras) {
+        window.AirArenaMultiView.updateCameras();
+        return;
+    }
     const hostId = GameContext.getActiveTeamId();
     const host = GameContext.getTeam(hostId);
     if (!host || !host.wrapper) return;
@@ -424,6 +437,9 @@ function checkInit() {
             // Apply after default init so scenario spawn/AI/AP are not overwritten.
             // Match Setup holds the startup screen until ENGAGE (unless scenario/skipSetup).
             selectTeam('red');
+            if (window.AirArenaMultiView && typeof window.AirArenaMultiView.resetTo === 'function') {
+                window.AirArenaMultiView.resetTo('red');
+            }
             if (typeof initAircraftPickClick === 'function') initAircraftPickClick();
             if (typeof window.uiSyncSelectionChrome === 'function') {
                 window.uiSyncSelectionChrome('red');
@@ -493,9 +509,40 @@ window.updateTacticalPreview = function(teamObj) {
     const acConfig = CONFIG.aircrafts[teamObj.type || 'mig21']; 
     let stats = acConfig.throttleStats[teamObj.throttle] || { heat: 0 };
     
-    // 失速紅屏警告
-    let stallScreen = document.getElementById('stall-screen');
-    if (stallScreen) stallScreen.style.display = teamObj.stalled ? 'flex' : 'none';
+    // Stall warning: only on that aircraft’s chase view (multi-pane safe).
+    if (window.AirArenaMultiView && typeof window.AirArenaMultiView.syncStallOverlays === 'function') {
+        window.AirArenaMultiView.syncStallOverlays();
+    } else {
+        const stallScreen = document.getElementById('stall-screen');
+        if (stallScreen) stallScreen.style.display = teamObj.stalled ? 'flex' : 'none';
+    }
+
+    // Outside / deep-warn: force inward bank (skip if facade close ahead).
+    if (typeof blendForcedInwardJoystick === 'function' && teamObj.wrapper) {
+        const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(
+            teamObj.wrapper.userData.logicalQuat || teamObj.wrapper.quaternion
+        );
+        const blended = blendForcedInwardJoystick(
+            teamObj.wrapper.position,
+            fwd,
+            teamObj.joyX,
+            teamObj.joyY,
+            { allowBuildingDefer: true }
+        );
+        if (blended && blended.forced) {
+            teamObj.joyX = blended.joyX;
+            teamObj.joyY = blended.joyY;
+            teamObj.roll = blended.joyX * (Math.PI / 4);
+            teamObj.pendingYaw = 0;
+            teamObj.pendingPitch = 0;
+            teamObj.airspaceForcedInward = true;
+        } else if (blended && blended.deferredBuilding) {
+            teamObj.airspaceForcedInward = false;
+            teamObj.airspaceInwardDeferredBuilding = true;
+        } else {
+            teamObj.airspaceForcedInward = false;
+        }
+    }
 
     // 讀取 UI 輸入
     let currentYaw = teamObj.pendingYaw !== 0 ? teamObj.pendingYaw : (teamObj.joyX !== undefined ? -(teamObj.joyX * acConfig.maxYaw) : 0);
@@ -641,7 +688,9 @@ function updateTargetingLock(teamObj) {
             let expectedBulletPos = teamObj.wrapper.position.clone().add(forward.clone().multiplyScalar(forwardDist));
             expectedBulletPos.y -= gravDrop;
             
-            let coneRadius = forwardDist * Math.tan(dAngle);
+            let coneRadius = typeof gunHitRadiusAt === 'function'
+                ? gunHitRadiusAt(forwardDist, dAngle, CONFIG.weapons.gun || {})
+                : Math.min(1.75, Math.max(0.65, forwardDist * Math.tan(dAngle)));
             isLocked = (expectedBulletPos.distanceTo(enemyObj.wrapper.position) <= coneRadius);
         }
     } else { 
@@ -658,7 +707,12 @@ window.startCombatAnimation = function() {
     GameContext.setReplayMode(false);
     isReplayingAuto = false;
     GameContext.state.animProgress = 0.0;
+    GameContext.state._shakeFiredSteps = Object.create(null);
     GameContext.setAnimating(true);
+    // Human matches: restore remembered multi-view only while combat plays.
+    if (window.AirArenaMultiView && typeof window.AirArenaMultiView.restoreCombatSplit === 'function') {
+        window.AirArenaMultiView.restoreCombatSplit();
+    }
 
     let btnExit = document.getElementById('btn-rep-exit');
     if (btnExit) btnExit.style.display = 'none';
@@ -817,6 +871,26 @@ function animate() {
                     });
                 }
             });
+            // Hit camera shake when playback crosses recorded damage steps (viewing that aircraft).
+            if (currentLog && typeof window.triggerViewCameraShake === 'function') {
+                if (!GameContext.state._shakeFiredSteps) GameContext.state._shakeFiredSteps = Object.create(null);
+                const turnKey = String(battleLog.length);
+                animIds.forEach((id) => {
+                    const steps = currentLog[id] && currentLog[id].damageSteps;
+                    if (!Array.isArray(steps) || !steps.length) return;
+                    const key = turnKey + ':' + id;
+                    let fired = GameContext.state._shakeFiredSteps[key];
+                    if (!fired) fired = GameContext.state._shakeFiredSteps[key] = Object.create(null);
+                    for (let i = 0; i < steps.length; i++) {
+                        const s = Number(steps[i]);
+                        if (!Number.isFinite(s) || trackIdx < s) continue;
+                        const mark = s + ':' + i;
+                        if (fired[mark]) continue;
+                        fired[mark] = 1;
+                        window.triggerViewCameraShake(id, 0.26);
+                    }
+                });
+            }
 
             if (GameContext.state.animProgress >= 1.0 && typeof finishTurnSimultaneously === 'function') {
                 let tagR = document.getElementById('replay-tag-red');
@@ -834,7 +908,15 @@ function animate() {
         // Keep chaff sparkles flickering while planning between turns
         GameContext.callService('drawStaticChaff');
     }
-    renderer.render(scene, camera);
+    if (window.AirArenaMultiView && typeof window.AirArenaMultiView.render === 'function') {
+        window.AirArenaMultiView.pruneDestroyed();
+        window.AirArenaMultiView.render(scene, renderer);
+        if (typeof window.AirArenaMultiView.syncOverlayLabels === 'function') {
+            window.AirArenaMultiView.syncOverlayLabels();
+        }
+    } else {
+        renderer.render(scene, camera);
+    }
 }
 
 // ============================================================================
@@ -861,6 +943,11 @@ function enterReplayMode() {
         });
         if (window.ghostWrapper) window.ghostWrapper.visible = false;
         if (typeof threatEnvGroup !== 'undefined' && threatEnvGroup) threatEnvGroup.visible = false;
+        const labels = document.getElementById('multi-view-labels');
+        if (labels) {
+            labels.innerHTML = '';
+            labels.style.display = 'none';
+        }
     }
 }
 
@@ -900,6 +987,11 @@ function exitReplayMode() {
             t.wrapper.userData.exhaust.group.visible = !t.isDestroyed;
         }
     });
+
+    // ACMI may leave flare pool meshes visible; restore planning-view static flares only.
+    if (typeof window.hideVisualFlares === 'function') window.hideVisualFlares();
+    else GameContext.callService('hideVisualFlares');
+    GameContext.callService('drawStaticFlares');
     
     const currentTeam = GameContext.getActiveTeamId();
     if (GameContext.getTeam(currentTeam)) GameContext.callService('updateTacticalPreview', GameContext.getTeam(currentTeam));

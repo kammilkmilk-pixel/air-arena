@@ -25,6 +25,11 @@ window.StateMachineWreckApi = {
             t.wrapper.visible = true;
             if (t.wrapper.userData.exhaust) t.wrapper.userData.exhaust.group.visible = false;
         }
+        if (window.AirArenaMultiView) {
+            if (typeof window.AirArenaMultiView.close === 'function') window.AirArenaMultiView.close(teamId);
+            if (typeof window.AirArenaMultiView.pruneDestroyed === 'function') window.AirArenaMultiView.pruneDestroyed();
+            if (typeof window.uiRefreshTeamModeButtons === 'function') window.uiRefreshTeamModeButtons();
+        }
         return true;
     },
 
@@ -42,6 +47,11 @@ window.StateMachineWreckApi = {
             window.spawnAircraftDebris(pos, quat, t.colorMain);
         }
         if (t.wrapper) t.wrapper.visible = false;
+        if (window.AirArenaMultiView) {
+            if (typeof window.AirArenaMultiView.close === 'function') window.AirArenaMultiView.close(teamId);
+            if (typeof window.AirArenaMultiView.pruneDestroyed === 'function') window.AirArenaMultiView.pruneDestroyed();
+            if (typeof window.uiRefreshTeamModeButtons === 'function') window.uiRefreshTeamModeButtons();
+        }
         return true;
     }
 };

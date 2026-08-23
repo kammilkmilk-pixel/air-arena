@@ -1,0 +1,23 @@
+---
+description: Dense-urban survival convergence — no dump-ban oscillation; class-based overhead
+globs: "**/js/ai/**/*.js"
+alwaysApply: false
+---
+
+# Urban survival convergence
+
+Canonical doc: `docs/Urban-Survival-Convergence.md`.
+
+## Do
+
+- Prefer `classifyUrbanOverhead` (or thin wrappers) over new one-off gates.
+- Stick priority: dive-level → table-close skim → high facade escape → soft route.
+- Survival edits: merge/delete contradictions or extract classifier / single stick owner.
+- Validate dumps by death class (`tableGlue`, `falseSilhouette`, `spawnMergeDirt`, `energyGround`).
+- Pass gate before Phase B full roles: 3× dense-urban to T150 with ≤1 building death/match.
+
+## Don't
+
+- Add new dump-keyed `ban *` hard locks for a single trail fingerprint.
+- Start Phase B full lead/lag/beam FSM while the survival pass definition fails.
+- Mix spawn/merge-dirt fixes into the same patch as mid-match undercroft unless class counts demand it.

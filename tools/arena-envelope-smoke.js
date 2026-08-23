@@ -17,8 +17,8 @@ const cityDoc = {
     ground: { width: 1000, depth: 1000, centerX: 10, centerZ: 20 },
     envelope: {
         diameter: 1000,
-        softMargin: 240,
-        warnMargin: 220,
+        softMargin: 360,
+        warnMargin: 320,
         centerX: 10,
         centerZ: 20,
         altitude: { bandMin: 35, bandMax: 92, bandHardMax: 108, mandatoryClimbAlt: 36 }
@@ -27,6 +27,10 @@ const cityDoc = {
 const profile = api.applyFromMapDoc(cityDoc);
 assert.strictEqual(profile.diameter, 1000, 'city diameter');
 assert.ok(Math.abs(profile.radius - 500) < 1e-6);
+assert.strictEqual(profile.softMargin, 360, 'widened softMargin');
+assert.strictEqual(profile.warnMargin, 320, 'widened warnMargin');
+assert.ok(Math.abs(profile.softRadius - 140) < 1e-6, `softRadius=${profile.softRadius}`);
+assert.ok(Math.abs(profile.warnRadius - 180) < 1e-6, `warnRadius=${profile.warnRadius}`);
 assert.strictEqual(profile.altitude.bandMin, 35);
 
 // Center sample = clear.
@@ -80,12 +84,51 @@ for (const needle of [
     'arenaEnvelope:',
     'AirArenaArenaEnvelope',
     'hardHigh inward descend',
-    'airspaceRimProtect'
+    'airspaceRimProtect',
+    'warnYield',
+    'recover=1'
 ]) {
     if (!pilotSrc.includes(needle)) fails.push(`pilot-ai missing ${needle}`);
 }
 const indexSrc = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
 if (!indexSrc.includes('js/core/arena-envelope.js')) fails.push('index.html must load arena-envelope.js');
+if (!indexSrc.includes('js/core/combat-airspace.js')) fails.push('index.html must load combat-airspace.js');
+
+const air = require(path.join(ROOT, 'js', 'core', 'combat-airspace.js'));
+// Simulate CONFIG so getCombatAirspace sees widened defaults + penalty mode.
+global.CONFIG = {
+    rules: {
+        combatAirspace: {
+            enabled: true,
+            diameter: 1000,
+            softMargin: 360,
+            warnMargin: 320,
+            outsideKill: false,
+            outsideHpPenalty: 14,
+            centerX: 10,
+            centerZ: 20
+        }
+    }
+};
+const a = air.getCombatAirspace();
+assert.strictEqual(a.outsideKill, false, 'outsideKill default off');
+assert.strictEqual(a.outsideHpPenalty, 14);
+assert.ok(Math.abs(a.softRadius - 140) < 1e-6);
+assert.ok(air.isOutsideCombatAirspace({ x: 10 + 520, y: 50, z: 20 }));
+assert.ok(!air.isOutsideCombatAirspace({ x: 10 + 100, y: 50, z: 20 }));
+const outP = air.getAirspacePressure({ x: 10 + 520, y: 50, z: 20 });
+assert.strictEqual(outP.band, 'outside');
+const midP = air.getAirspacePressure({ x: 10 + 160, y: 50, z: 20 });
+assert.ok(midP.band === 'soft' || midP.band === 'warn', `mid band=${midP.band}`);
+const blend = air.blendForcedInwardJoystick(
+    { x: 10 + 520, y: 50, z: 20 },
+    { x: 1, y: 0, z: 0 },
+    0.1,
+    0.05,
+    { allowBuildingDefer: false }
+);
+assert.ok(blend.forced, 'outside forces inward');
+assert.ok(Math.abs(blend.joyX) > Math.abs(0.1), 'inward joy stronger than passthrough');
 
 const memo = fs.readFileSync(path.join(ROOT, 'docs', 'Arena-Map-Onboarding-Memo.md'), 'utf8');
 if (!memo.includes('arena-envelope')) fails.push('memo should mention arena-envelope module');
@@ -98,3 +141,4 @@ if (fails.length) {
 
 console.log('arena-envelope-smoke: PASS');
 console.log(`  diameter=${profile.diameter} rimBand=${rim.band} softP=${rim.softProgress.toFixed(2)} alignOut=${alignOut.toFixed(1)} inward=${inwardJoy.toFixed(1)}`);
+console.log(`  airspace softR=${a.softRadius} warnR=${a.warnRadius} outsideKill=${a.outsideKill} pen=${a.outsideHpPenalty}`);

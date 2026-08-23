@@ -88,6 +88,7 @@ window.StateMachineMatchApi = {
                 t.aiPreDeathAction = null;
                 t.aiDecisionTrail = [];
                 t.aiDecisionTrailFrozen = false;
+                t.aiWeaponCounters = null;
                 if (Array.isArray(t.aiDebugTrace)) t.aiDebugTrace = [];
             } else {
                 t.isDestroyed = false;
@@ -101,6 +102,7 @@ window.StateMachineMatchApi = {
                 t.aiPreDeathAction = null;
                 t.aiDecisionTrail = [];
                 t.aiDecisionTrailFrozen = false;
+                t.aiWeaponCounters = null;
                 if (Array.isArray(t.aiDebugTrace)) t.aiDebugTrace = [];
                 if (t.wrapper) t.wrapper.visible = true;
             }
@@ -124,6 +126,10 @@ window.StateMachineMatchApi = {
                 else if (seat.loadout === 'fox1-priority') t.aiPolicyMode = 'fox1-first';
                 else if (seat.loadout === 'gun-priority') t.aiPolicyMode = 'heuristic';
                 else t.aiPolicyMode = 'hybrid';
+                const modelId = (typeof AirArenaAIRegistry !== 'undefined' && AirArenaAIRegistry.isKnownModel && AirArenaAIRegistry.isKnownModel(seat.aiModel))
+                    ? seat.aiModel
+                    : ((typeof AirArenaAIRegistry !== 'undefined' && AirArenaAIRegistry.DEFAULT_MODEL) || 'test_01');
+                t.aiModel = modelId;
                 this.setAIEnabled(teamId, true);
                 if (seat.loadout === 'fox2-priority' || seat.loadout === 'fox1-priority') {
                     this.forceWeaponMode(teamId, 'missile');
@@ -131,6 +137,7 @@ window.StateMachineMatchApi = {
                     this.forceWeaponMode(teamId, 'gun');
                 }
             } else {
+                t.aiModel = null;
                 this.setAIEnabled(teamId, false);
                 if (seat.loadout === 'fox2-priority' || seat.loadout === 'fox1-priority') {
                     this.forceWeaponMode(teamId, 'missile');
@@ -139,20 +146,21 @@ window.StateMachineMatchApi = {
                 }
             }
             let pylons = seat.pylons;
-            if (seat.loadout === 'fox1-priority') {
-                const hasFox1 = Array.isArray(pylons) && pylons.some((w) => w === 'fox1');
-                if (!hasFox1) pylons = ['fox1', 'fox1', 'fox1', 'fox1'];
+            if (seat.loadout === 'gun-priority') {
+                pylons = ['empty', 'empty', 'empty', 'empty'];
+            } else if (seat.loadout === 'fox1-priority') {
+                pylons = ['fox1', 'fox1', 'fox1', 'fox1'];
+            } else if (seat.loadout === 'fox2-priority') {
+                pylons = ['fox2', 'fox2', 'fox2', 'fox2'];
             } else if (seat.loadout === 'standard') {
-                // Migrate legacy 4×FOX-2 "standard" seats to 2×F1+2×F2.
+                // Migrate legacy 4×FOX-2 / empty "standard" seats to 2×F1+2×F2.
                 const allFox2 = Array.isArray(pylons) && pylons.length >= 4 && pylons.every((w) => w === 'fox2');
-                if (!Array.isArray(pylons) || pylons.length < 4 || allFox2) {
+                const allEmpty = Array.isArray(pylons) && pylons.length >= 4 && pylons.every((w) => w === 'empty');
+                if (!Array.isArray(pylons) || pylons.length < 4 || allFox2 || allEmpty) {
                     pylons = (typeof defaultPylonLoadout === 'function')
                         ? defaultPylonLoadout()
                         : ['fox1', 'fox2', 'fox2', 'fox1'];
                 }
-            } else if (seat.loadout === 'fox2-priority') {
-                const hasFox2 = Array.isArray(pylons) && pylons.some((w) => w === 'fox2');
-                if (!hasFox2) pylons = ['fox2', 'fox2', 'fox2', 'fox2'];
             }
             t.pendingPylonLoadout = (typeof sanitizePylonLoadout === 'function')
                 ? sanitizePylonLoadout(pylons)
@@ -196,6 +204,11 @@ window.StateMachineMatchApi = {
         }
 
         GameContext.state.matchReady = true;
+        if (window.AirArenaMultiView && typeof window.AirArenaMultiView.resetTo === 'function') {
+            const prefer = (GameContext.getActiveTeamId && GameContext.getActiveTeamId()) || 'red';
+            window.AirArenaMultiView.resetTo(prefer);
+        }
+        if (typeof window.uiRefreshTeamModeButtons === 'function') window.uiRefreshTeamModeButtons();
         return cfg;
     }
 };

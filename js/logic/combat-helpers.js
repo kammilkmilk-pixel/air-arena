@@ -51,14 +51,19 @@ function tryAttachAllPylons() {
         t.pylons = acConfig.pylons.map((p, idx) => {
             let pMesh = new THREE.Group(); pMesh.add(missileMeshBase.clone());
             pMesh.position.set(p.position[0], p.position[1], p.position[2]); t.wrapper.add(pMesh);
-            const weaponType = (loadout && loadout[idx])
-                ? (typeof sanitizePylonWeapon === 'function' ? sanitizePylonWeapon(loadout[idx]) : loadout[idx])
-                : (p.weapon || 'fox2');
+            const rawSlot = loadout && loadout[idx];
+            const isEmpty = rawSlot === 'empty' || rawSlot === 'none' || rawSlot === 'gun';
+            const weaponType = isEmpty
+                ? 'empty'
+                : ((rawSlot)
+                    ? (typeof sanitizePylonWeapon === 'function' ? sanitizePylonWeapon(rawSlot) : rawSlot)
+                    : (p.weapon || 'fox2'));
+            if (isEmpty) pMesh.visible = false;
             const pylonState = {
                 id: p.id,
                 localPosition: new THREE.Vector3(p.position[0], p.position[1], p.position[2]),
                 weaponType,
-                state: 'standby'
+                state: isEmpty ? 'empty' : 'standby'
             };
             return GameContext.bindPylonView(id, pylonState, { mesh: pMesh, lineMesh: null });
         });

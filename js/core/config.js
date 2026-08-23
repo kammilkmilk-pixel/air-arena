@@ -38,14 +38,17 @@ const CONFIG = {
         stallSpeedAP: 35,        // 觸發失速的最低 AP 門檻（放寬：原 45）
         minFlightHeight: 0.5,    // 強制判定墜機/失速的最低高度 (m)
         /**
-         * Combat airspace cylinder (XZ). Diameter matches tactical ground plane (900).
-         * Outside hardRadius = leave airspace → destroyed. Soft band steers AI inward.
+         * Combat airspace cylinder (XZ). Diameter matches tactical ground plane.
+         * Soft/warn margins are distance inward from hard radius (larger = earlier steer).
+         * outsideKill:false → HP penalty + forced inward (default); true = legacy instant kill.
          */
         combatAirspace: {
             enabled: true,
             diameter: 900,
-            softMargin: 220,  // AI bias starts at radius - softMargin
-            warnMargin: 200,  // human caution tape from radius - warnMargin
+            softMargin: 320,
+            warnMargin: 280,
+            outsideKill: false,
+            outsideHpPenalty: 14,
             // null → use battlefield / ground center at runtime
             centerX: null,
             centerZ: null
@@ -66,11 +69,11 @@ const CONFIG = {
             
             throttleStats: {
                 // 1 檔：減速板 (BRK) - 極速冷卻，用於急煞
-                1: { thrust: 0, heat: -18, turnLimit: 1.0, speedProfile: [0.5, 0.4, 0.1], gunAngleMult: 1.8, gunRangeMult: 0.8 },
+                1: { thrust: 0, heat: -18, turnLimit: 1.0, speedProfile: [0.5, 0.4, 0.1], gunAngleMult: 1.35, gunRangeMult: 0.8 },
                 // 2 檔：怠速 (IDL) - 快速散熱
-                2: { thrust: 15, heat: -12, turnLimit: 1.0, speedProfile: [1.0, 0.8, 0.5], gunAngleMult: 1.5, gunRangeMult: 0.9 },
+                2: { thrust: 15, heat: -12, turnLimit: 1.0, speedProfile: [1.0, 0.8, 0.5], gunAngleMult: 1.2, gunRangeMult: 0.9 },
                 // 3 檔：經濟巡航 (ECO) - 微量冷卻
-                3: { thrust: 30, heat: -6,  turnLimit: 0.85, speedProfile: [1.1, 1.1, 1.0], gunAngleMult: 1.2, gunRangeMult: 1.0 },
+                3: { thrust: 30, heat: -6,  turnLimit: 0.85, speedProfile: [1.1, 1.1, 1.0], gunAngleMult: 1.1, gunRangeMult: 1.0 },
                 // 4 檔：軍用最大推力 (MIL) - 常規戰鬥極限
                 4: { thrust: 65, heat: -2,  turnLimit: 0.7, speedProfile: [1.5, 1.5, 1.5], gunAngleMult: 1.0, gunRangeMult: 1.1 },
                 // 5 檔：後燃器 (AB) - 狂暴推力，廢熱極速累積
@@ -100,16 +103,24 @@ const CONFIG = {
             name: '機砲',
             damage: 45,            
             range: 70,             
-            angle: Math.PI / 24,
+            // ~5° base cone (was π/24 ≈7.5°); throttle mult still widens slightly when slow.
+            angle: Math.PI / 36,
             gravityMult: 1.2,
             /** Barrel heat 0–1: +heatPerShot on fire, −coolPerTurn when idle. */
             heatPerShot: 0.3,
             coolPerTurn: 0.4,
             overheatAt: 1.0,
+            /**
+             * Hit cylinder: coneRadius = range·tan(angle), then clamp to [hitRadiusFloor, hitRadiusMax].
+             * Without max, long-range cone was ~8–14m — tracers looked like misses but still scored.
+             * Fuselage visual scale ≈1.2 → keep max near ~1.5–2.0 airframe widths.
+             */
+            hitRadiusFloor: 0.65,
+            hitRadiusMax: 1.75,
             /** Past hitFalloffStart, each hitFalloffBand of range cuts hit chance by hitFalloffPerBand. */
-            hitFalloffStart: 60,
+            hitFalloffStart: 45,
             hitFalloffBand: 10,
-            hitFalloffPerBand: 0.1
+            hitFalloffPerBand: 0.15
         },
         'fox2': {
             id: 'fox2',
@@ -132,6 +143,8 @@ const CONFIG = {
             frontAspectTurnRateMult: 0.42,
             frontAspectFuseRangeMult: 0.32,
             frontAspectDamageMult: 0.32,
+            /** Empty pylon auto-restock after this many turns (combat tempo). */
+            reloadTurns: 30,
             
             model: {
                 scale: 0.3,        
@@ -168,6 +181,8 @@ const CONFIG = {
             supportMinAngle: Math.PI / 48,
             /** Radar look wander off nose (0 = stable illuminate ring on nose). */
             supportLookJitterRad: 0,
+            /** Empty pylon auto-restock after this many turns (combat tempo). */
+            reloadTurns: 50,
             model: {
                 scale: 0.3,
                 offsetX: -0.5,
@@ -238,14 +253,15 @@ const CONFIG = {
                 requireLos: true,
                 illuminateHold: false,
                 preferStandoff: false,
-                maxLaunchAngleDeg: 32
+                // Soft: opening/prep spray used wider cones; keep launch near seeker.
+                maxLaunchAngleDeg: 28
             },
             fox1: {
                 dualSalvoOk: false,
                 requireLos: true,
                 illuminateHold: true,
                 preferStandoff: true,
-                maxLaunchAngleDeg: 28,
+                maxLaunchAngleDeg: 26,
                 holdNoseGain: 0.58,
                 holdMaxJoy: 0.62,
                 // Gun-like SARH: launch only with altitude + clear illuminate path.

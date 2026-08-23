@@ -38,9 +38,9 @@
 
 ### 2. 場地包絡（envelope／場地限制）
 
-- [ ] **水平 AO：** `CONFIG.rules.combatAirspace`（或未來 `arena-envelope` profile）對應該圖：`diameter`／`center`／`softMargin`／`warnMargin`
+- [ ] **水平 AO：** `CONFIG.rules.combatAirspace`／envelope：`diameter`／`center`／`softMargin`／`warnMargin`；`outsideKill`（預設 false＝扣 HP＋強制回場）／`outsideHpPenalty`
 - [ ] **垂直帶：** `combatBandMin`／`combatBandMax`／`combatBandHardMax`（或 profile 覆寫）與開局高度、屋頂尺度匹配
-- [ ] 硬出界／硬撞地仍由場地／物理層定義；AI 只做 soft 偏向與 rim／高度閘**消費**壓力
+- [ ] 硬撞樓／撞地仍秒殺；空域出界預設為扣血＋強制向心（近樓 probe 可暫緩硬推），AI／人類皆消費壓力
 - [ ] 換尺寸時用**相對量**（距硬邊比例、帶內歸一化高度），避免在 `pilot-ai.js` 新寫絕對米數特例
 
 ### 3. 回歸與實測

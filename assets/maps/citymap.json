@@ -10,8 +10,8 @@
   },
   "envelope": {
     "diameter": 1000,
-    "softMargin": 240,
-    "warnMargin": 220,
+    "softMargin": 360,
+    "warnMargin": 320,
     "centerX": 10,
     "centerZ": 20,
     "altitude": {
@@ -155,9 +155,9 @@
     {
       "id": "p_ms660kuk_5",
       "kind": "glb",
-      "x": 12,
+      "x": 220,
       "y": 0,
-      "z": 21.5,
+      "z": -200,
       "rotY": 0,
       "color": null,
       "collision": true,
@@ -636,9 +636,9 @@
     {
       "id": "b_ms67deuf_45",
       "kind": "box",
-      "x": 29,
+      "x": 95,
       "y": 0,
-      "z": -85,
+      "z": -175,
       "rotY": 0,
       "color": 10854576,
       "collision": true,
@@ -784,9 +784,9 @@
     {
       "id": "p_ms67iz8z_59",
       "kind": "glb",
-      "x": 27,
+      "x": 160,
       "y": 0,
-      "z": 52,
+      "z": 210,
       "rotY": 0,
       "color": 11253172,
       "collision": true,
@@ -1746,9 +1746,9 @@
     {
       "id": "p_ms6cp1z5_134",
       "kind": "glb",
-      "x": 21,
+      "x": 185,
       "y": 0,
-      "z": 77,
+      "z": 195,
       "rotY": 0,
       "color": null,
       "collision": true,

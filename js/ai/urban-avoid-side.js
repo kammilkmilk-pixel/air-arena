@@ -105,6 +105,36 @@
     function shouldHandoffEscapeToEngage(coverInfo = {}, opts = {}, tuning = {}) {
         if (opts.hardContact) return false;
         if (opts.trueUndercroft || isTrueUndercroft(coverInfo, opts)) return false;
+        // P0/T150 soft: only refuse handoff when truly under / closing — bare beside-tall may reclaim.
+        const roofBan = Number(coverInfo.roofClearance);
+        const distBan = Number(coverInfo.distance);
+        const fwdBan = Number(coverInfo.forwardDistance);
+        const fyBan = Number(opts.forwardY);
+        const chokeBan = coverInfo.hardChokeKind || null;
+        if (chokeBan === 'tableUndercroft' || chokeBan === 'tightUndercroft') {
+            if (!Number.isFinite(distBan) || distBan < 28) return false;
+        }
+        if (
+            Number.isFinite(roofBan) &&
+            roofBan < -0.8 &&
+            Number.isFinite(distBan) &&
+            distBan < 14
+        ) {
+            return false;
+        }
+        if (
+            Number.isFinite(roofBan) &&
+            roofBan < -2 &&
+            Number.isFinite(distBan) &&
+            distBan < 22 &&
+            (
+                (Number.isFinite(fwdBan) && fwdBan > 0 && fwdBan < 18) ||
+                (Number.isFinite(fyBan) && fyBan < -0.15) ||
+                coverInfo.collisionRisk === 'high'
+            )
+        ) {
+            return false;
+        }
         // Combat reclaim may ignore soft hardLock (AABB proximity) — never hardContact/undercroft.
         if (opts.hardLock && !opts.combatContact) return false;
         const h = mergeHandoffTuning(tuning);
@@ -232,8 +262,11 @@
 
         const aabbConflictsMemory =
             !!aabbEscapeSide && !!committedAvoidSide && aabbEscapeSide !== committedAvoidSide;
+        const glueLockHoldSide = Math.sign(Number(ctx.glueLockHoldSide) || 0);
+        const undercroftHold = !!ctx.undercroftHold;
         const aabbShouldOwnSide =
             aabbConflictsMemory &&
+            !(undercroftHold && glueLockHoldSide) &&
             (
                 hardBuildingContact ||
                 meshGlueContact ||
@@ -260,7 +293,19 @@
             let escSide = 0;
             let embedFlip = 0;
             let source = 'fallback';
-            if (aabbShouldOwnSide && aabbEscapeSide) {
+            // P0/T150: active score/undercroft glue lock owns side over aabbOverMemory flip.
+            // Exception: lock into mesh (≠ aabb escape) — unlock to away-from-mesh.
+            if (undercroftHold && glueLockHoldSide) {
+                if (aabbEscapeSide && glueLockHoldSide !== aabbEscapeSide) {
+                    escSide = aabbEscapeSide;
+                    embedFlip = 1;
+                    source = 'awayFromMesh';
+                } else {
+                    escSide = glueLockHoldSide;
+                    source = 'glueLockHold';
+                    embedFlip = 0;
+                }
+            } else if (aabbShouldOwnSide && aabbEscapeSide) {
                 escSide = aabbEscapeSide;
                 embedFlip = committedAvoidSide && aabbEscapeSide !== committedAvoidSide ? 1 : 0;
                 source = 'aabbOverMemory';
@@ -297,9 +342,13 @@
                 holdTurns,
                 nextGlueStreak,
                 applyMemory: true,
-                treeNote: aabbShouldOwnSide
-                    ? `avoidSide: override=aabbOverMemory aabb=${aabbEscapeSide} was=${committedAvoidSide || 0} dist=${Number.isFinite(coverDistNow) ? coverDistNow.toFixed(1) : 'n/a'}`
-                    : null,
+                treeNote: source === 'glueLockHold'
+                    ? `avoidSide: hold=glueLock side=${glueLockHoldSide} aabb=${aabbEscapeSide || 0} dist=${Number.isFinite(coverDistNow) ? coverDistNow.toFixed(1) : 'n/a'}`
+                    : (source === 'awayFromMesh'
+                        ? `avoidSide: unlock=awayFromMesh aabb=${aabbEscapeSide} was=${glueLockHoldSide || 0} dist=${Number.isFinite(coverDistNow) ? coverDistNow.toFixed(1) : 'n/a'}`
+                        : (aabbShouldOwnSide
+                            ? `avoidSide: override=aabbOverMemory aabb=${aabbEscapeSide} was=${committedAvoidSide || 0} dist=${Number.isFinite(coverDistNow) ? coverDistNow.toFixed(1) : 'n/a'}`
+                            : null)),
                 mode: 'hardEmbed',
                 aabbEscapeSide,
                 aabbShouldOwnSide: aabbShouldOwnSide ? 1 : 0
@@ -308,6 +357,7 @@
 
         const approachOverride =
             aabbEscapeSide &&
+            !(undercroftHold && glueLockHoldSide) &&
             (!committedAvoidSide || committedAvoidSide !== aabbEscapeSide) &&
             (
                 earlyBuildingApproach ||

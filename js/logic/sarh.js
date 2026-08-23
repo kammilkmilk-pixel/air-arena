@@ -6,6 +6,14 @@ function sanitizePylonWeapon(w) {
     return w === 'fox1' ? 'fox1' : 'fox2';
 }
 
+/** Per-slot loadout: fox1 | fox2 | empty (gun-only seats). */
+function sanitizePylonSlot(w) {
+    if (w === 'empty' || w === 'none' || w === 'gun') return 'empty';
+    if (w === 'fox1') return 'fox1';
+    if (w === 'fox2') return 'fox2';
+    return null;
+}
+
 function defaultPylonLoadout() {
     // Standard combat mix: 2×FOX-1 + 2×FOX-2 (inner SARH / outer IR) + gun via SMS.
     return ['fox1', 'fox2', 'fox2', 'fox1'];
@@ -14,11 +22,15 @@ function defaultPylonLoadout() {
 function sanitizePylonLoadout(arr) {
     const base = defaultPylonLoadout();
     if (!Array.isArray(arr)) return base.slice();
-    return base.map((_, i) => sanitizePylonWeapon(arr[i]));
+    return [0, 1, 2, 3].map((i) => {
+        const slot = sanitizePylonSlot(arr[i]);
+        if (slot) return slot;
+        return sanitizePylonWeapon(base[i]);
+    });
 }
 
 function getMissileWeaponConfig(missileType) {
-    const type = sanitizePylonWeapon(missileType);
+    const type = sanitizePylonWeapon(missileType === 'empty' ? 'fox2' : missileType);
     if (typeof CONFIG !== 'undefined' && CONFIG.weapons && CONFIG.weapons[type]) {
         return CONFIG.weapons[type];
     }
@@ -27,6 +39,11 @@ function getMissileWeaponConfig(missileType) {
 
 function pylonWeaponType(pylon) {
     if (!pylon) return 'fox2';
+    // Prefer stored weaponType even while empty (reload / SMS); only default fox2 for true gun-empty.
+    if (pylon.weaponType === 'fox1' || pylon.weaponType === 'fox2') {
+        return pylon.weaponType;
+    }
+    if (pylon.weaponType === 'empty' || pylon.state === 'empty') return 'fox2';
     return sanitizePylonWeapon(pylon.weaponType || pylon.weapon || 'fox2');
 }
 
@@ -243,6 +260,7 @@ function computeSarhSupport(opts = {}) {
 const _sarhRoot = typeof globalThis !== 'undefined' ? globalThis : (typeof window !== 'undefined' ? window : null);
 if (_sarhRoot) {
     _sarhRoot.sanitizePylonWeapon = sanitizePylonWeapon;
+    _sarhRoot.sanitizePylonSlot = sanitizePylonSlot;
     _sarhRoot.defaultPylonLoadout = defaultPylonLoadout;
     _sarhRoot.sanitizePylonLoadout = sanitizePylonLoadout;
     _sarhRoot.getMissileWeaponConfig = getMissileWeaponConfig;
@@ -256,6 +274,7 @@ if (_sarhRoot) {
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
         sanitizePylonWeapon,
+        sanitizePylonSlot,
         defaultPylonLoadout,
         sanitizePylonLoadout,
         getMissileWeaponConfig,

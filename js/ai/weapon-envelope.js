@@ -151,33 +151,66 @@
     }
 
     /**
-     * Infer preferred missile type from team pylons / live SMS.
-     * When both present, prefer fox1 if opts preferFox1 / distance in fox1 band.
+     * Infer preferred missile type from team pylons / geometry.
+     * When both fox1+fox2 remain: geometry / preferFox1 wins — do NOT sticky-lock on
+     * powering/armed live type (that blocked fox1↔fox2 switches; AI reconcile drops conflict).
+     * Pass opts.respectLive=true to keep old SMS sticky (UI / threat mirrors).
      */
     function inferTeamMissileType(team, opts = {}) {
         if (!team) return 'fox2';
         if (opts.missileType === 'fox1' || opts.missileType === 'fox2') {
             return opts.missileType;
         }
-        if (typeof teamLiveMissileType === 'function') {
-            const live = teamLiveMissileType(team);
-            if (live === 'fox1' || live === 'fox2') return live;
-        }
         const pylons = team.pylons || [];
         const hasFox1 = pylons.some((p) => p && p.state !== 'empty' && pylonTypeOf(p) === 'fox1');
         const hasFox2 = pylons.some((p) => p && p.state !== 'empty' && pylonTypeOf(p) === 'fox2');
         if (hasFox1 && hasFox2) {
+            // Optional SMS sticky (UI / threat mirrors) — before geometry.
+            if (opts.respectLive === true) {
+                let live = null;
+                if (typeof teamLiveMissileType === 'function') {
+                    live = teamLiveMissileType(team);
+                } else {
+                    const liveP = pylons.find((p) => p && (p.state === 'armed' || p.state === 'powering'));
+                    live = liveP ? pylonTypeOf(liveP) : null;
+                }
+                if (live === 'fox1' || live === 'fox2') return live;
+            }
             if (opts.preferFox1 === true) return 'fox1';
+            if (opts.preferFox2 === true) return 'fox2';
             const dist = Number(opts.distance);
             const angDeg = Number(opts.angleDeg);
             const env1 = getMissileCombatEnvelope('fox1');
+            const env2 = getMissileCombatEnvelope('fox2');
+            const angOk1 = !Number.isFinite(angDeg) || angDeg < 28;
+            const angOk2 = !Number.isFinite(angDeg) || angDeg < 36;
             const inFox1Band =
                 Number.isFinite(dist) &&
                 dist >= env1.missileMinRange &&
                 dist <= env1.missileMaxRange &&
-                (!Number.isFinite(angDeg) || angDeg < 28);
-            if (inFox1Band) return 'fox1';
+                angOk1;
+            const inFox2Band =
+                Number.isFinite(dist) &&
+                dist >= env2.missileMinRange &&
+                dist <= env2.missileMaxRange &&
+                angOk2;
+            if (inFox1Band && !inFox2Band) return 'fox1';
+            if (inFox2Band && !inFox1Band) return 'fox2';
+            if (inFox1Band && inFox2Band) {
+                // Overlap (~70–120): knife / loose aspect → fox2; nose-on midband → fox1 (kill Pk).
+                if (dist < 80 || (Number.isFinite(angDeg) && angDeg > 26)) return 'fox2';
+                if (Number.isFinite(angDeg) && angDeg <= 18 && dist >= 85) return 'fox1';
+                if (dist < 95) return 'fox2';
+                return 'fox1';
+            }
+            if (Number.isFinite(dist) && dist > env2.missileMaxRange && dist <= env1.missileMaxRange) {
+                return 'fox1';
+            }
             return 'fox2';
+        }
+        if (opts.respectLive === true && typeof teamLiveMissileType === 'function') {
+            const live = teamLiveMissileType(team);
+            if (live === 'fox1' || live === 'fox2') return live;
         }
         if (hasFox1) return 'fox1';
         return 'fox2';

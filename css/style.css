@@ -249,6 +249,37 @@ html { touch-action: none; overscroll-behavior: none; height: 100%; width: 100%;
 /* 警報與開場黑幕 */
 #stall-screen { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255, 0, 0, 0.25); z-index: 9000; display: none; justify-content: center; align-items: center; pointer-events: none; }
 #stall-text { color: white; font-size: 40px; font-weight: bold; text-shadow: 0 0 15px red; text-align: center; }
+/* Per-pane stall flash (multi-view); mirrors #stall-screen but clipped to chase rects */
+#multi-view-stalls {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 9000;
+    display: none;
+}
+.pane-stall-overlay {
+    position: fixed;
+    box-sizing: border-box;
+    background: rgba(255, 0, 0, 0.25);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    pointer-events: none;
+    animation: paneStallPulse 0.55s ease-in-out infinite alternate;
+}
+.pane-stall-text {
+    color: #fff;
+    font-size: clamp(18px, 3.2vw, 36px);
+    font-weight: bold;
+    text-shadow: 0 0 15px red;
+    text-align: center;
+    line-height: 1.25;
+}
+.pane-stall-text span { font-size: 0.55em; font-weight: normal; opacity: 0.95; }
+@keyframes paneStallPulse {
+    from { background: rgba(255, 0, 0, 0.18); }
+    to { background: rgba(255, 0, 0, 0.32); }
+}
 
 /* Turn compute lock — invisible input shield; status/spinner live in #replay-status-row */
 #combat-lock-screen {
@@ -473,7 +504,7 @@ html.startup-lock body {
 .match-seat-list { display: flex; flex-direction: column; gap: 8px; }
 .match-seat-row {
     display: grid;
-    grid-template-columns: 72px 1fr 1.35fr;
+    grid-template-columns: 72px minmax(96px, 1.15fr) 1.2fr;
     gap: 8px;
     align-items: center;
     padding: 8px;
@@ -932,11 +963,46 @@ body:not(:has(#replay-team-roster)) .team-seat-row {
     border-color: #fff;
     box-shadow: 0 0 10px rgba(0, 188, 212, 0.5);
 }
+.team-sel-btn.is-view-open:not(.is-active) {
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.55);
+}
+.team-sel-btn.is-view-open.faction-red:not(.is-active) {
+    border-color: #ff6688;
+    color: #ff6688;
+}
+.team-sel-btn.is-view-open.faction-blue:not(.is-active) {
+    border-color: #66e0ef;
+    color: #66e0ef;
+}
 .team-sel-btn.faction-red:not(.is-active) {
     color: #ff0055;
 }
 .team-sel-btn.faction-blue:not(.is-active) {
     color: #00bcd4;
+}
+#multi-view-labels {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 40;
+}
+.multi-view-label {
+    position: fixed;
+    padding: 2px 8px;
+    font-family: 'Courier New', monospace;
+    font-size: 11px;
+    font-weight: bold;
+    letter-spacing: 0.04em;
+    background: rgba(0, 0, 0, 0.55);
+    border: 1px solid rgba(255, 255, 255, 0.35);
+    border-radius: 3px;
+    color: #eee;
+}
+.multi-view-label.faction-red { color: #ff6688; border-color: rgba(255, 0, 85, 0.55); }
+.multi-view-label.faction-blue { color: #66e0ef; border-color: rgba(0, 188, 212, 0.55); }
+.multi-view-label.is-active {
+    background: rgba(0, 0, 0, 0.72);
+    box-shadow: 0 0 8px rgba(255, 255, 255, 0.2);
 }
 .team-panel-group .cockpit-rect-btn {
     background: rgba(0, 0, 0, 0.5);

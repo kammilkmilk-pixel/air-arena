@@ -46,7 +46,7 @@ function buildDoctrineHelpers() {
             return {
                 dualSalvoOk: true,
                 illuminateHold: false,
-                maxLaunchAngleDeg: 32
+                maxLaunchAngleDeg: 28
             };
         },
         hasOwnFox1InFlight(team) {

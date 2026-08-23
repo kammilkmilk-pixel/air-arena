@@ -60,6 +60,40 @@ function main() {
         'fox2',
         'mixed load outside fox1 min prefers fox2'
     );
+    assert.strictEqual(
+        env.inferTeamMissileType(teamMixed, { distance: 90, angleDeg: 10 }),
+        'fox1',
+        'overlap nose-on midband prefers fox1'
+    );
+    assert.strictEqual(
+        env.inferTeamMissileType(teamMixed, { distance: 90, angleDeg: 30 }),
+        'fox2',
+        'overlap loose aspect prefers fox2'
+    );
+    assert.strictEqual(
+        env.inferTeamMissileType(teamMixed, { distance: 70, angleDeg: 10 }),
+        'fox2',
+        'overlap knife band prefers fox2'
+    );
+
+    // Live sticky must not override geometry (fox2 powering at fox1 standoff range).
+    const teamStickyFox2 = {
+        id: 'red',
+        pylons: [
+            { id: 0, state: 'standby', weaponType: 'fox1' },
+            { id: 1, state: 'powering', weaponType: 'fox2' }
+        ]
+    };
+    assert.strictEqual(
+        env.inferTeamMissileType(teamStickyFox2, { distance: 140, angleDeg: 12 }),
+        'fox1',
+        'geometry prefers fox1 even when fox2 is powering'
+    );
+    assert.strictEqual(
+        env.inferTeamMissileType(teamStickyFox2, { distance: 140, angleDeg: 12, respectLive: true }),
+        'fox2',
+        'respectLive keeps SMS sticky when requested'
+    );
 
     const drift = env.assertMatchesConfig(CONFIG);
     assert.ok(drift.ok, `config drift: ${(drift.drift || []).join('; ')}`);

@@ -515,13 +515,361 @@
         };
     }
 
+    /**
+     * Mid-term: two topologically distinct lateral corridors (L street / R street).
+     * Each is a short forward chain biased onto that side, scored with pocketRisk.
+     * Pilot uses these to fill homotopy top-2 (not mesh-gap soft scores alone).
+     */
+    function sampleDualHomotopyCorridors(map, x, z, headingX, headingZ, altitude, opts = {}) {
+        const empty = {
+            ok: false,
+            left: null,
+            right: null,
+            preferredHomotopyId: null,
+            corridors: []
+        };
+        if (!map) return empty;
+        let fx = Number(headingX) || 0;
+        let fz = Number(headingZ) || 0;
+        const flen = Math.hypot(fx, fz);
+        if (flen < 1e-4) {
+            fx = 0;
+            fz = 1;
+        } else {
+            fx /= flen;
+            fz /= flen;
+        }
+        // Left of forward in XZ: (-fz, fx) — matches samplePlannerCorridor.
+        const lx = -fz;
+        const lz = fx;
+        const cell = Math.max(4, Number(map.cellSize) || DEFAULT_CELL);
+        const stepDist = Number(opts.stepDist) || cell * 2;
+        const steps = Math.max(3, Math.min(8, Math.round(Number(opts.steps) || 5)));
+        const lateral = Number(opts.lateral) || cell * 1.5;
+        const margin = Number(opts.margin) || 8;
+        const alt = Number(altitude);
+        const altOk = Number.isFinite(alt);
+        const ox = Number(x) || 0;
+        const oz = Number(z) || 0;
+
+        function sampleAt(wx, wz) {
+            const q = query(map, wx, wz);
+            const roof = q && Number.isFinite(Number(q.roofMax)) ? Number(q.roofMax) : 0;
+            const sky = !!(q && (q.skyOpen || q.outOfBounds));
+            const clear = sky || (altOk && alt >= roof + margin);
+            const localRoofMax = sampleLocalRoofMax(map, wx, wz, cell * 2.25);
+            return {
+                x: wx,
+                z: wz,
+                roofMax: roof,
+                localRoofMax,
+                skyOpen: sky ? 1 : 0,
+                clear: clear ? 1 : 0,
+                mapLane: q && q.ok ? q.lane : null
+            };
+        }
+
+        function scoreCell(s) {
+            let sc = 0;
+            if (s.clear) sc += 40;
+            if (s.skyOpen) sc += 18;
+            sc += Math.max(0, 36 - Math.min(36, (Number(s.roofMax) || 0) * 0.45));
+            if (altOk) {
+                const head = alt - (Number(s.roofMax) || 0);
+                if (head >= margin) sc += Math.min(22, head * 0.55);
+                else if (head < 0) sc -= Math.min(50, -head * 0.8);
+            }
+            return sc;
+        }
+
+        // Pilot homotopy: side -1 = L (world-left), side +1 = R (world-right).
+        function sampleSide(side) {
+            const worldLat = side < 0 ? 1 : -1;
+            const waypoints = [];
+            let cx = ox + lx * lateral * worldLat * 0.85;
+            let cz = oz + lz * lateral * worldLat * 0.85;
+            let hfx = fx;
+            let hfz = fz;
+            for (let i = 0; i < steps; i++) {
+                const candidates = [];
+                const offsets = [
+                    { f: 1, l: worldLat * 0.35 },
+                    { f: 1, l: worldLat * 0.85 },
+                    { f: 0.7, l: worldLat * 1.1 },
+                    { f: 1, l: 0 },
+                    { f: 0.55, l: worldLat * 0.5 }
+                ];
+                for (let o = 0; o < offsets.length; o++) {
+                    const off = offsets[o];
+                    const wx = cx + hfx * stepDist * off.f + lx * lateral * off.l;
+                    const wz = cz + hfz * stepDist * off.f + lz * lateral * off.l;
+                    const s = sampleAt(wx, wz);
+                    candidates.push({ s, sc: scoreCell(s) });
+                }
+                candidates.sort((a, b) => b.sc - a.sc);
+                const best = candidates[0].s;
+                waypoints.push(best);
+                const dx = best.x - cx;
+                const dz = best.z - cz;
+                const dlen = Math.hypot(dx, dz);
+                if (dlen > 1e-3) {
+                    hfx = dx / dlen;
+                    hfz = dz / dlen;
+                }
+                cx = best.x;
+                cz = best.z;
+            }
+            const pocket = scoreWaypointChainPocket(waypoints);
+            const clearCount = waypoints.filter((w) => w.clear).length;
+            const strength = clearCount >= 3 ? 2 : (clearCount >= 1 ? 1 : 0);
+            const corridorOpen = clearCount >= Math.ceil(steps * 0.6) && !pocket.isFunnel;
+            return {
+                ok: true,
+                homotopyId: side < 0 ? 'L' : 'R',
+                side,
+                waypoints,
+                pocketRisk: pocket.pocketRisk,
+                funnelScore: pocket.funnelScore,
+                openScore: pocket.openScore,
+                isFunnel: pocket.isFunnel,
+                strength,
+                corridorOpen,
+                source: 'bakeDual'
+            };
+        }
+
+        const left = sampleSide(-1);
+        const right = sampleSide(1);
+        const preferredHomotopyId =
+            Number(left.pocketRisk) <= Number(right.pocketRisk) ? 'L' : 'R';
+        return {
+            ok: true,
+            left,
+            right,
+            preferredHomotopyId,
+            corridors: [left, right]
+        };
+    }
+
+    /**
+     * Long-horizon seed: flyable adjacency graph on bake cells at a reference altitude.
+     * Nodes = cell indices; edges = 4-neighbor links when both cells are clear enough.
+     */
+    function buildFlyableCorridorGraph(map, opts = {}) {
+        const empty = {
+            ok: false,
+            cellSize: 0,
+            cols: 0,
+            rows: 0,
+            refAlt: 0,
+            nodeCount: 0,
+            edgeCount: 0,
+            neighbors: null
+        };
+        if (!map || !map.roofMax) return empty;
+        const cell = Math.max(4, Number(map.cellSize) || DEFAULT_CELL);
+        const cols = Number(map.cols) || 0;
+        const rows = Number(map.rows) || 0;
+        if (cols < 2 || rows < 2) return empty;
+        const margin = Number(opts.margin) || 8;
+        const refAlt = Number.isFinite(Number(opts.refAlt)) ? Number(opts.refAlt) : 55;
+        const roof = map.roofMax;
+        const n = cols * rows;
+        const flyable = new Uint8Array(n);
+        let nodeCount = 0;
+        for (let i = 0; i < n; i++) {
+            const rMax = Number(roof[i]) || 0;
+            const ok = rMax < 40 || refAlt >= rMax + margin;
+            flyable[i] = ok ? 1 : 0;
+            if (ok) nodeCount += 1;
+        }
+        const neighbors = new Array(n);
+        let edgeCount = 0;
+        const deltas = [
+            [1, 0],
+            [-1, 0],
+            [0, 1],
+            [0, -1]
+        ];
+        for (let r = 0; r < rows; r++) {
+            for (let c = 0; c < cols; c++) {
+                const i = r * cols + c;
+                if (!flyable[i]) {
+                    neighbors[i] = [];
+                    continue;
+                }
+                const nb = [];
+                for (let d = 0; d < deltas.length; d++) {
+                    const nc = c + deltas[d][0];
+                    const nr = r + deltas[d][1];
+                    if (nc < 0 || nr < 0 || nc >= cols || nr >= rows) continue;
+                    const j = nr * cols + nc;
+                    if (!flyable[j]) continue;
+                    const roofCost = Math.min(12, (Number(roof[j]) || 0) * 0.08);
+                    nb.push({ to: j, cost: 1 + roofCost });
+                    edgeCount += 1;
+                }
+                neighbors[i] = nb;
+            }
+        }
+        return {
+            ok: nodeCount > 0 && edgeCount > 0,
+            cellSize: cell,
+            cols,
+            rows,
+            originX: Number(map.originX) || 0,
+            originZ: Number(map.originZ) || 0,
+            refAlt,
+            nodeCount,
+            edgeCount,
+            flyable,
+            neighbors,
+            roofMax: roof
+        };
+    }
+
+    /**
+     * Dijkstra on buildFlyableCorridorGraph → world waypoints (cell centers).
+     */
+    function findCorridorGraphPath(graph, startX, startZ, goalX, goalZ, opts = {}) {
+        const empty = {
+            ok: false,
+            waypoints: [],
+            steps: 0,
+            cost: Infinity,
+            pocketRisk: 0,
+            isFunnel: false,
+            source: 'corridorGraph'
+        };
+        if (!graph || !graph.ok || !graph.neighbors) return empty;
+        const cell = Math.max(4, Number(graph.cellSize) || DEFAULT_CELL);
+        const cols = Number(graph.cols) || 0;
+        const rows = Number(graph.rows) || 0;
+        const originX = Number(graph.originX) || 0;
+        const originZ = Number(graph.originZ) || 0;
+        const maxExpand = Math.max(80, Math.min(1200, Math.round(Number(opts.maxExpand) || 600)));
+
+        function idxAt(wx, wz) {
+            const c = Math.floor((wx - originX) / cell);
+            const r = Math.floor((wz - originZ) / cell);
+            if (c < 0 || r < 0 || c >= cols || r >= rows) return -1;
+            return r * cols + c;
+        }
+        function center(idx) {
+            const c = idx % cols;
+            const r = Math.floor(idx / cols);
+            return {
+                x: originX + (c + 0.5) * cell,
+                z: originZ + (r + 0.5) * cell,
+                roofMax: Number(graph.roofMax && graph.roofMax[idx]) || 0,
+                localRoofMax: Number(graph.roofMax && graph.roofMax[idx]) || 0,
+                clear: graph.flyable[idx] ? 1 : 0,
+                skyOpen: (Number(graph.roofMax && graph.roofMax[idx]) || 0) < 40 ? 1 : 0
+            };
+        }
+        function nearestFlyable(idx) {
+            if (idx < 0) return -1;
+            if (graph.flyable[idx]) return idx;
+            const c0 = idx % cols;
+            const r0 = Math.floor(idx / cols);
+            for (let rad = 1; rad <= 4; rad++) {
+                for (let dr = -rad; dr <= rad; dr++) {
+                    for (let dc = -rad; dc <= rad; dc++) {
+                        const c = c0 + dc;
+                        const r = r0 + dr;
+                        if (c < 0 || r < 0 || c >= cols || r >= rows) continue;
+                        const j = r * cols + c;
+                        if (graph.flyable[j]) return j;
+                    }
+                }
+            }
+            return -1;
+        }
+
+        let start = nearestFlyable(idxAt(Number(startX) || 0, Number(startZ) || 0));
+        let goal = nearestFlyable(idxAt(Number(goalX) || 0, Number(goalZ) || 0));
+        if (start < 0 || goal < 0) return empty;
+        if (start === goal) {
+            const w = center(start);
+            return {
+                ok: true,
+                waypoints: [w],
+                steps: 1,
+                cost: 0,
+                pocketRisk: 0,
+                isFunnel: false,
+                source: 'corridorGraph'
+            };
+        }
+
+        const dist = new Float64Array(cols * rows);
+        dist.fill(Infinity);
+        const prev = new Int32Array(cols * rows);
+        prev.fill(-1);
+        const closed = new Uint8Array(cols * rows);
+        dist[start] = 0;
+        const open = [start];
+        let expanded = 0;
+        while (open.length && expanded < maxExpand) {
+            let bestI = 0;
+            let bestD = dist[open[0]];
+            for (let i = 1; i < open.length; i++) {
+                const d = dist[open[i]];
+                if (d < bestD) {
+                    bestD = d;
+                    bestI = i;
+                }
+            }
+            const u = open.splice(bestI, 1)[0];
+            if (closed[u]) continue;
+            closed[u] = 1;
+            expanded += 1;
+            if (u === goal) break;
+            const nbs = graph.neighbors[u] || [];
+            for (let i = 0; i < nbs.length; i++) {
+                const e = nbs[i];
+                if (closed[e.to]) continue;
+                const nd = bestD + (Number(e.cost) || 1);
+                if (nd + 1e-9 < dist[e.to]) {
+                    dist[e.to] = nd;
+                    prev[e.to] = u;
+                    open.push(e.to);
+                }
+            }
+        }
+        if (!(dist[goal] < Infinity)) return empty;
+        const chain = [];
+        for (let cur = goal; cur >= 0; cur = prev[cur]) {
+            chain.push(cur);
+            if (cur === start) break;
+        }
+        chain.reverse();
+        const waypoints = chain.map(center);
+        const pocket = scoreWaypointChainPocket(waypoints);
+        return {
+            ok: waypoints.length >= 1,
+            waypoints,
+            steps: waypoints.length,
+            cost: Number(dist[goal].toFixed(2)),
+            pocketRisk: pocket.pocketRisk,
+            funnelScore: pocket.funnelScore,
+            openScore: pocket.openScore,
+            isFunnel: pocket.isFunnel,
+            source: 'corridorGraph'
+        };
+    }
+
     function waypointSteerSummary(waypoints, x, z, fx, fz, stepDist, alt, margin) {
         const empty = {
             preferredSide: 0,
             climbBias: 0,
             targetAlt: null,
             firstClear: false,
-            strength: 0
+            strength: 0,
+            pocketRisk: 0,
+            funnelScore: 0,
+            openScore: 0,
+            isFunnel: false
         };
         if (!waypoints || !waypoints.length) return empty;
         const first = waypoints[0];
@@ -550,19 +898,145 @@
                 targetAlt = Number(Math.max(a, peakRoof + m).toFixed(1));
             }
         }
+        const pocket = scoreWaypointChainPocket(waypoints);
         return {
             preferredSide,
             climbBias,
             targetAlt,
             firstClear: !!first.clear,
-            strength
+            strength,
+            pocketRisk: pocket.pocketRisk,
+            funnelScore: pocket.funnelScore,
+            openScore: pocket.openScore,
+            isFunnel: pocket.isFunnel
         };
     }
 
     /**
-     * Phase 3b: greedy open-cell chain (default 6–12 steps / ~150–250m), not A*.
-     * Returns XZ waypoints + preferredSide + climbBias / targetAlt.
+     * Near-term route: score WP/A* chains for U-trap / courtyard funnel vs open corridor.
+     * Higher pocketRisk → avoid committing sticky side into that homotopy.
+     *
+     * 2026-08-13: centerline clear/skyOpen alone always scored open on combat-alt paths
+     * (planner skirts roofs → pocketRisk≡0). Use localRoofMax / pinch + softer clear credit.
      */
+    function scoreWaypointChainPocket(waypoints) {
+        const empty = {
+            pocketRisk: 0,
+            funnelScore: 0,
+            openScore: 0,
+            isFunnel: false
+        };
+        if (!waypoints || waypoints.length < 2) return empty;
+
+        const localOf = (w) => {
+            const local = Number(w && w.localRoofMax);
+            if (Number.isFinite(local)) return local;
+            return Number(w && w.roofMax) || 0;
+        };
+        const roofOf = (w) => Number(w && w.roofMax) || 0;
+
+        let funnel = 0;
+        let open = 0;
+        let roofRise = 0;
+        let clearDrop = 0;
+        let pinchHits = 0;
+        for (let i = 1; i < waypoints.length; i++) {
+            const prev = waypoints[i - 1];
+            const cur = waypoints[i];
+            const prevRoof = roofOf(prev);
+            const curRoof = roofOf(cur);
+            const prevLocal = localOf(prev);
+            const curLocal = localOf(cur);
+            const dRoof = curRoof - prevRoof;
+            const dLocal = curLocal - prevLocal;
+
+            if (dRoof > 4) {
+                roofRise += 1;
+                funnel += Math.min(14, dRoof * 0.45);
+            } else if (dRoof < -4) {
+                open += Math.min(10, -dRoof * 0.35);
+            }
+            // Neighborhood density rise (even when centerline stays roof≈0).
+            if (dLocal > 6) {
+                roofRise += 1;
+                funnel += Math.min(16, dLocal * 0.4);
+            } else if (dLocal < -6) {
+                open += Math.min(10, -dLocal * 0.3);
+            }
+
+            // Pinch: tall neighbors beside a clear/low centerline (street into courtyard walls).
+            const pinch = curLocal - curRoof;
+            if (pinch > 12) {
+                pinchHits += 1;
+                funnel += Math.min(18, pinch * 0.35);
+            }
+
+            if (prev.clear && !cur.clear) {
+                clearDrop += 1;
+                funnel += 16;
+            } else if (!prev.clear && cur.clear) {
+                open += 12;
+            }
+
+            // High-alt "sky/clear" is cheap — only credit open when neighborhood is actually open.
+            if (cur.skyOpen && curLocal < 10) open += 6;
+            else if (cur.skyOpen && curLocal >= 22) funnel += 7;
+
+            if (cur.clear && curLocal < 12 && pinch <= 10) open += 2;
+            else if (cur.clear && curLocal >= 22) funnel += 9;
+            else if (!cur.clear) funnel += 9;
+
+            const lane = cur.mapLane || cur.lane;
+            if (lane === 'canyon' || lane === 'combat') funnel += 5;
+            else if (lane === 'dirt' && curLocal < 12) open += 2;
+        }
+
+        const mid = Math.max(1, Math.floor(waypoints.length / 2));
+        const firstHalf = waypoints.slice(0, mid);
+        const lastHalf = waypoints.slice(mid);
+        const avg = (arr, fn) =>
+            arr.reduce((m, w) => m + fn(w), 0) / Math.max(1, arr.length);
+        const firstLocal = avg(firstHalf, localOf);
+        const lastLocal = avg(lastHalf, localOf);
+        const firstRoof = avg(firstHalf, roofOf);
+        const lastRoof = avg(lastHalf, roofOf);
+
+        if (lastLocal > firstLocal + 10) funnel += 22;
+        else if (lastLocal + 10 < firstLocal) open += 12;
+        if (lastRoof > firstRoof + 8) funnel += 14;
+        else if (lastRoof + 8 < firstRoof) open += 10;
+
+        const firstClear = firstHalf.filter((w) => w.clear).length;
+        const lastClear = lastHalf.filter((w) => w.clear).length;
+        if (lastClear < firstClear) funnel += (firstClear - lastClear) * 10;
+
+        // True open end: low local density + sky, not merely clear centerline.
+        const openEnd = lastHalf.filter((w) => w.skyOpen && localOf(w) < 14).length;
+        if (openEnd >= Math.ceil(lastHalf.length * 0.5)) open += 8;
+
+        // Soften open dominance (was 0.85 → combat-alt paths always 0).
+        const openWeight = pinchHits >= 2 ? 0.35 : 0.5;
+        const pocketRisk = Math.max(0, Math.min(1, (funnel - open * openWeight) / 70));
+        const isFunnel =
+            pocketRisk >= 0.28 ||
+            (roofRise >= 2 && (clearDrop >= 1 || pinchHits >= 2)) ||
+            (pinchHits >= 3 && lastLocal >= 22) ||
+            (funnel >= 36 && open < funnel * 0.65);
+        return {
+            pocketRisk: Number(pocketRisk.toFixed(2)),
+            funnelScore: Number(funnel.toFixed(1)),
+            openScore: Number(open.toFixed(1)),
+            isFunnel: !!isFunnel
+        };
+    }
+
+    /** Max bake roof in a small world radius (corridor walls / courtyard density). */
+    function sampleLocalRoofMax(map, x, z, radiusWorld) {
+        const cell = Math.max(4, Number(map && map.cellSize) || DEFAULT_CELL);
+        const r = Number.isFinite(Number(radiusWorld)) ? Number(radiusWorld) : cell * 2.25;
+        const q = queryRoofMaxInRadius(map, x, z, r);
+        return q && q.ok ? Number(q.roofMax) || 0 : 0;
+    }
     function sampleSurvivalWaypoints(map, x, z, headingX, headingZ, altitude, opts = {}) {
         const empty = {
             ok: false,
@@ -573,6 +1047,10 @@
             steps: 0,
             climbBias: 0,
             targetAlt: null,
+            pocketRisk: 0,
+            funnelScore: 0,
+            openScore: 0,
+            isFunnel: false,
             source: 'greedy'
         };
         if (!map) return empty;
@@ -600,10 +1078,12 @@
             const sky = !!(q && (q.skyOpen || q.outOfBounds));
             const clear = sky || (altOk && alt >= roof + margin);
             const headroom = altOk ? alt - roof : 0;
+            const localRoofMax = sampleLocalRoofMax(map, wx, wz, cell * 2.25);
             return {
                 x: wx,
                 z: wz,
                 roofMax: roof,
+                localRoofMax,
                 skyOpen: sky,
                 clear,
                 headroom,
@@ -658,8 +1138,10 @@
                 x: Number(best.x.toFixed(2)),
                 z: Number(best.z.toFixed(2)),
                 roofMax: best.roofMax,
+                localRoofMax: best.localRoofMax,
                 skyOpen: best.skyOpen ? 1 : 0,
                 clear: best.clear ? 1 : 0,
+                mapLane: best.mapLane || null,
                 score: Number(bestScore.toFixed(1)),
                 targetAlt: altOk
                     ? Number(Math.max(alt, best.roofMax + margin).toFixed(1))
@@ -687,6 +1169,10 @@
             steps: waypoints.length,
             climbBias: steer.climbBias,
             targetAlt: steer.targetAlt,
+            pocketRisk: steer.pocketRisk,
+            funnelScore: steer.funnelScore,
+            openScore: steer.openScore,
+            isFunnel: steer.isFunnel,
             source: 'greedy'
         };
     }
@@ -705,6 +1191,10 @@
             steps: 0,
             climbBias: 0,
             targetAlt: null,
+            pocketRisk: 0,
+            funnelScore: 0,
+            openScore: 0,
+            isFunnel: false,
             source: 'path'
         };
         if (!map || !map.roofMax) return empty;
@@ -945,12 +1435,18 @@
             if (!isLast && dist < minSep && waypoints.length > 0) continue;
             const roof = roofAt(chain[i]);
             const clear = cellClear(chain[i]);
+            const localRoofMax = sampleLocalRoofMax(map, p.x, p.z, cell * 2.25);
+            const laneIdx = typeof map.lane === 'object' && map.lane
+                ? Number(map.lane[chain[i]]) || 0
+                : 0;
             waypoints.push({
                 x: Number(p.x.toFixed(2)),
                 z: Number(p.z.toFixed(2)),
                 roofMax: roof,
+                localRoofMax,
                 skyOpen: roof < 40 ? 1 : 0,
                 clear: clear ? 1 : 0,
+                mapLane: LANE_NAME[laneIdx] || null,
                 score: Number(((clear ? 40 : 0) + Math.max(0, 36 - roof * 0.45)).toFixed(1)),
                 targetAlt: altOk ? Number(Math.max(alt, roof + margin).toFixed(1)) : null
             });
@@ -969,6 +1465,10 @@
             steps: waypoints.length,
             climbBias: steer.climbBias,
             targetAlt: steer.targetAlt,
+            pocketRisk: steer.pocketRisk,
+            funnelScore: steer.funnelScore,
+            openScore: steer.openScore,
+            isFunnel: steer.isFunnel,
             source: 'path',
             expansions
         };
@@ -1052,9 +1552,14 @@
         indexAt,
         query,
         queryRoofMaxInRadius,
+        sampleLocalRoofMax,
         samplePlannerCorridor,
+        sampleDualHomotopyCorridors,
         sampleSurvivalWaypoints,
         findBakePath,
+        scoreWaypointChainPocket,
+        buildFlyableCorridorGraph,
+        findCorridorGraphPath,
         ensureAiMap,
         installOnGameContext,
         tryFetchJson

@@ -104,8 +104,8 @@
         const oAlt = (o.altitude) || {};
         const diameter = num(o.diameter != null ? o.diameter : c.diameter, 900);
         const radius = Math.max(50, diameter * 0.5);
-        const softMargin = num(o.softMargin != null ? o.softMargin : c.softMargin, 220);
-        const warnMargin = num(o.warnMargin != null ? o.warnMargin : c.warnMargin, 200);
+        const softMargin = num(o.softMargin != null ? o.softMargin : c.softMargin, 320);
+        const warnMargin = num(o.warnMargin != null ? o.warnMargin : c.warnMargin, 280);
         let cx = o.centerX != null && Number.isFinite(Number(o.centerX))
             ? Number(o.centerX)
             : (c.centerX != null && Number.isFinite(Number(c.centerX)) ? Number(c.centerX) : null);

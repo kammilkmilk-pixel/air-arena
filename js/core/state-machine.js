@@ -463,14 +463,10 @@ GameContext.stateMachine = {
         return true;
     },
 
-    /** Pin NPC status after HP reaches 0 — keep last living decision tree for debug export. */
+    /** Pin status after HP reaches 0 — AI keeps pre-death tree; human gets death cause on the same status slot. */
     markAIDestroyedStatus(teamId) {
         const t = this.getTeamOrNull(teamId);
         if (!t) return false;
-        if (!t.aiEnabled) {
-            t.aiState = 'destroyed';
-            return true;
-        }
         const cause = t.deathCause || 'combat';
         const stalled = t.deathStalled != null ? !!t.deathStalled : !!t.stalled;
         let statusText = '被擊墜';
@@ -496,14 +492,16 @@ GameContext.stateMachine = {
 
         const prev = t.aiLastAction;
         // Freeze the last living decide() output once; wreck / setAIStatus must not wipe it.
-        if (prev && prev.state !== 'destroyed' && !t.aiPreDeathAction) {
+        if (t.aiEnabled && prev && prev.state !== 'destroyed' && !t.aiPreDeathAction) {
             try {
                 t.aiPreDeathAction = JSON.parse(JSON.stringify(prev));
             } catch (err) {
                 t.aiPreDeathAction = prev;
             }
         }
-        const alive = t.aiPreDeathAction || (prev && prev.state !== 'destroyed' ? prev : null);
+        const alive = t.aiEnabled
+            ? (t.aiPreDeathAction || (prev && prev.state !== 'destroyed' ? prev : null))
+            : null;
         const aliveDebug = alive && alive.debug ? alive.debug : null;
         let aliveDebugCopy = {};
         if (aliveDebug) {
@@ -519,6 +517,7 @@ GameContext.stateMachine = {
             `selected: destroyed`,
             statusText,
             `deathCause=${cause} stalled=${stalled ? 1 : 0}`,
+            t.aiEnabled ? null : 'control=player',
             alive && alive.state ? `lastAliveState=${alive.state}` : null,
             alive && alive.statusText ? `lastAliveStatus=${alive.statusText}` : null
         ].filter(Boolean);
@@ -563,6 +562,7 @@ GameContext.stateMachine = {
                 deathCause: cause,
                 deathStalled: stalled ? 1 : 0,
                 preDeathPreserved: 1,
+                control: t.aiEnabled ? 'ai' : 'player',
                 lastAliveMode: aliveDebug && aliveDebug.mode ? aliveDebug.mode : (alive && alive.state) || null,
                 tree: aliveTree.concat(deathFooter)
             }
@@ -642,7 +642,12 @@ GameContext.stateMachine = {
         this.setAIStatus(teamId, action.state || 'thinking', action.statusText || action.reason || 'NPC: 決策中', action);
         // Only tag wingman orders when a living human lead exists (solo AI has no pair).
         if (t.aiEnabled && t.wingmanOrder && typeof AirArenaAI !== 'undefined' && AirArenaAI.getWingmanLeadId) {
-            const leadId = AirArenaAI.getWingmanLeadId(teamId);
+            const wingBrain = (typeof AirArenaAIRegistry !== 'undefined' && AirArenaAIRegistry.getPilotForTeam)
+                ? AirArenaAIRegistry.getPilotForTeam(teamId)
+                : AirArenaAI;
+            const leadId = wingBrain && wingBrain.getWingmanLeadId
+                ? wingBrain.getWingmanLeadId(teamId)
+                : AirArenaAI.getWingmanLeadId(teamId);
             if (leadId) {
                 const labels = { follow: '跟隨', attack: '攻擊我的目標', free: '主動進攻', cover: '掩護', break: '脫離' };
                 const label = labels[t.wingmanOrder];
@@ -974,7 +979,46 @@ GameContext.stateMachine = {
 
     advanceTurn() {
         GameContext.state.currentTurn += 1;
+        this.refillEmptyPylonsByCooldown();
         return GameContext.state.currentTurn;
+    },
+
+    /**
+     * FOX-1 / FOX-2 empty pylons restock after CONFIG.weapons[type].reloadTurns
+     * (default fox1=50, fox2=30). Preserves weaponType; gun-empty seats stay empty.
+     */
+    refillEmptyPylonsByCooldown() {
+        const turn = Math.max(1, Number(GameContext.state.currentTurn) || 1);
+        const ids = (typeof GameContext.getRosterIds === 'function')
+            ? GameContext.getRosterIds()
+            : Object.keys(GameContext.state.teams || {});
+        const reloadOf = (type) => {
+            const w = CONFIG && CONFIG.weapons && CONFIG.weapons[type];
+            const n = Number(w && w.reloadTurns);
+            if (type === 'fox1') return Number.isFinite(n) && n > 0 ? n : 50;
+            return Number.isFinite(n) && n > 0 ? n : 30;
+        };
+        ids.forEach((id) => {
+            const t = GameContext.getTeam(id);
+            if (!t || t.isDestroyed || !t.pylons) return;
+            t.pylons.forEach((p) => {
+                if (!p || p.state !== 'empty') return;
+                const type = (p.weaponType === 'fox1' || p.weaponType === 'fox2')
+                    ? p.weaponType
+                    : null;
+                if (!type) return;
+                const since = Number(p.emptySinceTurn);
+                if (!Number.isFinite(since) || since < 1) {
+                    // Hot-load / legacy empty without stamp: start clock now.
+                    p.emptySinceTurn = turn;
+                    return;
+                }
+                if ((turn - since) < reloadOf(type)) return;
+                p.state = 'standby';
+                p.emptySinceTurn = null;
+                if (p.mesh) p.mesh.visible = true;
+            });
+        });
     },
 
     resetTurnStatus(teamId) {

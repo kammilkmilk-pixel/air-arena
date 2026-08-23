@@ -10,8 +10,8 @@
   },
   "envelope": {
     "diameter": 900,
-    "softMargin": 220,
-    "warnMargin": 200,
+    "softMargin": 320,
+    "warnMargin": 280,
     "centerX": 10,
     "centerZ": 20,
     "altitude": {

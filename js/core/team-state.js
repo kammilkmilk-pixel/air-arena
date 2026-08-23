@@ -18,6 +18,19 @@ const BULLET_SPEED = 4.0;
 /** @deprecated Use GUN_RANGE — kept as alias for old call sites. */
 const DYNAMIC_GUN_RANGE = GUN_RANGE;
 
+/**
+ * Lateral hit allowance at forwardDist (m): cone then clamp to fuselage-scale max.
+ * Prevents long-range “virtual shotgun” hits when tracers clearly miss the airframe.
+ */
+function gunHitRadiusAt(forwardDist, coneAngleRad, gunCfg = (CONFIG.weapons && CONFIG.weapons.gun) || {}) {
+    const dist = Math.max(0, Number(forwardDist) || 0);
+    const ang = Number(coneAngleRad);
+    const cone = Number.isFinite(ang) ? dist * Math.tan(ang) : dist * Math.tan(GUN_ANGLE || Math.PI / 36);
+    const floor = Number.isFinite(Number(gunCfg.hitRadiusFloor)) ? Number(gunCfg.hitRadiusFloor) : 0.65;
+    const maxR = Number.isFinite(Number(gunCfg.hitRadiusMax)) ? Number(gunCfg.hitRadiusMax) : 1.75;
+    return Math.min(maxR, Math.max(floor, cone));
+}
+
 // Legacy module globals mirror FOX-2 (IR default). Prefer getMissileWeaponConfig(type)
 // or AirArenaWeaponEnvelope.getMissileCombatEnvelope(type) for typed munitions.
 const _FOX2_WPN = CONFIG.weapons.fox2;
@@ -42,6 +55,7 @@ GameContext.constants = {
     MISSILE_MAX_AP, SEEKER_RANGE, SEEKER_ANGLE, SEEKER_MIN_HEAT,
     MISSILE_SPEED, MISSILE_TURN_RATE, MISSILE_DRAG
 };
+GameContext.gunHitRadiusAt = gunHitRadiusAt;
 
 state.mslVisOffset = new THREE.Vector3(0.0, 0.0, 0.0);
 
@@ -73,6 +87,7 @@ function createTeamState(id, colorMain, matchActive = true) {
         pendingPylonLoadout: null,
         ready: false,
         aiEnabled: false,
+        aiModel: null,
         aiState: 'player',
         aiStatusText: 'PLAYER CONTROL',
         aiLastAction: null,
@@ -90,6 +105,8 @@ function createTeamState(id, colorMain, matchActive = true) {
         // Always-on compact decision ring buffer (export-all / death forensics).
         aiDecisionTrail: [],
         aiDecisionTrailFrozen: false,
+        // Match-long weapon/CM tallies for A/B (not truncated by trailMax).
+        aiWeaponCounters: null,
         wingmanOrder: 'follow',
         lockedTargetId: null,
         wreckPhase: null,

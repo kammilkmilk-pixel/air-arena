@@ -74,16 +74,19 @@ function resolveGunsForStep(step, ratio, ctx) {
                 let expectedBulletPos = p1.clone().add(fwd.clone().multiplyScalar(forwardDist));
                 
                 let gunGravMult = CONFIG.weapons['gun'].gravityMult !== undefined ? CONFIG.weapons['gun'].gravityMult : 1.0;
-                expectedBulletPos.y -= 0.5 * (CONFIG.rules.gravity * gunGravMult) * (timeSinceSpawn * timeSinceSpawn); 
-                
-                if (expectedBulletPos.distanceTo(p2) <= forwardDist * Math.tan(dAngle)) {
+                expectedBulletPos.y -= 0.5 * (CONFIG.rules.gravity * gunGravMult) * (timeSinceSpawn * timeSinceSpawn);
+                const gunCfg = CONFIG.weapons.gun || {};
+                const hitRadius = typeof gunHitRadiusAt === 'function'
+                    ? gunHitRadiusAt(forwardDist, dAngle, gunCfg)
+                    : Math.min(1.75, Math.max(0.65, forwardDist * Math.tan(dAngle)));
+
+                if (expectedBulletPos.distanceTo(p2) <= hitRadius) {
                     // 安全判定：只有敵機在障礙物前面才會扣血
                     if (!isGunBlockedByBuilding || forwardDist < distToBlock) {
-                        // Range falloff: ≤60 → 100%; beyond that −10% hit chance per +10 range (linear).
-                        const gunCfg = CONFIG.weapons.gun || {};
-                        const falloffStart = Number.isFinite(Number(gunCfg.hitFalloffStart)) ? Number(gunCfg.hitFalloffStart) : 60;
+                        // Range falloff: ≤hitFalloffStart → 100%; beyond that −hitFalloffPerBand per band.
+                        const falloffStart = Number.isFinite(Number(gunCfg.hitFalloffStart)) ? Number(gunCfg.hitFalloffStart) : 45;
                         const falloffBand = Number.isFinite(Number(gunCfg.hitFalloffBand)) ? Number(gunCfg.hitFalloffBand) : 10;
-                        const falloffPer = Number.isFinite(Number(gunCfg.hitFalloffPerBand)) ? Number(gunCfg.hitFalloffPerBand) : 0.1;
+                        const falloffPer = Number.isFinite(Number(gunCfg.hitFalloffPerBand)) ? Number(gunCfg.hitFalloffPerBand) : 0.15;
                         let hitChance = 1;
                         if (forwardDist > falloffStart && falloffBand > 0) {
                             hitChance = Math.max(0, 1 - falloffPer * ((forwardDist - falloffStart) / falloffBand));
@@ -93,6 +96,8 @@ function resolveGunsForStep(step, ratio, ctx) {
                         }
                         ctx.hp[enemy.id] -= (GUN_DAMAGE / 100);
                         ctx.log[enemy.id].damageTaken += (GUN_DAMAGE / 100);
+                        if (!Array.isArray(ctx.log[enemy.id].damageSteps)) ctx.log[enemy.id].damageSteps = [];
+                        ctx.log[enemy.id].damageSteps.push(step);
                         
                         // 機身命中：噴泉式四周彈開，再被風壓往機尾飄
                         // 機模縮放到最大邊長 ~1.2，爆發點必須貼在機身表面附近。
@@ -269,7 +274,11 @@ function resolveMissilesForStep(step, ratio, ctx) {
                     const baseDmg = Number(mCfg.damage);
                     const damage = (Number.isFinite(baseDmg) ? baseDmg : MISSILE_DAMAGE) * frontDamageMult;
                     ctx.hp[victimId] -= damage;
-                    if (ctx.log[victimId]) ctx.log[victimId].damageTaken += damage;
+                    if (ctx.log[victimId]) {
+                        ctx.log[victimId].damageTaken += damage;
+                        if (!Array.isArray(ctx.log[victimId].damageSteps)) ctx.log[victimId].damageSteps = [];
+                        ctx.log[victimId].damageSteps.push(step);
+                    }
                 }
             }
         });
@@ -294,6 +303,8 @@ function resolveDamageAndDeathForStep(step, ratio, ctx) {
                     ctx.hp[id] = 0;
                     ctx.death[id] = step;
                     ctx.log[id].damageTaken = 100;
+                    if (!Array.isArray(ctx.log[id].damageSteps)) ctx.log[id].damageSteps = [];
+                    ctx.log[id].damageSteps.push(step);
                     if (!ctx.log.softWreck) ctx.log.softWreck = {};
                     ctx.log.softWreck[id] = false;
                     if (!ctx.log.deathCause) ctx.log.deathCause = {};
@@ -341,6 +352,7 @@ function resolveDamageAndDeathForStep(step, ratio, ctx) {
         }
 
         // Left combat airspace (horizontal cylinder around battlefield center).
+        // Default: HP penalty (once/turn) + forced inward elsewhere — not instant kill.
         if (
             !isFallingWreck &&
             ctx.death[id] === -1 &&
@@ -348,8 +360,36 @@ function resolveDamageAndDeathForStep(step, ratio, ctx) {
             typeof isOutsideCombatAirspace === 'function' &&
             isOutsideCombatAirspace(currentPos)
         ) {
-            hasCollided = true;
-            collisionType = 'airspace';
+            const air = (typeof getCombatAirspace === 'function') ? getCombatAirspace() : null;
+            const outsideKill = !!(air && air.outsideKill === true);
+            if (outsideKill) {
+                hasCollided = true;
+                collisionType = 'airspace';
+            } else {
+                if (!ctx.log.airspaceOutsideHit) ctx.log.airspaceOutsideHit = {};
+                if (!ctx.log.airspaceOutsideHit[id]) {
+                    ctx.log.airspaceOutsideHit[id] = true;
+                    const pen = air && Number.isFinite(Number(air.outsideHpPenalty))
+                        ? Number(air.outsideHpPenalty)
+                        : 14;
+                    const dmg = Math.max(1, pen);
+                    if (typeof ctx.hp[id] === 'number') {
+                        ctx.hp[id] = Math.max(0, ctx.hp[id] - dmg);
+                    }
+                    if (ctx.log[id]) {
+                        ctx.log[id].damageTaken += dmg;
+                        if (!Array.isArray(ctx.log[id].damageSteps)) ctx.log[id].damageSteps = [];
+                        ctx.log[id].damageSteps.push(step);
+                    }
+                    if (!ctx.log.airspacePenalty) ctx.log.airspacePenalty = {};
+                    ctx.log.airspacePenalty[id] = dmg;
+                    // Bleed-out while camping outside still counts as airspace loss.
+                    if (typeof ctx.hp[id] === 'number' && ctx.hp[id] <= 0) {
+                        hasCollided = true;
+                        collisionType = 'airspace';
+                    }
+                }
+            }
         }
 
         if (isFallingWreck && currentPos.y <= minH + 0.15) {
@@ -364,6 +404,8 @@ function resolveDamageAndDeathForStep(step, ratio, ctx) {
 
         if (hasCollided && ctx.death[id] === -1) {
             ctx.hp[id] = 0; ctx.death[id] = step; ctx.log[id].damageTaken = 100;
+            if (!Array.isArray(ctx.log[id].damageSteps)) ctx.log[id].damageSteps = [];
+            ctx.log[id].damageSteps.push(step);
             if (!ctx.log.softWreck) ctx.log.softWreck = {};
             ctx.log.softWreck[id] = false;
             if (!ctx.log.deathCause) ctx.log.deathCause = {};

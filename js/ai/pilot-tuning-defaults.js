@@ -91,6 +91,45 @@
         flareSoftKeepChance: 0.72,
         // Tactical approach: random among near-ties only (|Δscore|≤eps). 0 disables.
         tacticalTieEps: 12,
-        tacticalTieRandom: 1
+        tacticalTieRandom: 1,
+        // Soft-yield thin knife (crash vs combat efficiency): align/airspace/band reclaim.
+        // Dump T140/T150: angMax 52 never overlapped alignFirst (need ang>38) → raise gun window.
+        alignSoftFire: 1,
+        // Missile soft fire ≤ doctrine maxLaunch (~32°); gun knife stays wide via gunAngMax.
+        alignSoftFireAngMax: 34,
+        alignSoftFireGunAngMax: 92,
+        alignSoftFireLocalZMin: 0.18,
+        alignSoftFireGunLocalZMin: 0.06,
+        alignSoftFireKnifeDist: 32,
+        alignSoftFireKnifeAngMax: 98,
+        airspaceSoftBlend: 1,
+        airspaceSoftBlendClearMin: 70,
+        bandSoftCombat: 1,
+        bandSoftCombatDist: 120,
+        bandSoftCombatAngMax: 55,
+        engageHandoffSoftReclaim: 1,
+        engageHandoffSoftScoreMin: 0.58,
+        // Lookahead: dense-urban almost never risk=low — allow medium at reduced blend weight.
+        lookaheadMediumWeight: 0.52,
+        lookaheadHighFarWeight: 0.22,
+        lookaheadHighFarCoverDist: 28,
+        // Far/high: band level-out yields to re-engage toward contact (T150 red/blue2 med>200).
+        bandSoftCombatFarDist: 480,
+        bandSoftCombatFarAngMax: 155,
+        // Extreme off-boresight: do not park on alignFirst forever — yield to lead-capable gates.
+        alignExtremeYieldAng: 105,
+        missilePrepTimeoutTurns: 3,
+        missilePrepTimeoutShootAng: 34,
+        missilePrepTimeoutGunDistPad: 28,
+        // Far disengage → airspace (T83/T76): score + rim blend toward fight.
+        farReengageDist: 150,
+        farReengageVeryDist: 250,
+        airspaceFarBlend: 1,
+        // Radial bleed (T100/T76): close fight still slides off-map — frac of hard radius + outDot.
+        radialBleedFrac: 0.52,
+        radialBleedDeepFrac: 0.72,
+        radialBleedOutDot: 0.42,
+        airspaceRadialBlend: 1,
+        bandSoftRadialBleed: 1
     };
 });

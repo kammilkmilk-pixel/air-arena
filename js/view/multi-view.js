@@ -1,0 +1,608 @@
+// ============================================================================
+// multi-view.js - Team chase-cam panes (toggle via seat buttons; auto-close on crash)
+// ============================================================================
+(function initAirArenaMultiView(root) {
+    const MAX_PANES = 4;
+    const camerasByTeam = Object.create(null);
+
+    function state() {
+        return (typeof GameContext !== 'undefined' && GameContext.state) ? GameContext.state : null;
+    }
+
+    function ensureState() {
+        const st = state();
+        if (!st) return null;
+        if (!Array.isArray(st.viewPaneIds)) st.viewPaneIds = [];
+        if (!Array.isArray(st.viewPaneIdsSaved)) {
+            st.viewPaneIdsSaved = st.viewPaneIds.slice();
+        }
+        return st;
+    }
+
+    function liveTeam(teamId) {
+        if (typeof GameContext === 'undefined' || !GameContext.getTeam) return null;
+        const t = GameContext.getTeam(teamId);
+        if (!t || !t.wrapper || t.matchActive === false) return null;
+        if (t.isDestroyed || (typeof t.hp === 'number' && t.hp <= 0)) return null;
+        if (t.wreckPhase === 'falling' || t.wreckPhase === 'gone') return null;
+        return t;
+    }
+
+    function hasHumanPlayer() {
+        if (typeof GameContext === 'undefined' || !GameContext.getTeam) return false;
+        const ids = (GameContext.getLivingTeamIds && GameContext.getLivingTeamIds())
+            || (GameContext.getActiveMatchIds && GameContext.getActiveMatchIds())
+            || [];
+        for (let i = 0; i < ids.length; i++) {
+            const t = GameContext.getTeam(ids[i]);
+            if (t && !t.aiEnabled && !t.isDestroyed && t.matchActive !== false) return true;
+        }
+        return false;
+    }
+
+    /** Human planning: live chase is single-seat; split only during combat anim / replay. */
+    function shouldHoldSplitForHuman() {
+        if (!hasHumanPlayer()) return false;
+        if (typeof GameContext === 'undefined') return false;
+        if (GameContext.isReplayMode && GameContext.isReplayMode()) return false;
+        if (GameContext.isAnimating && GameContext.isAnimating()) return false;
+        return true;
+    }
+
+    function getSavedIds() {
+        const st = ensureState();
+        if (!st) return [];
+        return (st.viewPaneIdsSaved || []).filter((id) => !!liveTeam(id));
+    }
+
+    function setSavedIds(ids) {
+        const st = ensureState();
+        if (!st) return [];
+        const next = [];
+        const seen = Object.create(null);
+        (ids || []).forEach((id) => {
+            if (!id || seen[id] || !liveTeam(id)) return;
+            if (next.length >= MAX_PANES) return;
+            seen[id] = 1;
+            next.push(id);
+        });
+        st.viewPaneIdsSaved = next;
+        return next;
+    }
+
+    function syncSavedFromLive() {
+        const live = getOpenIds();
+        if (live.length > 1) setSavedIds(live);
+        else if (live.length === 1 && getSavedIds().length <= 1) setSavedIds(live);
+        return getSavedIds();
+    }
+
+    function preferredPlayerId() {
+        const active = GameContext.getActiveTeamId && GameContext.getActiveTeamId();
+        if (active && liveTeam(active)) {
+            const t = GameContext.getTeam(active);
+            if (t && !t.aiEnabled) return active;
+        }
+        const ids = (GameContext.getLivingTeamIds && GameContext.getLivingTeamIds())
+            || (GameContext.getActiveMatchIds && GameContext.getActiveMatchIds())
+            || [];
+        for (let i = 0; i < ids.length; i++) {
+            const t = GameContext.getTeam(ids[i]);
+            if (t && !t.aiEnabled && liveTeam(ids[i])) return ids[i];
+        }
+        if (active && liveTeam(active)) return active;
+        for (let i = 0; i < ids.length; i++) {
+            if (liveTeam(ids[i])) return ids[i];
+        }
+        return 'red';
+    }
+
+    function getOpenIds() {
+        const st = ensureState();
+        if (!st) return [];
+        return st.viewPaneIds.filter((id) => !!liveTeam(id));
+    }
+
+    function isOpen(teamId) {
+        if (!liveTeam(teamId)) return false;
+        // While human planning holds split, seat chrome reflects remembered combat layout.
+        if (shouldHoldSplitForHuman()) {
+            return getSavedIds().indexOf(teamId) >= 0;
+        }
+        const st = ensureState();
+        return !!(st && st.viewPaneIds.indexOf(teamId) >= 0);
+    }
+
+    function getOrCreateCamera(teamId) {
+        if (typeof THREE === 'undefined') return null;
+        if (camerasByTeam[teamId]) return camerasByTeam[teamId];
+        const cam = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
+        cam.position.set(10, 28.5, -40);
+        camerasByTeam[teamId] = cam;
+        return cam;
+    }
+
+    function setOpenIds(ids) {
+        const st = ensureState();
+        if (!st) return [];
+        const next = [];
+        const seen = Object.create(null);
+        (ids || []).forEach((id) => {
+            if (!id || seen[id] || !liveTeam(id)) return;
+            if (next.length >= MAX_PANES) return;
+            seen[id] = 1;
+            next.push(id);
+        });
+        st.viewPaneIds = next;
+        return next;
+    }
+
+    function open(teamId) {
+        if (!liveTeam(teamId)) return getOpenIds();
+        // Human planning: selecting a seat focuses that chase only (split remembered separately).
+        if (shouldHoldSplitForHuman()) {
+            setOpenIds([teamId]);
+            return getOpenIds();
+        }
+        const st = ensureState();
+        if (!st) return [];
+        if (st.viewPaneIds.indexOf(teamId) < 0) {
+            if (st.viewPaneIds.length >= MAX_PANES) {
+                // Drop oldest non-active pane when full.
+                const active = GameContext.getActiveTeamId && GameContext.getActiveTeamId();
+                const dropIdx = st.viewPaneIds.findIndex((id) => id !== active);
+                if (dropIdx >= 0) st.viewPaneIds.splice(dropIdx, 1);
+                else if (st.viewPaneIds.length) st.viewPaneIds.shift();
+            }
+            st.viewPaneIds.push(teamId);
+        }
+        syncSavedFromLive();
+        return getOpenIds();
+    }
+
+    function close(teamId) {
+        const st = ensureState();
+        if (!st) return [];
+        st.viewPaneIds = st.viewPaneIds.filter((id) => id !== teamId);
+        if (shouldHoldSplitForHuman()) {
+            setSavedIds(getSavedIds().filter((id) => id !== teamId));
+        } else {
+            syncSavedFromLive();
+        }
+        return getOpenIds();
+    }
+
+    function pruneDestroyed() {
+        const st = ensureState();
+        if (!st) return [];
+        setSavedIds(st.viewPaneIdsSaved || []);
+        const before = st.viewPaneIds.slice();
+        const next = setOpenIds(before);
+        if (next.length === 0) {
+            const active = (GameContext.getActiveTeamId && GameContext.getActiveTeamId()) || 'red';
+            if (liveTeam(active)) {
+                if (shouldHoldSplitForHuman()) setOpenIds([active]);
+                else open(active);
+            } else {
+                const ids = (GameContext.getActiveMatchIds && GameContext.getActiveMatchIds()) || [];
+                for (let i = 0; i < ids.length; i++) {
+                    if (liveTeam(ids[i])) {
+                        if (shouldHoldSplitForHuman()) setOpenIds([ids[i]]);
+                        else open(ids[i]);
+                        break;
+                    }
+                }
+            }
+        }
+        // If active seat crashed, hand control to another open (or living) seat.
+        const activeId = GameContext.getActiveTeamId && GameContext.getActiveTeamId();
+        if (activeId && !liveTeam(activeId)) {
+            const panes = shouldHoldSplitForHuman() ? getSavedIds() : getOpenIds();
+            const fallback = panes[0] || ((GameContext.getActiveMatchIds && GameContext.getActiveMatchIds()) || [])
+                .find((id) => liveTeam(id));
+            if (fallback && typeof selectTeam === 'function') selectTeam(fallback);
+            else if (fallback) setOpenIds([fallback]);
+        }
+        return getOpenIds();
+    }
+
+    function resetTo(teamId) {
+        const id = liveTeam(teamId) ? teamId : 'red';
+        const ids = liveTeam(id) ? [id] : [];
+        setOpenIds(ids);
+        setSavedIds(ids);
+        if (!getOpenIds().length) pruneDestroyed();
+        return getOpenIds();
+    }
+
+    /** Restore remembered split for combat playback (human matches only). */
+    function restoreCombatSplit() {
+        if (!hasHumanPlayer()) return getOpenIds();
+        const saved = getSavedIds();
+        if (saved.length > 1) {
+            setOpenIds(saved);
+        } else {
+            const focus = preferredPlayerId();
+            if (liveTeam(focus)) setOpenIds([focus]);
+            else if (saved.length === 1) setOpenIds(saved);
+        }
+        if (typeof root.uiRefreshTeamModeButtons === 'function') root.uiRefreshTeamModeButtons();
+        syncOverlayLabels();
+        syncStallOverlays();
+        return getOpenIds();
+    }
+
+    /** After combat: remember split, collapse to selected / human seat. */
+    function collapseForHumanPlanning(focusId) {
+        if (!hasHumanPlayer()) return getOpenIds();
+        const live = getOpenIds();
+        if (live.length > 1) setSavedIds(live);
+        else setSavedIds(getSavedIds());
+        const focus = (focusId && liveTeam(focusId)) ? focusId : preferredPlayerId();
+        setOpenIds(liveTeam(focus) ? [focus] : []);
+        if (!getOpenIds().length) pruneDestroyed();
+        if (typeof GameContext !== 'undefined' && GameContext.state) {
+            GameContext.state.cameraSoftFollow = true;
+            GameContext.state.cameraFollowOverrideId = null;
+        }
+        if (typeof root.uiRefreshTeamModeButtons === 'function') root.uiRefreshTeamModeButtons();
+        syncOverlayLabels();
+        syncStallOverlays();
+        return getOpenIds();
+    }
+
+    /**
+     * Seat button: open view + select; if already open, focus first;
+     * click again while focused closes (keep ≥1 pane).
+     * Human planning edits remembered combat split; live chase stays single-seat.
+     */
+    function toggleFromSeatButton(teamId) {
+        if (!liveTeam(teamId)) return { opened: false, ids: getOpenIds(), saved: getSavedIds() };
+        const activeId = GameContext.getActiveTeamId && GameContext.getActiveTeamId();
+
+        if (shouldHoldSplitForHuman()) {
+            let saved = getSavedIds();
+            const already = saved.indexOf(teamId) >= 0;
+            if (!already) {
+                if (saved.length >= MAX_PANES) {
+                    const dropIdx = saved.findIndex((id) => id !== activeId && id !== teamId);
+                    if (dropIdx >= 0) saved.splice(dropIdx, 1);
+                    else if (saved.length) saved.shift();
+                }
+                saved.push(teamId);
+                setSavedIds(saved);
+                if (typeof selectTeam === 'function') selectTeam(teamId);
+                else setOpenIds([teamId]);
+                return { opened: true, ids: getOpenIds(), saved: getSavedIds() };
+            }
+            if (activeId !== teamId) {
+                if (typeof selectTeam === 'function') selectTeam(teamId);
+                else setOpenIds([teamId]);
+                return { opened: true, ids: getOpenIds(), saved: getSavedIds() };
+            }
+            if (saved.length > 1) {
+                saved = saved.filter((id) => id !== teamId);
+                setSavedIds(saved);
+                const next = saved[0];
+                if (next && typeof selectTeam === 'function') selectTeam(next);
+                else if (next) setOpenIds([next]);
+                return { opened: false, ids: getOpenIds(), saved: getSavedIds() };
+            }
+            if (typeof selectTeam === 'function') selectTeam(teamId);
+            return { opened: true, ids: getOpenIds(), saved: getSavedIds() };
+        }
+
+        const st = ensureState();
+        const already = st && st.viewPaneIds.indexOf(teamId) >= 0;
+        if (!already) {
+            open(teamId);
+            if (typeof selectTeam === 'function') selectTeam(teamId);
+            return { opened: true, ids: getOpenIds(), saved: getSavedIds() };
+        }
+        // Open but not focused → focus only (do not close).
+        if (activeId !== teamId) {
+            if (typeof selectTeam === 'function') selectTeam(teamId);
+            return { opened: true, ids: getOpenIds(), saved: getSavedIds() };
+        }
+        // Focused + open: close if another pane remains.
+        if (getOpenIds().length > 1) {
+            close(teamId);
+            const panes = getOpenIds();
+            if (panes[0] && typeof selectTeam === 'function') selectTeam(panes[0]);
+            return { opened: false, ids: panes, saved: getSavedIds() };
+        }
+        if (typeof selectTeam === 'function') selectTeam(teamId);
+        return { opened: true, ids: getOpenIds(), saved: getSavedIds() };
+    }
+
+    /** Viewport rects in CSS pixels; y origin top-left (converted for GL later). */
+    function layoutRects(count, width, height) {
+        const n = Math.max(1, Math.min(MAX_PANES, count | 0));
+        const w = Math.max(1, width | 0);
+        const h = Math.max(1, height | 0);
+        if (n === 1) return [{ x: 0, y: 0, width: w, height: h }];
+        if (n === 2) {
+            const hw = Math.floor(w / 2);
+            return [
+                { x: 0, y: 0, width: hw, height: h },
+                { x: hw, y: 0, width: w - hw, height: h }
+            ];
+        }
+        if (n === 3) {
+            const hw = Math.floor(w / 2);
+            const hh = Math.floor(h / 2);
+            return [
+                { x: 0, y: 0, width: hw, height: h },
+                { x: hw, y: 0, width: w - hw, height: hh },
+                { x: hw, y: hh, width: w - hw, height: h - hh }
+            ];
+        }
+        const hw = Math.floor(w / 2);
+        const hh = Math.floor(h / 2);
+        return [
+            { x: 0, y: 0, width: hw, height: hh },
+            { x: hw, y: 0, width: w - hw, height: hh },
+            { x: 0, y: hh, width: hw, height: h - hh },
+            { x: hw, y: hh, width: w - hw, height: h - hh }
+        ];
+    }
+
+    function syncCameraToTeam(cam, teamId) {
+        if (!cam || typeof getAircraftChaseCamPose !== 'function') return;
+        const host = liveTeam(teamId) || (GameContext.getTeam && GameContext.getTeam(teamId));
+        if (!host || !host.wrapper) return;
+        const look = (typeof resolveChaseLookTeam === 'function') ? resolveChaseLookTeam(host) : null;
+        const pose = getAircraftChaseCamPose(host, look);
+        cam.position.copy(pose.camPos);
+        cam.lookAt(pose.targetPos);
+        cam.updateMatrixWorld();
+    }
+
+    function updateCameras() {
+        const ids = getOpenIds();
+        const st = ensureState();
+        const activeId = (GameContext.getActiveTeamId && GameContext.getActiveTeamId()) || null;
+        // Single pane: keep OrbitControls ownership on global camera.
+        if (ids.length <= 1) {
+            const id = ids[0] || activeId;
+            if (id && typeof camera !== 'undefined' && camera) {
+                // During multi→single handoff, snap chase once if soft-follow idle.
+                if (GameContext.isAnimating && GameContext.isAnimating()) {
+                    syncCameraToTeam(camera, id);
+                    if (typeof controls !== 'undefined' && controls) {
+                        const host = liveTeam(id);
+                        if (host && host.wrapper && typeof getAircraftChaseCamPose === 'function') {
+                            const look = resolveChaseLookTeam(host);
+                            const pose = getAircraftChaseCamPose(host, look);
+                            controls.target.copy(pose.targetPos);
+                        }
+                    }
+                }
+            }
+            return ids;
+        }
+        ids.forEach((id) => {
+            const cam = getOrCreateCamera(id);
+            syncCameraToTeam(cam, id);
+            // Keep main camera aligned with active pane for HUD/billboards/picking.
+            if (id === activeId && typeof camera !== 'undefined' && camera) {
+                camera.position.copy(cam.position);
+                camera.quaternion.copy(cam.quaternion);
+                camera.aspect = cam.aspect;
+                if (typeof controls !== 'undefined' && controls) {
+                    const host = liveTeam(id);
+                    if (host && host.wrapper && typeof getAircraftChaseCamPose === 'function') {
+                        const look = resolveChaseLookTeam(host);
+                        const pose = getAircraftChaseCamPose(host, look);
+                        controls.target.copy(pose.targetPos);
+                    }
+                }
+            }
+        });
+        return ids;
+    }
+
+    function render(scene, renderer) {
+        if (!scene || !renderer) return false;
+        pruneDestroyed();
+        const ids = getOpenIds();
+        if (!ids.length) {
+            if (typeof camera !== 'undefined' && camera) renderer.render(scene, camera);
+            syncStallOverlays();
+            return false;
+        }
+        const canvas = renderer.domElement;
+        const width = canvas.clientWidth || canvas.width || 1;
+        const height = canvas.clientHeight || canvas.height || 1;
+        const rects = layoutRects(ids.length, width, height);
+        const activeId = (GameContext.getActiveTeamId && GameContext.getActiveTeamId()) || ids[0];
+
+        if (ids.length === 1) {
+            renderer.setScissorTest(false);
+            renderer.setViewport(0, 0, width, height);
+            const only = ids[0];
+            if (only !== activeId || !(typeof camera !== 'undefined' && camera)) {
+                const cam = getOrCreateCamera(only);
+                cam.aspect = width / Math.max(1, height);
+                cam.updateProjectionMatrix();
+                syncCameraToTeam(cam, only);
+                applyCameraShake(cam, only);
+                renderer.render(scene, cam);
+            } else {
+                camera.aspect = width / Math.max(1, height);
+                camera.updateProjectionMatrix();
+                applyCameraShake(camera, only);
+                renderer.render(scene, camera);
+            }
+            syncStallOverlays();
+            return true;
+        }
+
+        updateCameras();
+        renderer.setScissorTest(true);
+        for (let i = 0; i < ids.length; i++) {
+            const id = ids[i];
+            const r = rects[i];
+            // GL scissor/viewport: y from bottom.
+            const gy = height - r.y - r.height;
+            const cam = (id === activeId && typeof camera !== 'undefined' && camera)
+                ? camera
+                : getOrCreateCamera(id);
+            cam.aspect = r.width / Math.max(1, r.height);
+            cam.updateProjectionMatrix();
+            syncCameraToTeam(cam, id);
+            applyCameraShake(cam, id);
+            renderer.setViewport(r.x, gy, r.width, r.height);
+            renderer.setScissor(r.x, gy, r.width, r.height);
+            renderer.render(scene, cam);
+        }
+        renderer.setScissorTest(false);
+        renderer.setViewport(0, 0, width, height);
+        syncStallOverlays();
+        return true;
+    }
+
+    function syncOverlayLabels() {
+        let rootEl = document.getElementById('multi-view-labels');
+        if (!rootEl) {
+            rootEl = document.createElement('div');
+            rootEl.id = 'multi-view-labels';
+            rootEl.setAttribute('aria-hidden', 'true');
+            document.body.appendChild(rootEl);
+        }
+        const ids = getOpenIds();
+        if (ids.length <= 1) {
+            rootEl.innerHTML = '';
+            rootEl.style.display = 'none';
+            return;
+        }
+        const canvas = (typeof renderer !== 'undefined' && renderer && renderer.domElement)
+            ? renderer.domElement
+            : document.getElementById('canvas-container');
+        const bounds = canvas && canvas.getBoundingClientRect
+            ? canvas.getBoundingClientRect()
+            : { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
+        const rects = layoutRects(ids.length, bounds.width, bounds.height);
+        rootEl.style.display = 'block';
+        rootEl.innerHTML = ids.map((id, i) => {
+            const r = rects[i];
+            const faction = (GameContext.getFaction && GameContext.getFaction(id)) || id;
+            const active = (GameContext.getActiveTeamId && GameContext.getActiveTeamId()) === id;
+            return `<div class="multi-view-label faction-${faction}${active ? ' is-active' : ''}" style="left:${Math.round(bounds.left + r.x + 8)}px;top:${Math.round(bounds.top + r.y + 8)}px">${String(id).toUpperCase()}</div>`;
+        }).join('');
+    }
+
+    /** Stall red flash only on panes whose aircraft is stalled (not full-screen bleed). */
+    function syncStallOverlays() {
+        let rootEl = document.getElementById('multi-view-stalls');
+        if (!rootEl) {
+            rootEl = document.createElement('div');
+            rootEl.id = 'multi-view-stalls';
+            rootEl.setAttribute('aria-hidden', 'true');
+            document.body.appendChild(rootEl);
+        }
+        const globalStall = document.getElementById('stall-screen');
+        const ids = getOpenIds();
+        const canvas = (typeof renderer !== 'undefined' && renderer && renderer.domElement)
+            ? renderer.domElement
+            : document.getElementById('canvas-container');
+        const bounds = canvas && canvas.getBoundingClientRect
+            ? canvas.getBoundingClientRect()
+            : { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
+
+        const stalledOpen = ids.filter((id) => {
+            const t = (typeof GameContext !== 'undefined' && GameContext.getTeam) ? GameContext.getTeam(id) : null;
+            return !!(t && t.stalled && !t.isDestroyed && t.matchActive !== false);
+        });
+
+        if (ids.length <= 1) {
+            rootEl.innerHTML = '';
+            rootEl.style.display = 'none';
+            const only = ids[0] || ((typeof GameContext !== 'undefined' && GameContext.getActiveTeamId)
+                ? GameContext.getActiveTeamId()
+                : null);
+            const t = only && GameContext.getTeam ? GameContext.getTeam(only) : null;
+            if (globalStall) {
+                globalStall.style.display = (t && t.stalled && !t.isDestroyed) ? 'flex' : 'none';
+                globalStall.style.left = '';
+                globalStall.style.top = '';
+                globalStall.style.width = '';
+                globalStall.style.height = '';
+            }
+            return;
+        }
+
+        if (globalStall) globalStall.style.display = 'none';
+        if (!stalledOpen.length) {
+            rootEl.innerHTML = '';
+            rootEl.style.display = 'none';
+            return;
+        }
+        const rects = layoutRects(ids.length, bounds.width, bounds.height);
+        rootEl.style.display = 'block';
+        rootEl.innerHTML = ids.map((id, i) => {
+            const t = GameContext.getTeam ? GameContext.getTeam(id) : null;
+            if (!(t && t.stalled && !t.isDestroyed)) return '';
+            const r = rects[i];
+            return `<div class="pane-stall-overlay" style="left:${Math.round(bounds.left + r.x)}px;top:${Math.round(bounds.top + r.y)}px;width:${Math.round(r.width)}px;height:${Math.round(r.height)}px"><div class="pane-stall-text">⚠ STALL ⚠<br><span>失速臨界</span></div></div>`;
+        }).join('');
+    }
+
+    function applyCameraShake(cam, teamId) {
+        if (!cam || !teamId || typeof GameContext === 'undefined' || !GameContext.state) return;
+        const map = GameContext.state.cameraShakeByTeam || {};
+        const sh = map[teamId];
+        if (!sh) return;
+        const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+        if (now >= Number(sh.until || 0)) {
+            delete map[teamId];
+            return;
+        }
+        const left = Math.max(0, Number(sh.until) - now);
+        const amp = Number(sh.amp) || 0.12;
+        const fall = Math.min(1, left / 220);
+        const mag = amp * fall;
+        cam.position.x += (Math.random() - 0.5) * mag * 1.05;
+        cam.position.y += (Math.random() - 0.5) * mag * 0.75;
+        cam.position.z += (Math.random() - 0.5) * mag * 1.05;
+    }
+
+    function triggerViewCameraShake(teamId, amp = 0.22) {
+        if (!teamId || typeof GameContext === 'undefined' || !GameContext.state) return;
+        const open = getOpenIds();
+        const active = GameContext.getActiveTeamId && GameContext.getActiveTeamId();
+        const viewing = open.indexOf(teamId) >= 0 || active === teamId;
+        if (!viewing) return;
+        if (!GameContext.state.cameraShakeByTeam) GameContext.state.cameraShakeByTeam = {};
+        const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+        const prev = GameContext.state.cameraShakeByTeam[teamId];
+        GameContext.state.cameraShakeByTeam[teamId] = {
+            until: Math.max(Number(prev && prev.until) || 0, now + 260),
+            amp: Math.max(Number(prev && prev.amp) || 0, Math.min(0.45, Number(amp) || 0.22))
+        };
+    }
+
+    root.triggerViewCameraShake = triggerViewCameraShake;
+
+    root.AirArenaMultiView = {
+        getOpenIds,
+        getSavedIds,
+        isOpen,
+        open,
+        close,
+        pruneDestroyed,
+        resetTo,
+        toggleFromSeatButton,
+        hasHumanPlayer,
+        shouldHoldSplitForHuman,
+        restoreCombatSplit,
+        collapseForHumanPlanning,
+        updateCameras,
+        render,
+        syncOverlayLabels,
+        syncStallOverlays,
+        applyCameraShake,
+        triggerViewCameraShake,
+        layoutRects
+    };
+})(window);

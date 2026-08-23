@@ -137,8 +137,6 @@ function finishTurnSimultaneously() {
     let lastLog = battleLog[battleLog.length - 1];
     try {
         lastLog = battleLog[battleLog.length-1];
-        let finalFlares = (lastLog && lastLog.flaresTrack && lastLog.flaresTrack[CONFIG.rules.stepsPerTurn]) ? lastLog.flaresTrack[CONFIG.rules.stepsPerTurn] : [];
-        GameContext.stateMachine.setGlobalFlares(finalFlares.filter(f => f.age < 2 && f.teamId).map(f => ({ pos: f.pos.clone(), vel: f.vel ? f.vel.clone() : new THREE.Vector3(0,-0.0005,0), age: f.age + 1, teamId: f.teamId })));
 
         combatActiveIds().forEach(id => {
             let t = teams[id];
@@ -168,6 +166,19 @@ function finishTurnSimultaneously() {
                 typeof showSMSAlert === 'function'
             ) {
                 showSMSAlert(`${String(id).toUpperCase()} 離開作戰空域 — 判定擊落`, '#ffeb3b');
+            } else if (
+                !t.isDestroyed &&
+                lastLog &&
+                lastLog.airspacePenalty &&
+                lastLog.airspacePenalty[id] &&
+                !t.aiEnabled &&
+                typeof showSMSAlert === 'function'
+            ) {
+                const pen = Number(lastLog.airspacePenalty[id]) || 0;
+                showSMSAlert(
+                    `${String(id).toUpperCase()} 空域越界 −${pen} HP（強制回場）`,
+                    '#ffeb3b'
+                );
             }
 
             const finalPos = (t.flightCurve && t.pathQuats && t.pathQuats.length)
@@ -215,6 +226,11 @@ function finishTurnSimultaneously() {
                     if (softKill && groundBurst && typeof window.spawnAircraftDebris === 'function' && t.wrapper) {
                         window.spawnAircraftDebris(t.wrapper.position.clone(), t.wrapper.quaternion.clone(), t.colorMain);
                     }
+                    if (window.AirArenaMultiView) {
+                        if (typeof window.AirArenaMultiView.close === 'function') window.AirArenaMultiView.close(id);
+                        if (typeof window.AirArenaMultiView.pruneDestroyed === 'function') window.AirArenaMultiView.pruneDestroyed();
+                        if (typeof window.uiRefreshTeamModeButtons === 'function') window.uiRefreshTeamModeButtons();
+                    }
                 }
                 return; 
             }
@@ -250,6 +266,31 @@ function finishTurnSimultaneously() {
                 }
             }
         });
+
+        // Carry flares AFTER destroy settle — never keep a dead aircraft's flares into wreck/ACMI turns.
+        {
+            const stepN = (CONFIG.rules && CONFIG.rules.stepsPerTurn) || 100;
+            const finalFlares = (lastLog && lastLog.flaresTrack && lastLog.flaresTrack[stepN])
+                ? lastLog.flaresTrack[stepN]
+                : [];
+            const maxAge = (typeof getFlareMaxAge === 'function') ? getFlareMaxAge() : 2;
+            const carried = finalFlares
+                .filter((f) => f && f.teamId && Number.isFinite(Number(f.age)) && Number(f.age) < maxAge)
+                .filter((f) => !(typeof isFlareOwnerGone === 'function' && isFlareOwnerGone(f.teamId)))
+                .filter((f) => {
+                    const heat = (typeof getFlareStageHeat === 'function')
+                        ? getFlareStageHeat(f.age)
+                        : (Number(f.heat) || 0);
+                    return heat > 0;
+                })
+                .map((f) => ({
+                    pos: f.pos.clone(),
+                    vel: f.vel ? f.vel.clone() : new THREE.Vector3(0, -0.0005, 0),
+                    age: Number(f.age) + 1,
+                    teamId: f.teamId
+                }));
+            GameContext.stateMachine.setGlobalFlares(carried);
+        }
     } catch (error) { console.error("回合結算錯誤：", error); }
 
     const redElim = GameContext.isFactionEliminated('red');

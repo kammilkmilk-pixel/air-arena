@@ -680,13 +680,26 @@ GameContext.registerService('createProceduralMissileMesh', createProceduralMissi
 const ghostBeam = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0,0), new THREE.Vector3(0,-1,0)]), new THREE.LineBasicMaterial({color: 0xffffff, transparent: true, opacity: 0.6})); 
 scene.add(ghostBeam);
 
+window.hideVisualFlares = function() {
+    visualFlaresPool.forEach((f) => { if (f) f.visible = false; });
+};
+GameContext.registerService('hideVisualFlares', window.hideVisualFlares);
+
 window.drawStaticFlares = function() {
     visualFlaresPool.forEach(f => f.visible = false);
     if (GameContext.state.globalFlares.length > 0 || typeof globalFlares !== 'undefined') {
         const flares = GameContext.state.globalFlares;
-        flares.forEach((gf, i) => {
-            if (!visualFlaresPool[i]) { let nm = new THREE.Mesh(flareGeo, flareMats[0]); scene.add(nm); visualFlaresPool.push(nm); }
-            let fMesh = visualFlaresPool[i]; fMesh.position.copy(gf.pos);
+        let slot = 0;
+        flares.forEach((gf) => {
+            if (!gf || !gf.pos) return;
+            // Drop visuals for wrecked owners / cooled flares (prevents ACMI sticky leftovers).
+            if (typeof isFlareOwnerGone === 'function' && isFlareOwnerGone(gf.teamId)) return;
+            const heat = (typeof getFlareStageHeat === 'function')
+                ? getFlareStageHeat(gf.age)
+                : (Number(gf.heat) || 0);
+            if (heat <= 0 && Number(gf.age) >= 2) return;
+            if (!visualFlaresPool[slot]) { let nm = new THREE.Mesh(flareGeo, flareMats[0]); scene.add(nm); visualFlaresPool.push(nm); }
+            let fMesh = visualFlaresPool[slot++]; fMesh.position.copy(gf.pos);
             if (gf.age === 0) { fMesh.material = flareMats[0]; fMesh.scale.set(0.5, 0.5, 0.5); } 
             else if (gf.age === 1) { fMesh.material = flareMats[1]; fMesh.scale.set(1.0, 1.0, 1.0); } 
             else { fMesh.material = flareMats[2]; fMesh.scale.set(1.5, 1.5, 1.5); }
@@ -1300,9 +1313,16 @@ function renderCombatFrame(currentLog, animProgress) {
 
     visualFlaresPool.forEach(f => f.visible = false); 
     let cFlares = currentLog.flaresTrack[trackIdx] || [];
-    cFlares.forEach((cf, i) => {
-        if (!visualFlaresPool[i]) { let nm = new THREE.Mesh(flareGeo, flareMats[0]); scene.add(nm); visualFlaresPool.push(nm); }
-        let fMesh = visualFlaresPool[i]; fMesh.position.copy(cf.pos);
+    let flareSlot = 0;
+    cFlares.forEach((cf) => {
+        if (!cf || !cf.pos) return;
+        const heat = Number.isFinite(Number(cf.heat))
+            ? Number(cf.heat)
+            : ((typeof getFlareStageHeat === 'function') ? getFlareStageHeat(cf.age) : 1);
+        // Cooled-out / zero-heat flares must not linger in ACMI frames.
+        if (heat <= 0) return;
+        if (!visualFlaresPool[flareSlot]) { let nm = new THREE.Mesh(flareGeo, flareMats[0]); scene.add(nm); visualFlaresPool.push(nm); }
+        let fMesh = visualFlaresPool[flareSlot++]; fMesh.position.copy(cf.pos);
         if (cf.age === 0) { fMesh.material = flareMats[0]; fMesh.scale.set(0.5, 0.5, 0.5); } 
         else if (cf.age === 1) { fMesh.material = flareMats[1]; fMesh.scale.set(1.0, 1.0, 1.0); } 
         else { fMesh.material = flareMats[2]; fMesh.scale.set(1.5, 1.5, 1.5); }
@@ -2038,10 +2058,12 @@ initCityMapModel();
                 typeof getAirspacePressure === 'function'
             ) {
                 const p = getAirspacePressure(t.wrapper.position);
-                // Show from warnMargin (200) inward of hard edge.
-                if (p && (p.band === 'warn' || p.band === 'outside')) {
+                // Show from soft band inward of hard edge (widened soft/warn).
+                if (p && (p.band === 'soft' || p.band === 'warn' || p.band === 'outside')) {
                     showTape = true;
-                    pressureT = Number(p.t) || 0;
+                    pressureT = p.band === 'soft'
+                        ? 0.2 + 0.25 * (Number(p.t) || 0)
+                        : Number(p.t) || 0;
                     alt = Math.max(10, Math.min(140, Number(t.wrapper.position.y) || 36));
                 }
             }

@@ -1,10 +1,10 @@
 # Technical Debt Log — Air Arena v3.0+
 
-**Snapshot date:** 2026-08-04（全檔複檢）  
-**Context:** Post soft-aiMap / typed CM (chaff) / FOX-1 SARH UX / chase-cam-8 / top-bar status+fold / standard 2×F1+2×F2 loadout. Prior: wingman/`free`、屋頂淨空、Scheme B、decide-pipeline、dense-urban survival wave。  
-**Purpose:** Living debt list. **High** = silent wrong combat/AI; Medium = UX or maintainability; Low = cleanup.
+**Snapshot date:** 2026-08-05（備份前複檢）  
+**Context:** Post Phase 1–3 bake OS + Phase B thin knife + midair/undercroft P0–P1 + UI polish（交戰開始／收納不自動彈／鏡頭下移 10%）。Prior waves: soft-aiMap / typed CM / FOX-1 SARH / chase-cam-8 / top-bar fold / standard 2×F1+2×F2。  
+**Purpose:** Living debt list. **High** = silent wrong combat/AI **or** curriculum safety gate collapse; Medium = UX or maintainability; Low = cleanup.
 
-**Canonical docs:** `README.md`（系統字典）· 本檔（債）· `docs/Arena-Map-Onboarding-Memo.md`（**新場地：bake + envelope**）· `docs/PilotAI-Portability-Memo.md`（**PilotAI／引擎預先準備**）· `docs/Tactical-Development-Memo.md`（**歷史備忘，已過時**）
+**Canonical docs:** `README.md`（系統字典）· 本檔（債）· `docs/Arena-Map-Onboarding-Memo.md`（**新場地：bake + envelope**）· `docs/PilotAI-Portability-Memo.md`（**PilotAI／引擎預先準備 · 現行 2026-08-05**）· `docs/Urban-Survival-Convergence.md`（**城區生存收斂 · 現行 2026-08-09**）· `docs/Tactical-Development-Memo.md`（**歷史備忘，已過時**）
 
 ### 新場地提醒（勿跳過）
 
@@ -14,17 +14,21 @@
 2. **場地包絡** — 水平 AO（`combatAirspace`）＋垂直戰鬥帶；偏好／離心向心／貼地超高空 soft 分應掛場地 profile，**不要**寫死進 `pilot-ai` 核心。  
 3. 換尺寸用相對量；生存閘（樓／地）永遠壓過包絡軟分。
 
+### PilotAI 開發準則（現行）
+
+依 [`docs/PilotAI-Portability-Memo.md`](./docs/PilotAI-Portability-Memo.md)：網頁試玩優先；新碼不加深 Three 耦合、不砍感知；調參外置；bake 當空間 OS；改 AI 跑 smoke／regression。
+
 ---
 
 ## Summary
 
 | Severity | Count | Focus |
 |----------|------:|-------|
-| High     | 1     | Urban AI regression safety collapse（H7） |
-| Medium   | 24    | Urban sensing/T38, pilot mega-file, wreck/HUD/wingman, Phase B, FOX-1 fire UX, CM vs urban gate |
+| High     | 1     | Urban AI regression safety plateau（H7 — C / G-hybrid） |
+| Medium   | ~20 open／partial | M23–M24 UX/CM；M17 mega-file；M4–M7 ACMI/wingman；M8 完整角色層；M18/M21 T38／beam |
 | Low      | 10    | Debris cleanup, naming/units, deprecated aliases, dump-tag comments, trail forensics |
 
-**2026-08-04 audit:** Smoke suite all PASS；`npm run test:ai` overall **FAIL**（城區 crash/stall gates）。已核對 M4–M7 / M10 / M23–M24 仍在程式碼中成立。
+**2026-08-05 audit:** Smokes（decide / building-risk / phase3 / envelope / doctrine / SARH / ai-map）預期綠；`npm run test:ai` 城區安全門仍 **未全綠**（H7 plateau）。M4–M7 / M10 / M23–M24 **仍在程式碼中成立**（已複核）。
 
 ---
 
@@ -33,24 +37,18 @@
 | Track | Status | Notes |
 |-------|--------|-------|
 | Soft aiMap doctrine (少強制) | **Done** | ClearAbove / perch soft-yield; no forced re-engage sticks |
-| **Phase 1 bake = spatial OS** | **Done 2026-08-04** | mapLane ≠ flightBand; clearAbove bans soft urban burn; regression installs bake |
-| **Phase 2 planner consumes bake** | **Done 2026-08-04** | samplePlannerCorridor → routeScore / scored escape; T38 = true mesh glue only |
-| **Phase 3 MVP survival waypoints** | **Superseded 2026-08-04** | → Phase 3 full (long WP + path + combat score) |
-| **Phase 3 full pathfinding / score** | **Done 2026-08-04** | findBakePath + climbBias WP; applyBakeRouteCombatScore; soft-yield align/dive |
-| **H7 energy ECO (local clear + stick cap)** | **Landed 2026-08-04** | local emptied; soft urban ECO; C/G crash ~halved again; gates still red |
-| Radar lock SMS「被鎖定」 | **Done** | Marquee on `#sms-text-wrap`; hover shows normal SMS |
-| Typed CM (FOX-1→chaff/beam, FOX-2→flare) | **Done** | Soft illuminate self-def; residual: urban escape can starve CM |
-| Chaff physics + 5-turn VFX | **Done** | `lifeSteps=500`; smoke+sparkles; camera occlusion fade |
-| Chaff ammo in battle snapshot | **Done** | Was missing → AI always `chaffReserve=0` (T19) |
-| Standard loadout 2×F1+2×F2+Gun | **Done** | Inner F1 / outer F2; SMS gun default |
-| Chase cam (aircraft pivot → lock) | **Done** | `CHASE_CAM_DIST = 8` |
-| Top bar: 運算中∪狀態；向下收合隊伍/決策樹 | **Done** | Playback row sticky; fold = status+roster; decision tree hides with fold |
-| Map catalog / map-editor | **Landed (WIP polish)** | `assets/maps/*`, `map-editor/`; AI hazard tags still deferred (M22) |
-| Urban survival / regression (H7) | **Plateau — 實測 now** | F/G-heur PASS; C~0.13 G-hyb~0.19; Node tradeoff |
-| Combat UX / CM (M23, M24) | **Open** | Ring vs 70m fire gate; no `chaffWhileEscape` |
-| Phase B tactical roles (M8) | **Thin knife landed** | Soft predict score on `scoreTacticalApproach` only; survival softYield |
-| Freeze / tag backup | **You are here** | Soft features frozen; urban safety not green |
-| Arena envelope ≠ AI core | **Landed 2026-08-04** | `arena-envelope.js` + map `envelope`；checklist：`docs/Arena-Map-Onboarding-Memo.md` |
+| Phase 1–3 bake / path / combat score | **Done** | spatial OS + planner + WP/path + soft-yield |
+| H7 energy ECO + F opening yield | **Landed** | F / G-heur PASS; C + G-hybrid plateau |
+| Typed CM + chaff VFX + snapshot ammo | **Done** | Residual: M24 urban escape no chaff |
+| Chase cam + top-bar fold | **Done** | Dist 8; seat frame −10% viewport (no-lock); fold no auto-expand on engage |
+| Phase B thin knife (M8) | **Landed 2026-08-05** | `applyEnemyPredictCombatScore` + `rngTie` near-tie; full role FSM deferred |
+| Urban survival convergence | **Active 2026-08-09** | See `docs/Urban-Survival-Convergence.md` — class-based overhead; **no dump-ban oscillation**; Phase B full roles blocked until pass gate |
+| Midair yield beside-tall (T9) | **Landed 2026-08-05** | `canYieldToMidairBreak` → `isTrueUnderRoof`（非裸 roof&lt;0） |
+| Undercroft stick P1 | **Landed 2026-08-05** | `P1 undercroftBoost` — dirt gate + lateral/skim（dump 待再驗） |
+| Arena envelope ≠ AI core | **Done** | `arena-envelope.js` + map `envelope` |
+| Map catalog / editor | **Landed (WIP)** | AI hazard tags deferred (M22) |
+| Combat UX / CM (M23, M24) | **Open** | Ring vs 70m fire; no `chaffWhileEscape` |
+| Freeze / tag backup | **You are here** | 2026-08-05 備份點 |
 
 ---
 
@@ -58,29 +56,19 @@
 
 | Item | Notes |
 |------|--------|
-| ✅ Soft aiMap gates | opening / handoff / urbanEmbed / climbOut soft-yield when clear |
-| ✅ Combat-AO rim thrash (T150 P0 1–3) | side hysteresis 12t; warnYield far/inward; mild |joyX|; stall breakout keeps inward |
-| ✅ Combat-AO rim punch-out (T100) | stronger auth when outDot高; tangent hold; soft-urban defer; rim safety joyX bias; protect AA |
-| ✅ T103 AA vs buildings rollback | yieldBuilding; defer only clear<70 open cover; rim safety bias near-hard only; unprotect AA |
-| ✅ Building survival over FOX-1/align (T23/T150) | aabbRoofProximity blocks opening; engagement defer; hybrid lock; T38 controlled climb |
-| ✅ Typed CM + illuminate soft break | chaff on SARH paint/inbound; flare on FOX-2 |
-| ✅ `chaffAmmo` in `getSerializableTeamState` | + liveSelf ammo preference in decide |
-| ✅ Chaff VFX 5 turns + LOS occlusion fade | render pool; sparkles turns 0–3 |
-| ✅ Standard pylon default `fox1,fox2,fox2,fox1` | migrate legacy 4×fox2 standard seats |
-| ✅ Chase cam dist 8 on host→lock axis | `getAircraftChaseCamPose` |
-| ✅ Top bar compute ∪ status; fold collapses roster | no centered compute card |
-| ✅ Building risk ignored altitude | `getCoverInfo` + roof clearance ≥8m / soft ≥4m |
-| ✅ Scheme B risk downgrade | `buildingRiskDowngrade: 0` (T130) |
-| ✅ ACMI destroyed wingman invisible | `renderCombatFrame` from log path |
-| ✅ Destroyed NPC decision tree | status / TREE → `被擊墜` |
-| ✅ LCOS press / axis / obscured | relative grab; camera×body; nose clamp |
-| ✅ Envelope single-source (H1) | `weapon-envelope.js` ← CONFIG |
-| ✅ FOX2-FIRST regression (H4) | doctrine smoke + stage `F-fox2-opening` |
-| ✅ Soft-obstacle energy gate (H6) | stalled/AP-critical caps soft escapes |
-| ✅ FOX2 ambush chance (H5) | CONFIG + URL/seed QA |
-| ✅ Opening pylon FSM (H2) | one-turn powering |
-| ✅ Decide-gate pipeline (H3) | `decide-pipeline.js` + smoke |
+| ✅ Phase B thin + rngTie | predict soft-score; `tacticalTieEps=12`; needle `phaseB:` / `rngTie:` |
+| ✅ Midair P0 (T9) | bare `roof<0` @ long cov 不再擋 midair；`deferred=trueUndercroft\|nearDirt` |
+| ✅ Undercroft P1 | dirtEmbed `alt<16`；側推 auth／skim joyY；needle `P1 undercroftBoost` |
+| ✅ Stick priority align | dirt → undercroft/T38 → diveClosing → scored → climb → handoff → weapons |
+| ✅ engageHandoff clears navClimbOut | obstacle + urbanCollision |
+| ✅ nearDirtDive / band-ceiling | sensorBlind + HighPerch soft descend |
+| ✅ UI: 交戰開始 ▶ | SMS exec label |
+| ✅ Fold stays collapsed on engage | no auto-expand in `uiShowComputingOverlay` |
+| ✅ Chase frame down 10% | no-lock seat select look-at bias |
+| ✅ Soft aiMap / Phase 1–3 / H7 ECO | bake OS; F PASS; C/G plateau |
+| ✅ Typed CM + chaff / chase-8 / top-bar | prior wave |
 | ✅ True undercroft / handoff / facade / AABB>memory | T76 / T150 / T93 / T88 |
+| ✅ H1–H6 closed | envelope / opening FSM / decide-pipeline / FOX2 regression / ambush / energy gate |
 
 ---
 
@@ -88,7 +76,7 @@
 
 ### H1–H6 — **CLOSED 2026-07-30** (archive at bottom)
 
-### H7. Urban / opening AI regression safety collapse — **OPEN 2026-08-04** (plateau)
+### H7. Urban / opening AI regression safety collapse — **OPEN 2026-08-04** (plateau · live 實測優先)
 - Pre-Phase-1 baseline: B/C ~0.6–0.75, G ~0.98, F ~0.73.
 - **Best Node plateau** (`regression-1785819921344.json` / same as `…9559085`):
 
@@ -100,47 +88,46 @@
 | F-fox2-opening | **0.05** | **PASS** |
 | G-urban-gap-corridor | **0.18 / 0.19** | heur **PASS**; hybrid FAIL by ~0.01 |
 
-- Landed: Phase 1–2 bake OS; cleared local tuning; soft-urban ECO; escape bleed abort; F opening AP yield.
-- **Plateau note:** further Node knobs trade C building-hits vs G energy spiral. Prefer **live 實測** now to validate 3D path (surrogate ≠ mesh), then tune residuals with live evidence.
-- Smokes remain green.
+- Landed since: Phase B thin, midair P0, undercroft P1, handoff/nav clear — **Node gates not re-run this snapshot**; prefer live dumps then optional `npm run test:ai`.
+- Smokes remain the fast contract.
 
 ---
 
 ## Medium
 
 ### M1. Magic spawn / perch / altitude
-- spawn Y **28** (compromise; trial 18 caused stall-to-ground), perch **44**, approach **72**, dozens of alt literals in `pilot-ai.js`.
+- spawn Y **28**, perch **44**, approach **72**, dozens of alt literals in `pilot-ai.js`.
 
 ### M2. Building bubble radii — **CLOSED 2026-07-30**
-- Named `buildingRiskProfile` (`gap` default); smokes `test:building-risk` / `test:ai:gap`.
 
 ### M3. LCOS / HUD fragility
 - DOM injection; `setInterval(2000)` rebind; lerp / `400` snap; bank lag from `joyX` not `pendingRoll`; missile “in range” = seeker flight; lead clamped to nose.
 
-### M4. ACMI wreck debris missing from replay — **reconfirmed 2026-08-04**
+### M4. ACMI wreck debris missing from replay — **reconfirmed 2026-08-05**
 - Live: `spawnAircraftDebris` from wreck mixin / soft-kill ground burst only.
 - Replay: `renderCombatFrame` plays `vfxTriggers` but never logs a debris trigger.
 
-### M5. `wreckPhase` / `wreckBurstTurn` not serialized — **reconfirmed 2026-08-04**
+### M5. `wreckPhase` / `wreckBurstTurn` not serialized — **reconfirmed 2026-08-05**
 - Present on team state; absent from `getSerializableTeamState` return object.
 
-### M6. `aircraftDebris` not cleared on new match — **reconfirmed 2026-08-04**
+### M6. `aircraftDebris` not cleared on new match — **reconfirmed 2026-08-05**
 - Module `const aircraftDebris = []` in `render.js`; no reset on `applyMatchConfig`.
 
-### M7. Wingman orphan / status noise — **reconfirmed 2026-08-04**
+### M7. Wingman orphan / status noise — **reconfirmed 2026-08-05**
 - Default `wingmanOrder: 'follow'`; `getWingmanLeadId` only returns **human** lead.
 - Any AI with no human ally appends `｜無長機自由作戰` (1v1 AI vs AI false positive).
 - Order label maps duplicated (`state-machine.js` + `pilot-ai.js`).
 
-### M8. Phase B tactical roles — **thin knife landed 2026-08-05**
-- Soft: `applyEnemyPredictCombatScore` on engagement `scoreTacticalApproach` only (predict bearing bias).
-- SoftYield under hardContact / undercroft / diveClosing / high building pressure — no hard stick seize.
-- Full role layer (lead/lag/beam FSM) still deferred; dump-validate kill efficiency vs survival next.
+### M8. Phase B tactical roles — **thin knife landed 2026-08-05** · full layer **blocked on survival gate**
+- Soft: `applyEnemyPredictCombatScore` on `scoreTacticalApproach` only; softYield under survival pressure.
+- Near-tie RNG: `pickTacticalNearTie` / `tacticalTieEps` / `tacticalTieRandom`.
+- **Still open:** lead/lag/beam role FSM；kill-efficiency vs survival dump validation.
+- **Do not expand** until [`docs/Urban-Survival-Convergence.md`](./docs/Urban-Survival-Convergence.md) pass definition holds (3× T150, ≤1 building death/match).
 
 ### M9. `StateMachine` mega-API + `window.*` globals
 - AI doctrine, pilot input, HUD debug coupled.
 
-### M10. Dead `DYNAMIC_GUN_RANGE` — **reconfirmed 2026-08-04**
+### M10. Dead `DYNAMIC_GUN_RANGE` — **reconfirmed 2026-08-05**
 - Alias of `GUN_RANGE` in `team-state.js` / `GameContext.constants`; no live call sites beyond export.
 
 ### M11. `hybridPress` dead under `fox2-first`
@@ -154,41 +141,40 @@
 ### M14. Soft-kill vs hard-kill debris asymmetry
 - Design choice: ground/midair smash = no delayed debris.
 
-### M15. `roofClearance` dual meaning — **mitigated 2026-08-01**
+### M15. `roofClearance` dual meaning — **mitigated**
 - Named height-delta + `isTrueUndercroft`; field name kept for dump compat.
 
-### M16. Multiple overlapping side-commitment systems — **mitigated 2026-08-01**
+### M16. Multiple overlapping side-commitment systems — **mitigated**
 - Single `resolveAvoidSideAuthority`; residual: `navClimbOut.side` still separate.
 
-### M17. `pilot-ai.js` mega-file + dump-tagged branches — **~11.4k lines (2026-08-04)**
-- Avoid-side extracted. Next: escape-stick / route-plan after live dumps stay clean.
-- Doctrine: 少強制、優選路.
+### M17. `pilot-ai.js` mega-file + dump-tagged branches — **~14.1k lines (2026-08-05)**
+- Avoid-side extracted. Next: escape-stick / route-plan after dumps stay clean.
+- Doctrine: 少強制、優選路 · Portability memo.
 
-### M18. Route horizon / beam underused — **partial 2026-08-01** (feeds H7)
+### M18. Route horizon / beam underused — **partial** (feeds H7)
 - Gap asymmetry / facade bias landed; residual: early `risk=low` skips beam; T38 glue fallback.
 
-### M19. Escape↔engage oscillation — **mitigated 2026-08-01**
-- Tuning knobs + smoke; residual: handoff-too-early curriculum.
+### M19. Escape↔engage oscillation — **mitigated**
+- Handoff + clear navClimbOut landed; residual: handoff-too-early curriculum / dump edge cases.
 
 ### M20. Safety sim vs mesh-truth mismatch
 - AABB soft vs raycast hard; fat city boxes false-positive streets.
 
 ### M21. T38 / hard escape sticks remain large fallback surface — **feeds H7**
-- Track % urban deaths with `T38` / `glued` in reason.
+- P1 undercroftBoost landed; still track % urban deaths with `T38` / `glued` / `P1 undercroftBoost` in reason.
 
 ### M22. Map / editor assets vs AI obstacle truth
 - Catalog + editor landed; **deferred:** map-authored `aiHazard` until AI stable.
-- Residual: proxy/AABB fatness; editor→AI contract.
 
-### M23. FOX-1 fire gate vs illuminate ring UX — **reconfirmed 2026-08-04**
-- `supportMinRange: 8` → ring can go hot from ~**8–200m** (`computeSarhSupport` / `updateFox1SupportHud`).
-- Queue launch hard-requires **70–200m** (`toggleMissileQueue` + SMS).
-- Players read flickering ring as “locked → can fire.” Need clearer SMS/HUD copy or align gates.
+### M23. FOX-1 fire gate vs illuminate ring UX — **reconfirmed 2026-08-05**
+- `supportMinRange: 8` → ring can go hot from ~**8–200m**.
+- Queue launch hard-requires **70–200m**.
+- Players read flickering ring as “locked → can fire.”
 
-### M24. Typed CM starved by urban / illuminate priority — **reconfirmed 2026-08-04**
-- Urban escape has `flareWhileEscape` only — **no** `chaffWhileEscape`; `queueAction` stays `'none'` under `obstacleEmergency`.
-- Soft illuminate break beams without chaff when `shouldChaffNow=0` (empty / cooldown / save).
-- Decide order: `obstacleEmergency` before engagement / CM commit.
+### M24. Typed CM starved by urban / illuminate priority — **partial 2026-08-11**
+- Urban / obstacle / collision escape now use `resolveEscapeCountermeasure` → **chaffWhileEscape** (FOX-1/paint) or flare (IR).
+- Soft illuminate break may still beam without chaff when reserve/cooldown empty.
+- Decide order: `obstacleEmergency` before engagement / CM commit (unchanged).
 
 ---
 
@@ -202,9 +188,9 @@
 ### L6. Opening roof-target altitudes partly magic
 ### L7. Hard destroy: no delayed debris (accepted)
 ### L8. Dev `#temp-score-panel` / localStorage scoring leftovers
-### L9. Dump-tag comment sprawl (`T76`/`T93`/`T150`)
+### L9. Dump-tag comment sprawl (`T76`/`T93`/`T150`/`T109`)
 ### L10. Decision-trail forensics incomplete historically
-- Pre-fix trails lack `queue` / `chaff` / `chaffAmmo`. New frames include them; old dumps still hard to audit CM.
+- Pre-fix trails lack `queue` / `chaff` / `chaffAmmo`. New frames include them.
 
 ---
 
@@ -221,34 +207,34 @@
 | Gun LCOS ring for nose steer | UX; relative grab required |
 | Side-commitment hysteresis | Override only on conflict/contact |
 | Beam not full-time | Cost; medium+ risk gate |
-| Chase cam distance 8 | Player-tuned presence |
+| Chase cam distance 8 + frame −10% | Player-tuned presence |
+| Tactical near-tie RNG (`tacticalTieEps`) | Style only among good-enough candidates |
 | No aim-ring jitter on lock warn | Explicit product choice |
 | Map aiHazard specialization deferred | Stabilize AI first |
+| Soft-kill vs hard-kill debris asymmetry | M14 design |
 
 ---
 
-## Suggested backlog order
+## Suggested backlog order (post-backup)
 
-### Critical (safety gate)
-1. **H7 / M18 residual / M21** — restore urban regression green (crash/stall); shrink T38; beam earlier; revisit soft-stick vs hard-contact balance; audit `pilot-tuning.local.js`
+### Critical (safety / live)
+1. **H7 / M21** — live dump 驗證 undercroft P1 + midair P0；再決定是否重跑 Node regression  
+2. **M18 residual** — beam earlier vs T38 glue %  
 
 ### Combat UX / CM
-2. **M23** — FOX-1 fire vs illuminate messaging (or unify min range)  
-3. **M24** — add soft CM queue under urban escape when inbound FOX-1 / paint (`chaffWhileEscape`)  
+3. **M23** — FOX-1 fire vs illuminate messaging (or unify min range)  
+4. **M24** — `chaffWhileEscape` when inbound FOX-1 / paint  
 
-### Maintainability / product debt
-4. **M17** — continue split after dumps clean  
-5. **M20 / M22** — scoring ↔ mesh; editor→AI later  
-6. **M19 residual** — handoff curriculum  
-7. **M16 residual** — fold `navClimbOut.side`  
-8. **M7** — orphan label only when true wingman  
-9. **M4–M6** — ACMI debris + serialize + clear  
-10. **M8** — Phase B roles  
-11. **M3 / L3 / M10** — HUD harden + dead code  
+### Product / maintainability
+5. **M8 remainder** — Phase B full roles（僅在 thin knife dump 穩後）  
+6. **M17** — continue split（Portability：集中 pose／障礙入口）  
+7. **M7** — orphan wingman label  
+8. **M4–M6** — ACMI debris + serialize + clear  
+9. **M3 / M10 / L3** — HUD harden + dead aliases  
 
 ### Auto / health
-- `npm run test:ai` (decide-gates · building-risk · weapon-envelope · munition-doctrine · sarh-support · ai-map · regression)  
-- Target: A–G safety PASS on dense-urban-relevant stages; CM lines show `chaffNow` / `queue=chaff` when expected  
+- `npm run test:ai`（smoke + curriculum）  
+- Dump needles: `phaseB:` / `rngTie:` / `P1 undercroftBoost` / `deferred=trueUndercroft` / `deferred=engageHandoff`
 
 ---
 
@@ -257,34 +243,26 @@
 - [x] Match Setup 1v1 / 2v2 + seat control/loadout (standard = 2F1+2F2+gun)  
 - [x] Wingman: `follow` / `attack` / `free` / `cover` / `break`  
 - [x] Soft wreck fall + debris (live); ACMI debris still open  
-- [x] Roof-aware building risk + Scheme B downgrade  
+- [x] Roof-aware building risk + Scheme B  
 - [x] ACMI: restore destroyed aircraft mesh from log  
 - [x] NPC destroyed → decision tree `被擊墜`  
-- [x] LCOS: relative grab, axis fix, visible when obscured  
-- [x] Phase A energy–turn + soft-escape energy gate (H6)  
-- [x] Envelope single-source + regression parity  
-- [x] FOX2-FIRST doctrine smoke + stage F  
-- [x] Opening pylon one-turn powering (H2)  
-- [x] Decide-gate named pipeline (H3)  
+- [x] LCOS / envelope / FOX2-FIRST / decide-pipeline / opening powering  
 - [x] Soft aiMap + typed CM + chaff VFX + snapshot ammo  
-- [x] Chase cam 8 + top-bar status/fold UX  
-- [x] **Phase 1 bake = spatial OS** (mapLane ≠ flightBand; clearAbove bans soft burn; regression bake)  
-- [x] **Phase 2 planner consumes bake corridor/roof** (samplePlannerCorridor → score/T38 gate)  
-- [x] **Phase 3 MVP survival waypoints** (sampleSurvivalWaypoints → scored escape / urban side, building-pressure only)  
-- [x] **Phase 3 full pathfinding / long waypoints** (`findBakePath` + long greedy climbBias; combat score soft-yield; replan hysteresis)  
-- [x] **H7 energy ECO** (clear local tuning; soft-urban thr/joyX caps; urban energyRecover)  
-- [x] **H7 escape bleed abort + F opening AP yield** (F PASS; G-heur PASS)  
-- [ ] **Urban AI regression safety green (H7)** — C + G-hybrid plateau; **live 實測 recommended**  
-- [x] **Phase B thin knife** (`applyEnemyPredictCombatScore` + softYield)  
+- [x] Chase cam 8 + frame −10% + top-bar fold（交戰不強制展開）  
+- [x] Phase 1–3 bake OS / path / combat soft-yield  
+- [x] H7 energy ECO + F opening yield（F / G-heur PASS）  
+- [x] Phase B thin knife + near-tie RNG  
+- [x] Midair P0 + undercroft P1 sticks  
+- [x] UI: 交戰開始 ▶  
+- [ ] **Urban AI regression safety green (H7)** — C + G-hybrid；**live 實測**  
 - [ ] Phase B full tactical role layer (M8 remainder)  
-
 - [ ] FOX-1 fire vs ring UX (M23)  
 - [ ] Chaff under urban escape (M24)  
-- [ ] User save / tag release backup  
+- [x] **User save / tag release backup** — 本快照（2026-08-05）  
 
-### Doc drift noted (2026-08-04)
-- `README.md` health checklist still marks「Envelope 單一來源」unchecked — actually **H1 closed**; bottom date still says 2026-07-30.  
-- Prefer this file + README top status section as truth.
+### Doc drift
+- Prefer **本檔 + README 頂部「目前更新狀態」** 為真相。  
+- `docs/Tactical-Development-Memo.md` = 歷史；勿依此改已不存在的 `game.js`／`combat.js` 路徑敘事。
 
 ## High (closed detail — archive)
 

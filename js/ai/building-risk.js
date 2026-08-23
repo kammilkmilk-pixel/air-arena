@@ -305,6 +305,7 @@
 
         const underSlab = Number.isFinite(roof) && roof < 2;
         const deepUnder = Number.isFinite(roof) && roof < 0;
+        const headroom = Number(coverInfo.headroom);
         const sidesPinched =
             Number.isFinite(left) &&
             Number.isFinite(right) &&
@@ -321,13 +322,25 @@
             (Number.isFinite(dist) && dist < 16) ||
             (Number.isFinite(dist) && dist < 1.5) ||
             (Number.isFinite(fwd) && fwd >= 0 && fwd < 18);
+        // Open-sky courtyard / C-bowl: sides pinched but overhead is free.
+        // Do not label as tableUndercroft (that forces nest lateral into ring walls).
+        // Keep deep glue (roof≪0 + cov tight) as true undercroft even if headroom is false-open.
+        const openBowlOverhead =
+            (Number.isFinite(headroom) && headroom >= 20 && Number.isFinite(roof) && roof > -6) ||
+            (
+                Number.isFinite(headroom) &&
+                headroom >= 24 &&
+                Number.isFinite(dist) &&
+                dist >= 10 &&
+                !(Number.isFinite(roof) && roof < -10 && dist < 10)
+            );
 
         let severity = 0;
         let kind = null;
-        if (deepUnder && gapDead && close) {
+        if (deepUnder && gapDead && close && !openBowlOverhead) {
             severity = 2;
             kind = 'tableUndercroft';
-        } else if (underSlab && gapDead && close) {
+        } else if (underSlab && gapDead && close && !openBowlOverhead) {
             severity = 1;
             kind = 'tightUndercroft';
         }

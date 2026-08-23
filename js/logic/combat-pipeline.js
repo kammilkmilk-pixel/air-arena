@@ -63,7 +63,43 @@ function processFlightPaths(ctx) {
         t.wasFlaresArmedThisTurn = t.flaresArmed;
         t.wasChaffArmedThisTurn = !!t.chaffArmed;
         if (t.flaresArmed) { t.flareAmmo--; t.flaresArmed = false; }
-        if (t.chaffArmed) { t.chaffAmmo = Math.max(0, (t.chaffAmmo || 0) - 1); t.chaffArmed = false; } 
+        if (t.chaffArmed) { t.chaffAmmo = Math.max(0, (t.chaffAmmo || 0) - 1); t.chaffArmed = false; }
+
+        // Safety net: rebuild chain with forced inward if still outside at commit.
+        if (
+            typeof blendForcedInwardJoystick === 'function' &&
+            t.wrapper &&
+            typeof CONFIG !== 'undefined'
+        ) {
+            const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(
+                t.wrapper.userData.logicalQuat || t.wrapper.quaternion
+            );
+            const blended = blendForcedInwardJoystick(
+                t.wrapper.position,
+                fwd,
+                t.joyX,
+                t.joyY,
+                { allowBuildingDefer: true }
+            );
+            if (blended && blended.forced) {
+                t.joyX = blended.joyX;
+                t.joyY = blended.joyY;
+                t.roll = blended.joyX * (Math.PI / 4);
+                const ac = CONFIG.aircrafts[t.type || 'mig21'] || {};
+                const maxYaw = Number(ac.maxYaw) || Math.PI / 4;
+                const maxPitch = Number(ac.maxPitch) || Math.PI / 3;
+                const stats = (ac.throttleStats && ac.throttleStats[t.throttle]) || { heat: 0 };
+                let fireAct = t.queuedAction || 'none';
+                t.chain = [{
+                    yaw: -(t.joyX * maxYaw),
+                    pitch: -(t.joyY * maxPitch),
+                    roll: t.roll || 0,
+                    throttle: t.throttle,
+                    heatDelta: stats.heat,
+                    fire: fireAct
+                }];
+            }
+        }
         
         let res;
         if (!t.pathPoints || t.pathPoints.length < 2) {
@@ -123,7 +159,16 @@ function processFlightPaths(ctx) {
                         traveled: 0,
                         guided: false
                     };
-                    t.activeMissiles.push(activeM); p.state = 'empty'; 
+                    t.activeMissiles.push(activeM);
+                    p.state = 'empty';
+                    p.emptySinceTurn = Math.max(
+                        1,
+                        Number(
+                            (typeof GameContext !== 'undefined' && GameContext.state && GameContext.state.currentTurn) ||
+                            1
+                        )
+                    );
+                    if (p.mesh) p.mesh.visible = false;
                 }
                 if (activeM && !activeM.exploded) ctx.log[`${id}MslTracks`][p.id] = []; 
             });
@@ -132,14 +177,56 @@ function processFlightPaths(ctx) {
     });
 }
 
+/** Flare stage heat by logical age (CONFIG stages use `{ age, heat }`, not sparse index). */
+function getFlareStageHeat(age) {
+    const stages = (CONFIG.weapons && CONFIG.weapons.flare && CONFIG.weapons.flare.stages) || [];
+    const a = Number(age) || 0;
+    const hit = stages.find((s) => Number(s.age) === a);
+    if (hit) return Number(hit.heat) || 0;
+    if (stages[a] && Number.isFinite(Number(stages[a].heat))) return Number(stages[a].heat) || 0;
+    return 0;
+}
+
+function getFlareMaxAge() {
+    const stages = (CONFIG.weapons && CONFIG.weapons.flare && CONFIG.weapons.flare.stages) || [];
+    let max = 2;
+    for (let i = 0; i < stages.length; i++) {
+        const a = Number(stages[i] && stages[i].age);
+        if (Number.isFinite(a)) max = Math.max(max, a);
+    }
+    return max;
+}
+
+function isFlareOwnerGone(teamId) {
+    if (!teamId || typeof teams === 'undefined') return false;
+    const t = teams[teamId];
+    if (!t) return true;
+    return !!(t.isDestroyed || t.wreckPhase === 'gone');
+}
+
 function processFlares(ctx) {
     let activeTurnFlares = [];
+    const maxAge = getFlareMaxAge();
     if (typeof globalFlares !== 'undefined') {
-        globalFlares.forEach(gf => { activeTurnFlares.push({ pos: gf.pos.clone(), vel: gf.vel.clone(), age: gf.age, teamId: gf.teamId, startFrame: 0 }); });
+        globalFlares.forEach((gf) => {
+            if (!gf || !gf.pos) return;
+            // Do not keep burning flares after the releasing aircraft is already wrecked/gone.
+            if (isFlareOwnerGone(gf.teamId)) return;
+            if (Number(gf.age) > maxAge) return;
+            if (getFlareStageHeat(gf.age) <= 0 && Number(gf.age) >= maxAge) return;
+            activeTurnFlares.push({
+                pos: gf.pos.clone(),
+                vel: gf.vel ? gf.vel.clone() : new THREE.Vector3(0, -0.0005, 0),
+                age: Number(gf.age) || 0,
+                teamId: gf.teamId,
+                startFrame: 0
+            });
+        });
     }
 
     combatActiveIds().forEach(id => {
         let t = teams[id];
+        if (!t || t.isDestroyed) return;
         if (t.wasFlaresArmedThisTurn && t.flightCurve) {
             let acSpeed = t.flightCurve.getLength() / 100;
             for (let burst = 0; burst < 4; burst++) { 
@@ -154,8 +241,7 @@ function processFlares(ctx) {
 
     activeTurnFlares.forEach(f => {
         let currentPos = f.pos.clone(); let currentVel = f.vel.clone();
-        let stages = CONFIG.weapons['flare'].stages || [{heat:500},{heat:150},{heat:0}];
-        let heatVal = stages[f.age] ? stages[f.age].heat : 0;
+        let heatVal = getFlareStageHeat(f.age);
 
         let totalSteps = CONFIG.rules.stepsPerTurn;
         for(let step = 0; step <= totalSteps; step++) { 

@@ -6,6 +6,8 @@
   "scripts": {
     "start": "serve -l 8080",
     "dev": "serve -l 8080",
+    "dev:ensure": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/ensure-dev-server.ps1",
+    "dev:open": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/ensure-dev-server.ps1 -Open",
     "autotune": "node tools/ai-autotune.js --iterations 120 --episodes 60 --turns 80",
     "autotune:merge": "node tools/ai-autotune-merge.js --top 3 --stableN 3",
     "autotune:apply": "node tools/ai-apply-tuning.js --source consensus",
@@ -19,6 +21,7 @@
     "test:ai-map": "node tools/ai-map-smoke.js",
     "test:phase3": "node tools/phase3-route-smoke.js",
     "test:arena-envelope": "node tools/arena-envelope-smoke.js",
+    "analyze:weapon-dump": "node tools/weapon-efficiency-dump.js",
     "bake:ai-map": "node tools/ai-map-smoke.js --write",
     "test:ai:gap": "node tools/building-risk-smoke.js && node tools/ai-regression.js --stage G-urban-gap-corridor --runs 2 --episodes 20",
     "tuning:dashboard": "node tools/tuning-dashboard-server.js"

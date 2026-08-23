@@ -2,7 +2,7 @@
 
 ## 目前更新狀態
 
-**版本快照：v3.0+**（文件更新 **2026-08-04**）  
+**版本快照：v3.0+**（文件更新 **2026-08-05 · 備份點**）  
 基於 v2.2 Stable 架構；v3.0 協作編隊／殘骸之後，續修 AI 城區、SARH／箔條、鏡頭與頂欄 UX。  
 **備份前請以本節 + [`TECH-DEBT.md`](./TECH-DEBT.md) 為準。**
 
@@ -21,33 +21,32 @@
 |------|------|
 | **0a Match Setup** | 開局 UI：1v1 / 2v2、各席位 Human / AI、掛載偏好 |
 | **0b Multi-unit** | 四機編制：`red` / `red2` / `blue` / `blue2`；`matchActive`；陣營 API |
-| **選取與鏡頭** | 點選切換；點敵鎖定；追蹤鏡頭以己機為軸、對準鎖定目標（距離 **8**） |
+| **選取與鏡頭** | 點選切換；點敵鎖定；追蹤鏡頭以己機為軸、對準鎖定目標（距離 **8**；無鎖座位畫面飛機約低 **10%**） |
 | **MFD 顯示規則** | 僅當前**人類**座席且非動畫中顯示 MFD |
 | **Phase 1 Wingman** | 僚機五指令：`follow` / `attack` / `free` / `cover` / `break` |
 | **殘骸墜落** | 擊毀緩墜 → 次回合碎裂；撞地／對撞即時殉爆 |
 | **勝負延遲** | `wreckPhase: 'falling'` 時延後 `game_over` |
 
-### 近期續修（2026-07 末 → 08-01）
+### 近期續修（2026-07 末 → 08-04）
 
 | 項目 | 內容 |
 |------|------|
-| **AI 城區** | 屋頂淨空、Scheme B、`buildingRiskDowngrade: 0`、true undercroft／handoff／facade／AABB>memory |
+| **AI 城區** | 屋頂淨空、Scheme B、Phase 1–3 bake OS、H7 ECO（F／G-heur 綠；C／G-hyb plateau） |
 | **Phase A 能量** | 大轉向降 thr；軟避障能量門（H6） |
 | **ACMI** | 擊墜僚機可再顯示；碎片 VFX 仍缺（M4） |
-| **Decide / envelope** | `decide-pipeline`、`weapon-envelope`、多項 smoke |
+| **Decide / envelope** | `decide-pipeline`、`weapon-envelope`、`arena-envelope`、多項 smoke |
 | **LCOS** | 相對拖曳、軸修正、遮擋仍顯示外環 |
+| **Soft aiMap / Typed CM / 標準掛載 / 頂欄** | clearAbove；FOX-1→chaff；2F1+2F2；運算中∪收合列 |
 
-### 本波已完成（2026-08-02）
+### 本波（2026-08-05 · 備份）
 
 | 項目 | 內容 |
 |------|------|
-| **Soft aiMap** | 儘量不強制 stick；clearAbove／perch 軟讓路 |
-| **雷達鎖定 SMS** | 「被鎖定」跑馬燈；無瞄準環 jitter |
-| **Typed CM** | FOX-1／SARH paint → chaff+beam；FOX-2 → flare |
-| **Chaff** | 5 回合白煙+閃光；擋在鏡頭與機之間半透明；快照含 `chaffAmmo` |
-| **標準掛載** | **2×FOX-1 + 2×FOX-2 + Gun**（內 F1／外 F2） |
-| **頂欄 UX** | 「運算中」併入狀態列；播放列常駐；▾ 向下收合隊伍／狀態／決策樹 |
-| **地圖** | `assets/maps` + `map-editor/`（AI hazard 標籤仍延後，見 M22） |
+| **Phase B thin** | `applyEnemyPredictCombatScore` + softYield；`rngTie` 近分平手 |
+| **Midair P0** | 旁樓假 `roof<0` 不再擋 midair break |
+| **Undercroft P1** | `P1 undercroftBoost` 側推／近地門檻 |
+| **UI** | 戰術電腦「交戰開始 ▶」；收納列交戰不強制展開 |
+| **備忘** | `PilotAI-Portability-Memo` 現行準則 |
 
 ### 關鍵數值（當前平衡）
 
@@ -59,17 +58,20 @@
 | 標準掛載 | P1/P4 FOX-1、P2/P3 FOX-2 + SMS 機砲 |
 | 開局高度 Y | **28**（Match Setup 可選 28／45／60／80） |
 | 追蹤鏡頭距離 | **8**（己機軸心 → 鎖定目標） |
+| 座位預設畫面 | 無鎖時飛機約低 **10%** 視高（`CHASE_CAM_FRAME_DOWN`） |
 | FOX2 開局偷襲機率 | `fox2OpeningAmbushChance` 預設 **0.2** |
 | 建築風險降級 | `buildingRiskDowngrade: 0` |
 | Chaff 壽命 | 5 回合（`lifeSteps` 500） |
+| 戰術近分平手 | `tacticalTieEps: 12`（可 `tacticalTieRandom: 0` 關） |
 
 ### 目前技術債（摘要）
 
-- **High：** 城區 AI 回歸（H7）— Phase 1–2 後 B/D 已綠；C/F/G 仍待量測／收斂。
-- **Medium 優先：** FOX-1 照射環 vs 發射窗 UX（M23）；CM 被城市逃生擠掉（M24）；T38／beam（M18/M21）；**Phase B thin knife 已落地（M8 完整角色層仍後）**；ACMI 碎片（M4–M6）。
-- **詳表與計劃進度表：** [`TECH-DEBT.md`](./TECH-DEBT.md)（快照 **2026-08-04**）。`docs/Tactical-Development-Memo.md` 為歷史備忘，勿當現行架構。
-- **新地圖必讀：** [`docs/Arena-Map-Onboarding-Memo.md`](./docs/Arena-Map-Onboarding-Memo.md) — 每次換場地／新圖必須做 **AI 烘焙 + 場地包絡限制**；尺寸／AO／高度帶掛場地 profile（`js/core/arena-envelope.js`），勿寫進 PilotAI 核心。
-- **PilotAI／引擎預先準備：** [`docs/PilotAI-Portability-Memo.md`](./docs/PilotAI-Portability-Memo.md) — 網頁試玩優先；開發期不加深 Three 耦合、不砍感知；Godot 等為日後美術殼，試玩達標再脫鉤。
+- **High（1）：** 城區 AI 回歸安全門（H7）— B／D／F／G-heur 已綠；**C + G-hybrid** plateau；優先 live dump。
+- **Medium 優先：** FOX-1 照射環 vs 發射窗（M23）；城區逃生無 chaff（M24）；T38／beam（M18/M21）；**Phase B 完整角色層**（M8 餘）；ACMI 碎片（M4–M6）；僚機「無長機」誤報（M7）；`pilot-ai` 巨型檔（M17 ~14k 行）。
+- **詳表：** [`TECH-DEBT.md`](./TECH-DEBT.md)（快照 **2026-08-05**）。
+- **新地圖必讀：** [`docs/Arena-Map-Onboarding-Memo.md`](./docs/Arena-Map-Onboarding-Memo.md)。
+- **PilotAI／引擎預先準備：** [`docs/PilotAI-Portability-Memo.md`](./docs/PilotAI-Portability-Memo.md)。
+- **歷史備忘（勿當架構）：** `docs/Tactical-Development-Memo.md`。
 
 ### Phase 1 架構（烘焙 = 空間 OS）
 
@@ -389,7 +391,9 @@ processFlightPaths → processFlares
 - [ ] Phase B 完整戰術定位層
 - [x] Envelope 單一來源 + regression 對齊
 - [ ] 城區 AI 回歸安全門（H7）
+- [ ] FOX-1 照射環 vs 發射窗 UX（M23）
+- [ ] 城區逃生 chaff（M24）
 
 ---
 
-*文件版本 v3.0+（2026-08-04）· 對應程式樹 `airarAir-Arena-v2.2-Stable` · 技術債詳 `TECH-DEBT.md`*
+*文件版本 v3.0+（2026-08-05 備份點）· 對應程式樹 `airarAir-Arena-v2.2-Stable` · 技術債詳 `TECH-DEBT.md`*

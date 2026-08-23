@@ -16,14 +16,41 @@ window.AirArenaAI = {
     urbanAvoidMemory: {},
     /** Phase 3 MVP: short bake survival waypoints (commit a few turns while building pressure). */
     survivalWaypointMemory: {},
+    /** Phase mid: corridor homotopy commit (L/R/C) — not a single joyX lock. */
+    corridorHomotopyMemory: {},
     /** T72: after T38/bake glue escape, keep lateral+climb for a few turns (block preempt/stall steal). */
     glueEscapeMemory: {},
+    /** Table undercroft: consecutive all-hit same-side → force opposite flip (T150 allHitHold nest). */
+    undercroftAllHitStuckMemory: {},
+    /**
+     * Scored escape cov-collapse streak: same-side bank while cover tightens → fail recovery
+     * (level/awayFlip/highFacade) instead of repeating gapCut/flip into nest.
+     */
+    scoredEscapeCollapseMemory: {},
+    /** Table stick owner: sticky away-from-mesh bank (AABB flip must not reverse into slab). */
+    tableStickAwayMemory: {},
+    /** T150 blue2: keep table stick owner a few turns when roof flicker falsely opens at slab edge. */
+    tableStickOwnerLinger: {},
+    /** Doctrine priority #1 companion: per-team altitude for Δalt sink (fy alone misses leveling-while-sinking). */
+    tableAltSinkMemory: {},
+    /** Priority #1 lock: keep dirtBleed pitch ownership a few turns (block skim/nest Math.max smash). */
+    dirtBleedLockMemory: {},
+    /** Knife 3: after scored collapse, commit away∩clear bank a few turns (block soft skim scrape). */
+    collapseExitMemory: {},
+    /** tableGlueFlip: multi-turn hard bank commit (sticky must not refuse flip under glue). */
+    tableGlueFlipMemory: {},
     /** P1: after FOX-1 bake soft-yield, keep climb-extend a few turns (block cruise/align sink). */
     fox1BakeYieldMemory: {},
     /** P0-1: after dive+closing nav yield, keep hard-cut lateral a few turns (block thr4 re-dive). */
     diveClosingYieldMemory: {},
     /** Combat-AO rim: commit inward bank side so warn-band does not flip-flop joyX. */
     airspaceAvoidMemory: {},
+    /** FOX-1↔FOX-2: hysteresis so band-edge does not flip pylons every turn. */
+    missileTypeSwitchMemory: {},
+    /** FOX-2 seeker: hold shoot 1–2 turns after lock so Prep↔Attack flicker does not drop queue (T21/T82). */
+    missileLockHoldMemory: {},
+    /** Prep without shoot streak → timeout to soft-shoot or yield gun/tactical. */
+    missilePrepStreakMemory: {},
     /** H7: consecutive AP-losing soft urban escapes → force energyRecover. */
     escapeBleedMemory: {},
     raycaster: new THREE.Raycaster(),
@@ -85,7 +112,39 @@ window.AirArenaAI = {
             flareSoftKeepChance: 0.72,
             // Tactical approach near-tie break (only among "good enough" candidates).
             tacticalTieEps: 12,
-            tacticalTieRandom: 1
+            tacticalTieRandom: 1,
+            alignSoftFire: 1,
+            // Missile soft fire ≤ doctrine maxLaunch (~32°); gun knife stays wide via gunAngMax.
+            alignSoftFireAngMax: 34,
+            alignSoftFireGunAngMax: 92,
+            alignSoftFireLocalZMin: 0.18,
+            alignSoftFireGunLocalZMin: 0.06,
+            alignSoftFireKnifeDist: 32,
+            alignSoftFireKnifeAngMax: 98,
+            airspaceSoftBlend: 1,
+            airspaceSoftBlendClearMin: 70,
+            bandSoftCombat: 1,
+            bandSoftCombatDist: 120,
+            bandSoftCombatAngMax: 55,
+            engageHandoffSoftReclaim: 1,
+            engageHandoffSoftScoreMin: 0.58,
+            lookaheadMediumWeight: 0.52,
+            lookaheadHighFarWeight: 0.22,
+            lookaheadHighFarCoverDist: 28,
+            bandSoftCombatFarDist: 480,
+            bandSoftCombatFarAngMax: 155,
+            alignExtremeYieldAng: 105,
+            missilePrepTimeoutTurns: 3,
+            missilePrepTimeoutShootAng: 34,
+            missilePrepTimeoutGunDistPad: 28,
+            farReengageDist: 150,
+            farReengageVeryDist: 250,
+            airspaceFarBlend: 1,
+            radialBleedFrac: 0.52,
+            radialBleedDeepFrac: 0.72,
+            radialBleedOutDot: 0.42,
+            airspaceRadialBlend: 1,
+            bandSoftRadialBleed: 1
         };
     },
 
@@ -115,7 +174,137 @@ window.AirArenaAI = {
         if (opts.steepIntoBldg || opts.underRoof) return false;
         const roofClear = Number(coverInfo.roofClearance);
         if (Number.isFinite(roofClear) && roofClear < 2) return false;
+        // T150 A: roof briefly +3 with cov≈13 still arms climb-into-facade.
+        if (this.isNavClimbOutFacadeUnsafe(coverInfo, opts)) return false;
         return true;
+    },
+
+    /**
+     * Hard nav climb-out / mandatoryClimb is unsafe while still hugging facade or
+     * under slab silhouette — prefer lateral skim (T150 A red2 postGroundClimbOut).
+     * ClimbOut / facadeBowl / high escape must yield to table skim/nest
+     * (T111 blue2 dirt→bowl climb→table; T147 red2 high escape→all-hit).
+     */
+    shouldYieldClimbOutToTableEscape(coverInfo = {}, opts = {}) {
+        const oh = this.classifyUrbanOverhead(coverInfo, opts);
+        if (oh.class === 'tableClose') return true;
+        // Mid table: engage/climb must yield earlier (align@cov≈25–40 still flew into nest).
+        if (oh.class === 'tableWide' && Number.isFinite(oh.dist) && oh.dist < 32) return true;
+        if (
+            Number.isFinite(oh.dist) &&
+            oh.dist < 14 &&
+            (oh.slabBlocked || oh.class === 'besideTall' || oh.class === 'facadeClose')
+        ) {
+            return true;
+        }
+        return false;
+    },
+
+    /**
+     * Block align/orbit/press while closing into table — stick goes to skim/nest (tableGlue).
+     */
+    shouldDeferEngageForTableEscape(coverInfo = {}, opts = {}) {
+        if (this.shouldYieldClimbOutToTableEscape(coverInfo, opts)) {
+            const oh = this.classifyUrbanOverhead(coverInfo, opts);
+            return oh.class === 'tableClose' ? 'tableClose' : (oh.class === 'tableWide' ? 'tableWide' : 'tableEscape');
+        }
+        const oh = this.classifyUrbanOverhead(coverInfo, opts);
+        const fy = Number(opts.forwardY);
+        // Approaching deep roof at mid cov while diving/closing — do not keep align.
+        if (
+            (oh.class === 'tableWide' || oh.class === 'besideTall' || oh.slabBlocked) &&
+            Number.isFinite(oh.dist) &&
+            oh.dist < 40 &&
+            Number.isFinite(fy) &&
+            fy < -0.12
+        ) {
+            return 'tableApproach';
+        }
+        if (
+            oh.class === 'tableWide' &&
+            Number.isFinite(oh.dist) &&
+            oh.dist < 36 &&
+            Number.isFinite(oh.roof) &&
+            oh.roof < -10
+        ) {
+            return 'tableWide';
+        }
+        return null;
+    },
+
+    isNavClimbOutFacadeUnsafe(coverInfo = {}, opts = {}) {
+        const yieldTable = this.shouldYieldClimbOutToTableEscape(coverInfo, opts);
+        if (yieldTable) return true;
+        // Open courtyard: climb-out is the intended exit — only refuse nose-into-wall dives.
+        if (this.isFacadeBowlOpen(coverInfo, opts)) {
+            const distBowl = Number(opts.coverDistance != null ? opts.coverDistance : coverInfo.distance);
+            const fwdBowl = Number(
+                opts.coverForwardDistance != null ? opts.coverForwardDistance : coverInfo.forwardDistance
+            );
+            const fyBowl = Number(opts.forwardY);
+            if (Number.isFinite(distBowl) && distBowl < 5) return true;
+            // False bowl under table / mid cov after dirt arrest: hard climb still unsafe.
+            if (Number.isFinite(distBowl) && distBowl < 24) {
+                const ohBowl = this.classifyUrbanOverhead(coverInfo, {
+                    ...opts,
+                    coverDistance: distBowl,
+                    coverForwardDistance: fwdBowl,
+                    forwardY: fyBowl
+                });
+                if (
+                    ohBowl.class === 'tableClose' ||
+                    ohBowl.class === 'tableWide' ||
+                    (ohBowl.slabBlocked && distBowl < 28)
+                ) {
+                    return true;
+                }
+            }
+            // T145: bowl flagged open but still diving into face @cov≈12 → joyY=0.95 smash.
+            if (
+                Number.isFinite(fyBowl) &&
+                fyBowl < -0.28 &&
+                Number.isFinite(distBowl) &&
+                distBowl < 18
+            ) {
+                return true;
+            }
+            if (
+                Number.isFinite(fwdBowl) &&
+                fwdBowl > 0 &&
+                fwdBowl < 8 &&
+                Number.isFinite(fyBowl) &&
+                fyBowl < -0.15
+            ) {
+                return true;
+            }
+            return false;
+        }
+        if (this.isSlabClimbBlocked({
+            coverInfo,
+            roofClearance: opts.roofClearance != null ? opts.roofClearance : coverInfo.roofClearance,
+            coverDistance: opts.coverDistance != null ? opts.coverDistance : coverInfo.distance,
+            headroom: opts.headroom != null ? opts.headroom : coverInfo.headroom,
+            hardChokeKind: opts.hardChokeKind || coverInfo.hardChokeKind,
+            underRoof: !!opts.underRoof,
+            deepEmbed: !!opts.deepEmbed,
+            altitude: opts.altitude,
+            aiMapClearAbove: opts.aiMapClearAbove,
+            aiMapSkyOpen: opts.aiMapSkyOpen
+        })) return true;
+        const dist = Number(opts.coverDistance != null ? opts.coverDistance : coverInfo.distance);
+        const fwd = Number(
+            opts.coverForwardDistance != null ? opts.coverForwardDistance : coverInfo.forwardDistance
+        );
+        const roof = Number(opts.roofClearance != null ? opts.roofClearance : coverInfo.roofClearance);
+        if (Number.isFinite(dist) && dist < 18) return true;
+        if (Number.isFinite(fwd) && fwd > 0 && fwd < 14 && Number.isFinite(dist) && dist < 28) return true;
+        if (Number.isFinite(roof) && roof < 8 && Number.isFinite(dist) && dist < 24) return true;
+        // T150 red: mandatoryClimb under deep neg roof @cov≈22–27 (missed dist<24).
+        // T129 red: facadeBowl under roof≈-75 @cov≈33–40.
+        if (Number.isFinite(roof) && roof < -8 && Number.isFinite(dist) && dist < 42) return true;
+        if (Number.isFinite(roof) && roof < -20 && Number.isFinite(dist) && dist < 48) return true;
+        if (coverInfo.collisionRisk === 'high' && Number.isFinite(dist) && dist < 28) return true;
+        return false;
     },
 
     /** Combat gun range with safe fallback to shared envelope (never stale 42). */
@@ -246,7 +435,9 @@ window.AirArenaAI = {
             return AirArenaWeaponEnvelope.inferTeamMissileType(self, {
                 distance,
                 angleDeg: angleToTargetDeg,
-                preferFox1: policy === 'fox1-first'
+                preferFox1: policy === 'fox1-first',
+                preferFox2: policy === 'fox2-first',
+                respectLive: false
             });
         }
         const typeOf = (p) => (typeof pylonWeaponType === 'function' ? pylonWeaponType(p) : (p.weaponType || 'fox2'));
@@ -255,15 +446,106 @@ window.AirArenaAI = {
         const hasFox2 = pylons.some((p) => p && p.state !== 'empty' && typeOf(p) === 'fox2');
         const policy = this.normalizePolicyMode(self && self.aiPolicyMode);
         if (policy === 'fox1-first' && hasFox1) return 'fox1';
+        if (policy === 'fox2-first' && hasFox2) return 'fox2';
         const env1 = this.getMissileEnvelope('fox1');
         const preferFox1 =
             hasFox1 &&
             distance >= env1.missileMinRange &&
             distance <= env1.missileMaxRange &&
             angleToTargetDeg < 28;
-        if (preferFox1) return 'fox1';
+        if (preferFox1 && !(hasFox2 && distance < 80)) return 'fox1';
         if (hasFox2) return 'fox2';
         return hasFox1 ? 'fox1' : 'fox2';
+    },
+
+    /**
+     * When geometry wants fox1 but live SMS is fox2 (or reverse), drop conflicting powering/armed
+     * and start powering the wanted type. Hysteresis avoids band-edge thrash.
+     */
+    reconcileLiveMissileTypeSwitch(teamId, team, wantType, opts = {}) {
+        const want = wantType === 'fox1' ? 'fox1' : (wantType === 'fox2' ? 'fox2' : null);
+        if (!teamId || !team || !want) {
+            return { switched: 0, live: null, want: wantType || null, pending: 0 };
+        }
+        const typeOf = (p) => (typeof pylonWeaponType === 'function' ? pylonWeaponType(p) : (p.weaponType || 'fox2'));
+        const live = typeof teamLiveMissileType === 'function' ? teamLiveMissileType(team) : null;
+        if (!live || live === want) {
+            if (this.missileTypeSwitchMemory[teamId]) delete this.missileTypeSwitchMemory[teamId];
+            return { switched: 0, live, want, pending: 0 };
+        }
+        const hasWantLoad = (team.pylons || []).some(
+            (p) => p && p.state !== 'empty' && typeOf(p) === want
+        );
+        if (!hasWantLoad) {
+            return { switched: 0, live, want, pending: 0, note: 'noWantLoad' };
+        }
+        // Keep illuminate support path: do not yank fox1 pylons while own FOX-1 is in flight
+        // if we are switching away from fox1 mid-SARH (still allow fox2→fox1).
+        if (want === 'fox2' && live === 'fox1' && this.hasOwnFox1InFlight(team)) {
+            return { switched: 0, live, want, pending: 0, note: 'fox1InFlight' };
+        }
+
+        const dist = Number(opts.distance);
+        const ang = Number(opts.angleDeg);
+        const env1 = this.getMissileEnvelope('fox1');
+        const env2 = this.getMissileEnvelope('fox2');
+        const strongPrefer =
+            (want === 'fox1' && Number.isFinite(dist) && dist > env2.missileMaxRange && dist <= env1.missileMaxRange) ||
+            (want === 'fox1' && Number.isFinite(dist) && dist >= 100 && dist <= env1.missileMaxRange && (!Number.isFinite(ang) || ang < 20)) ||
+            (want === 'fox2' && Number.isFinite(dist) && dist <= 85) ||
+            (want === 'fox2' && Number.isFinite(dist) && dist < env1.missileMinRange) ||
+            opts.policyMode === 'fox1-first' ||
+            opts.policyMode === 'fox2-first';
+
+        const turnNo = Number(opts.turnNo) || 0;
+        const prev = this.missileTypeSwitchMemory[teamId] || null;
+        const streak = prev && prev.want === want ? (Number(prev.streak) || 0) + 1 : 1;
+        this.missileTypeSwitchMemory[teamId] = { want, streak, turnNo };
+        // Need 2 agreeing turns unless strong band / doctrine.
+        if (!strongPrefer && streak < 2) {
+            return { switched: 0, live, want, pending: 1, streak };
+        }
+
+        let dropped = 0;
+        if (typeof dropConflictingPylonPower === 'function') {
+            dropped = dropConflictingPylonPower(team, want) || 0;
+        } else {
+            (team.pylons || []).forEach((p) => {
+                if (!p || (p.state !== 'powering' && p.state !== 'armed')) return;
+                if (typeOf(p) === want) return;
+                p.state = 'standby';
+                dropped += 1;
+            });
+        }
+
+        let powered = 0;
+        if (
+            typeof GameContext !== 'undefined' &&
+            GameContext.stateMachine &&
+            typeof GameContext.stateMachine.beginPylonPowerUp === 'function'
+        ) {
+            const standbyWant = (team.pylons || []).filter(
+                (p) => p && p.state === 'standby' && typeOf(p) === want
+            );
+            const stillLive = (team.pylons || []).filter(
+                (p) => p && (p.state === 'armed' || p.state === 'powering') && typeOf(p) === want
+            ).length;
+            const need = Math.max(0, Math.min(2, 2 - stillLive));
+            for (let i = 0; i < need && i < standbyWant.length; i++) {
+                if (GameContext.stateMachine.beginPylonPowerUp(teamId, standbyWant[i].id)) powered += 1;
+            }
+        }
+
+        this.missileTypeSwitchMemory[teamId] = { want, streak: 0, turnNo, lastSwitch: turnNo };
+        return {
+            switched: dropped > 0 || powered > 0 ? 1 : 0,
+            live,
+            want,
+            pending: 0,
+            dropped,
+            powered,
+            strong: strongPrefer ? 1 : 0
+        };
     },
 
     fox1WasInFlightByTeam: Object.create(null),
@@ -358,13 +640,28 @@ window.AirArenaAI = {
                 ? ctx.coverForwardDistance
                 : (action.debug && action.debug.coverForwardDistance)
         );
+        const coverDist = Number(
+            ctx.coverDistance != null
+                ? ctx.coverDistance
+                : (ctx.coverInfo && ctx.coverInfo.distance)
+        );
+        const fy = Number(
+            ctx.selfForward && Number.isFinite(Number(ctx.selfForward.y))
+                ? ctx.selfForward.y
+                : ctx.forwardY
+        );
         const hardBldg = !!(action.hardBuilding || ctx.hardBuildingContact);
+        const risk = (ctx.coverInfo && ctx.coverInfo.collisionRisk) || ctx.collisionRisk;
 
         if (action.state === 'groundAvoid' || action.state === 'terrainEscape') return true;
         if (action.state === 'safetyEmbedPushOut') return true;
         // Ultra-low pull-up / climb-out only
         if (action.state === 'emergencyPullUp' && Number.isFinite(alt) && alt < 24) return true;
         if (action.state === 'postGroundClimbOut' && Number.isFinite(alt) && alt < 26) return true;
+        // T118 blue2: glued / steep into facade — survival owns (FOX-1 climb-extend must not).
+        if (Number.isFinite(coverDist) && coverDist < 8) return true;
+        if (Number.isFinite(fy) && fy < -0.55 && Number.isFinite(coverDist) && coverDist < 24) return true;
+        if (risk === 'high' && Number.isFinite(coverDist) && coverDist < 14) return true;
         // Soft obstacleEmergencyEscape / urban* do NOT abort unless smash-imminent.
         if (
             hardBldg &&
@@ -377,6 +674,30 @@ window.AirArenaAI = {
             Number.isFinite(alt) &&
             alt < 42
         ) {
+            return true;
+        }
+        return false;
+    },
+
+    /**
+     * FOX-1 bake climb-extend must not run into collapsing cover / steep facade dive (T118).
+     */
+    shouldAbortFox1ClimbExtend(coverInfo = {}, opts = {}) {
+        const info = coverInfo || {};
+        const dist = Number(opts.coverDistance != null ? opts.coverDistance : info.distance);
+        const fwd = Number(
+            opts.coverForwardDistance != null
+                ? opts.coverForwardDistance
+                : (info.forwardDistance != null ? info.forwardDistance : info.corridorFwdClear)
+        );
+        const fy = Number(opts.forwardY);
+        const alt = Number(opts.altitude);
+        const risk = info.collisionRisk || opts.collisionRisk;
+        if (Number.isFinite(dist) && dist < 8) return true;
+        if (Number.isFinite(fwd) && fwd > 0 && fwd < 8) return true;
+        if (risk === 'high' && Number.isFinite(dist) && dist < 16) return true;
+        if (Number.isFinite(fy) && fy < -0.45 && Number.isFinite(dist) && dist < 28) return true;
+        if (Number.isFinite(fy) && fy < -0.65 && Number.isFinite(alt) && alt < 90 && Number.isFinite(dist) && dist < 40) {
             return true;
         }
         return false;
@@ -620,7 +941,7 @@ window.AirArenaAI = {
         const sequelYieldLock = teamId
             ? this.getFox1BakeYieldLock(teamId, Number(ctx.turnNo) || 1)
             : { active: false };
-        if (sequelYieldLock.active || this.shouldSoftYieldCombatForBakeRoute(coverInfo, {
+        if (this.shouldSoftYieldCombatForBakeRoute(coverInfo, {
             forwardY: fwdY,
             altitude: ctx.altitude,
             facadeClosing: ctx.facadeClosing,
@@ -628,8 +949,36 @@ window.AirArenaAI = {
             survivalWp: ctx.survivalWp,
             survivalWpHint: ctx.survivalWpHint,
             fox1Sequel: true,
-            bakeYieldLock: !!sequelYieldLock.active
+            bakeYieldLock: !!sequelYieldLock.active,
+            hardContact: !!ctx.hardBuildingContact || !!ctx.hardContact,
+            enemyDistance: Number(ctx.distance),
+            angleDeg: Number(ctx.angleDeg),
+            localZ: ctx.localToEnemy && Number(ctx.localToEnemy.z),
+            inferWeaponWindow: true,
+            weaponWindowOpen: this.isWeaponWindowOpen({
+                distance: Number(ctx.distance),
+                angleDeg: Number(ctx.angleDeg),
+                localZ: ctx.localToEnemy && Number(ctx.localToEnemy.z)
+            }, ctx.tuning || this.getTuning())
         })) {
+            // T118: climb-extend into cov≈1.7 / fy=-0.73 — leave stick to survival decide.
+            if (this.shouldAbortFox1ClimbExtend(coverInfo, {
+                forwardY: fwdY,
+                altitude: ctx.altitude,
+                coverDistance: coverInfo.distance,
+                coverForwardDistance: coverInfo.forwardDistance,
+                collisionRisk: coverInfo.collisionRisk
+            })) {
+                if (!action.debug) action.debug = {};
+                action.debug.fox1SequelSurvivalAbort = 1;
+                const treeAbort = action.debug.tree;
+                if (Array.isArray(treeAbort)) {
+                    treeAbort.push(
+                        `fox1Sequel: deferred=survivalMesh cov=${Number.isFinite(Number(coverInfo.distance)) ? Number(coverInfo.distance).toFixed(1) : 'n/a'} fwdY=${Number.isFinite(fwdY) ? fwdY.toFixed(2) : 'n/a'}`
+                    );
+                }
+                return action;
+            }
             const wp = (ctx.survivalWp && ctx.survivalWp.ok) ? ctx.survivalWp : ctx.survivalWpHint;
             const climbBias = Math.max(Number(wp && wp.climbBias) || 0, (wp && wp.forwardClimb) ? 0.4 : 0);
             const side = (wp && wp.preferredSide)
@@ -730,7 +1079,11 @@ window.AirArenaAI = {
         const tree = (action.debug && Array.isArray(action.debug.tree)) ? action.debug.tree : null;
         const committingFox1 =
             missileType === 'fox1' &&
-            (action.queueAction === 'missile' || !!action.powerPylons);
+            (
+                action.queueAction === 'missile' ||
+                !!action.powerPylons ||
+                action.state === 'missileAttack'
+            );
 
         // Don't dual-salvo SARH while illuminating.
         if (action.queueAction === 'missile' && missileType === 'fox1' && !doctrine.dualSalvoOk) {
@@ -765,38 +1118,143 @@ window.AirArenaAI = {
 
         const needHold = doctrine.illuminateHold && (inFlight || committingFox1);
         const hardAbort = this.isFox1IlluminateHardAbort(action, team, ctx);
+        const stickHold = needHold ? this.buildFox1HoldStick(teamId, team, ctx, doctrine) : null;
+        const prevState = action.state;
+        const coverInfo = ctx.coverInfo || {
+            distance: ctx.coverDistance,
+            roofClearance: ctx.roofClearance,
+            forwardDistance: ctx.coverForwardDistance,
+            collisionRisk: ctx.collisionRisk
+        };
+        const fwdY = ctx.selfForward && Number.isFinite(Number(ctx.selfForward.y))
+            ? Number(ctx.selfForward.y)
+            : Number(ctx.forwardY);
+        const applyFox1HoldState = (opts = {}) => {
+            const stick = stickHold || this.buildFox1HoldStick(teamId, team, ctx, doctrine);
+            const survival = !!opts.survivalBlend;
+            // Survival: keep most gun-lead; allow mild lateral away from mesh (A2).
+            if (survival) {
+                let breakSign = Math.sign(Number(action.joyX) || 0) || 1;
+                if (ctx.localToEnemy && Number.isFinite(ctx.localToEnemy.x)) {
+                    breakSign = ctx.localToEnemy.x >= 0 ? -1 : 1;
+                }
+                action.joyX = this.clamp(stick.joyX * 0.72 + breakSign * 0.22, -0.72, 0.72);
+                action.joyY = this.clamp(
+                    Math.max(Number(stick.joyY) || 0, Number(action.joyY) || 0, fwdY < -0.35 ? 0.28 : 0.12),
+                    -0.2,
+                    0.55
+                );
+            } else {
+                action.joyX = stick.joyX;
+                action.joyY = stick.joyY;
+            }
+            action.roll = this.clamp(action.joyX * Math.PI / 6, -Math.PI / 6, Math.PI / 6);
+            if (action.throttle >= 5) action.throttle = 4;
+            if (action.queueAction === 'missile' && inFlight) {
+                action.queueAction = 'none';
+                action.singleMissile = false;
+            }
+            if (!action.debug) action.debug = {};
+            action.debug.fox1IlluminateHold = 1;
+            action.debug.fox1InFlight = inFlight ? 1 : 0;
+            action.debug.fox1Committing = committingFox1 ? 1 : 0;
+            action.debug.fox1GunLead = stick.usedLead ? 1 : 0;
+            if (opts.survivalBlend) action.debug.fox1IlluminateSurvivalBlend = 1;
+            if (prevState && prevState !== 'fox1Illuminate' && prevState !== 'fox1IlluminateBreak') {
+                action.debug.fox1OverrodeState = prevState;
+            }
+            action.state = 'fox1Illuminate';
+            action.missileType = 'fox1';
+            if (!action.debug.aiMissileType) action.debug.aiMissileType = 'fox1';
+            action.statusText = survival
+                ? `NPC: FOX-1 照射保鼻脫險 ${Number.isFinite(angleDeg) ? Math.floor(angleDeg) : '?'}°`
+                : (inFlight
+                    ? `NPC: FOX-1 照射保持 ${Number.isFinite(angleDeg) ? Math.floor(angleDeg) : '?'}°`
+                    : `NPC: FOX-1 發射照射 ${Number.isFinite(angleDeg) ? Math.floor(angleDeg) : '?'}°`);
+            action.reason = survival
+                ? 'SARH: survival-blend nose hold while FOX-1 in flight'
+                : (inFlight
+                    ? 'SARH: gun-like nose hold while FOX-1 in flight'
+                    : 'SARH: commit illuminate hold on FOX-1 launch');
+            if (tree) {
+                tree.push(
+                    `fox1Doctrine: illuminateHold=1 inFlight=${inFlight ? 1 : 0} commit=${committingFox1 ? 1 : 0}` +
+                    ` survival=${survival ? 1 : 0} lead=${stick.usedLead ? 1 : 0} overrode=${prevState || 'n/a'}`
+                );
+            }
+            return action;
+        };
+
         if (needHold && hardAbort) {
             if (!action.debug) action.debug = {};
             action.debug.fox1IlluminateAbort = 1;
-            if (tree) tree.push(`fox1Doctrine: illuminateAbort=1 state=${action.state || '?'}`);
-            return action;
+            if (tree) tree.push(`fox1Doctrine: illuminateAbort=blend state=${prevState || '?'}`);
+            // A2: do not bare-return combat stick — keep SARH nose with mild survival blend.
+            return applyFox1HoldState({ survivalBlend: true });
         }
         if (needHold && !hardAbort) {
-            const stick = this.buildFox1HoldStick(teamId, team, ctx, doctrine);
-            const prevState = action.state;
-            const coverInfo = ctx.coverInfo || {
-                distance: ctx.coverDistance,
-                roofClearance: ctx.roofClearance,
-                forwardDistance: ctx.coverForwardDistance,
-                collisionRisk: ctx.collisionRisk
-            };
-            const fwdY = ctx.selfForward && Number.isFinite(Number(ctx.selfForward.y))
-                ? Number(ctx.selfForward.y)
-                : Number(ctx.forwardY);
+            const stick = stickHold;
             // T109/P1: soft-yield illuminate dive into urban roofs — climb-extend; lock keeps sequel.
+            // When FOX-1 already in flight: keep gun-lead nose (ban climb-extend steal) unless mesh smash.
             const illuminateYieldLock = teamId
                 ? this.getFox1BakeYieldLock(teamId, Number(ctx.turnNo) || 1)
                 : { active: false };
-            if (illuminateYieldLock.active || this.shouldSoftYieldCombatForBakeRoute(coverInfo, {
+            const wantBakeYield =
+                !inFlight &&
+                this.shouldSoftYieldCombatForBakeRoute(coverInfo, {
+                    forwardY: fwdY,
+                    altitude: ctx.altitude,
+                    facadeClosing: ctx.facadeClosing,
+                    bakeCorridor: ctx.bakeCorridor,
+                    survivalWp: ctx.survivalWp,
+                    survivalWpHint: ctx.survivalWpHint,
+                    fox1Combat: true,
+                    bakeYieldLock: !!illuminateYieldLock.active,
+                    hardContact: !!ctx.hardBuildingContact || !!ctx.hardContact,
+                    enemyDistance: Number(ctx.distance),
+                    angleDeg: Number(ctx.angleDeg),
+                    localZ: ctx.localToEnemy && Number(ctx.localToEnemy.z),
+                    inferWeaponWindow: true,
+                    weaponWindowOpen: this.isWeaponWindowOpen({
+                        distance: Number(ctx.distance),
+                        angleDeg: Number(ctx.angleDeg),
+                        localZ: ctx.localToEnemy && Number(ctx.localToEnemy.z)
+                    }, ctx.tuning || this.getTuning())
+                });
+            if (inFlight && this.shouldAbortFox1ClimbExtend(coverInfo, {
                 forwardY: fwdY,
                 altitude: ctx.altitude,
-                facadeClosing: ctx.facadeClosing,
-                bakeCorridor: ctx.bakeCorridor,
-                survivalWp: ctx.survivalWp,
-                survivalWpHint: ctx.survivalWpHint,
-                fox1Combat: true,
-                bakeYieldLock: !!illuminateYieldLock.active
+                coverDistance: coverInfo.distance,
+                coverForwardDistance: coverInfo.forwardDistance,
+                collisionRisk: coverInfo.collisionRisk
             })) {
+                if (!action.debug) action.debug = {};
+                action.debug.fox1IlluminateSurvivalAbort = 1;
+                if (tree) {
+                    tree.push(
+                        `fox1Doctrine: deferred=survivalMeshInFlight cov=${Number.isFinite(Number(coverInfo.distance)) ? Number(coverInfo.distance).toFixed(1) : 'n/a'} fwdY=${Number.isFinite(fwdY) ? fwdY.toFixed(2) : 'n/a'} blend=1`
+                    );
+                }
+                return applyFox1HoldState({ survivalBlend: true });
+            }
+            if (wantBakeYield) {
+                if (this.shouldAbortFox1ClimbExtend(coverInfo, {
+                    forwardY: fwdY,
+                    altitude: ctx.altitude,
+                    coverDistance: coverInfo.distance,
+                    coverForwardDistance: coverInfo.forwardDistance,
+                    collisionRisk: coverInfo.collisionRisk
+                })) {
+                    if (!action.debug) action.debug = {};
+                    action.debug.fox1IlluminateSurvivalAbort = 1;
+                    if (tree) {
+                        tree.push(
+                            `fox1Doctrine: deferred=survivalMesh cov=${Number.isFinite(Number(coverInfo.distance)) ? Number(coverInfo.distance).toFixed(1) : 'n/a'} fwdY=${Number.isFinite(fwdY) ? fwdY.toFixed(2) : 'n/a'} blend=1`
+                        );
+                    }
+                    // Committing launch still forces illuminate (A1); survival blend if mesh tight.
+                    return applyFox1HoldState({ survivalBlend: true });
+                }
                 const wp = (ctx.survivalWp && ctx.survivalWp.ok) ? ctx.survivalWp : ctx.survivalWpHint;
                 const climbBias = Math.max(Number(wp && wp.climbBias) || 0, (wp && wp.forwardClimb) ? 0.4 : 0);
                 const side = (wp && wp.preferredSide)
@@ -823,10 +1281,13 @@ window.AirArenaAI = {
                 action.debug.fox1IlluminateHold = 1;
                 action.debug.fox1BakeRouteYield = 1;
                 action.debug.fox1InFlight = inFlight ? 1 : 0;
+                action.debug.fox1Committing = committingFox1 ? 1 : 0;
                 if (prevState && prevState !== 'fox1Illuminate') {
                     action.debug.fox1OverrodeState = prevState;
                 }
                 action.state = 'fox1Illuminate';
+                action.missileType = 'fox1';
+                if (!action.debug.aiMissileType) action.debug.aiMissileType = 'fox1';
                 action.statusText = `NPC: FOX-1 照射爬升讓路 ${Number.isFinite(angleDeg) ? Math.floor(angleDeg) : '?'}°`;
                 action.reason = 'SARH: soft-yield climb-extend while illuminating (urban dive sink)';
                 if (teamId) {
@@ -861,10 +1322,26 @@ window.AirArenaAI = {
                 if (ctx.localToEnemy && Number.isFinite(ctx.localToEnemy.x)) {
                     breakSign = ctx.localToEnemy.x >= 0 ? 1 : -1;
                 }
-                const beam = ctx.inboundFox1 || ctx.underSarhPaint || ctx.shouldChaffNow ? 0.62 : 0.42;
-                action.joyX = this.clamp(stick.joyX * 0.28 + breakSign * beam, -0.95, 0.95);
-                action.joyY = this.clamp(stick.joyY * 0.55 + 0.08, -0.35, 0.45);
-                action.roll = this.clamp(action.joyX * Math.PI / 5, -Math.PI / 5, Math.PI / 5);
+                // T150: live inbound / paint while illuminating — break earlier than soft beam hold.
+                const distIllum = Number.isFinite(ctx.distance) ? ctx.distance : Infinity;
+                const hardIn =
+                    (!!ctx.actualMissileThreat && distIllum < 140) ||
+                    (!!ctx.underSarhPaint && (!!ctx.inboundFox1 || !!ctx.actualMissileThreat) && distIllum < 160) ||
+                    (!!ctx.inboundFox1 && !!ctx.shouldChaffNow && distIllum < 150);
+                // Own FOX-1 in flight: keep most gun-lead on target; only peel for hard inbound.
+                const noseKeep = inFlight && !hardIn ? 0.72 : (hardIn ? 0.12 : 0.28);
+                const beam = hardIn
+                    ? 0.92
+                    : (inFlight
+                        ? 0.28
+                        : (ctx.inboundFox1 || ctx.underSarhPaint || ctx.shouldChaffNow ? 0.62 : 0.42));
+                action.joyX = this.clamp(stick.joyX * noseKeep + breakSign * beam * (inFlight && !hardIn ? 0.35 : 1), -0.98, 0.98);
+                action.joyY = this.clamp(
+                    stick.joyY * (inFlight && !hardIn ? 0.85 : 0.45) + (hardIn ? 0.14 : 0.08),
+                    -0.35,
+                    0.45
+                );
+                action.roll = this.clamp(action.joyX * Math.PI / 5, -Math.PI / 4.5, Math.PI / 4.5);
                 if (action.throttle >= 5) action.throttle = 4;
                 if (ctx.shouldChaffNow) action.queueAction = 'chaff';
                 else if (ctx.shouldFlareNow) action.queueAction = 'flare';
@@ -874,50 +1351,32 @@ window.AirArenaAI = {
                 }
                 if (!action.debug) action.debug = {};
                 action.debug.fox1IlluminateSoftBreak = 1;
+                if (hardIn) action.debug.fox1IlluminateHardInbound = 1;
                 action.debug.fox1InFlight = inFlight ? 1 : 0;
                 action.debug.fox1OverrodeState = prevState && prevState !== 'fox1IlluminateBreak' ? prevState : action.debug.fox1OverrodeState;
-                action.state = 'fox1IlluminateBreak';
+                // A4: still in-flight → stay on illuminate family (break), never drop to bare combat.
+                action.state = hardIn ? 'fox1IlluminateBreak' : 'fox1Illuminate';
+                action.missileType = 'fox1';
+                if (!action.debug.aiMissileType) action.debug.aiMissileType = 'fox1';
                 action.statusText = ctx.shouldChaffNow
                     ? 'NPC: FOX-1 照射邊beam邊箔條'
-                    : (ctx.shouldFlareNow ? 'NPC: FOX-1 照射邊beam邊熱焰' : 'NPC: FOX-1 照射軟beam自衛');
-                action.reason = 'SARH: soft beam self-defense while own FOX-1 in flight';
+                    : (ctx.shouldFlareNow
+                        ? 'NPC: FOX-1 照射邊beam邊熱焰'
+                        : (hardIn ? 'NPC: FOX-1 照射硬切離自衛' : 'NPC: FOX-1 照射軟beam自衛'));
+                action.reason = hardIn
+                    ? 'SARH: hard break self-defense while illuminating (inbound close)'
+                    : (inFlight
+                        ? 'SARH: soft beam self-defense while own FOX-1 in flight'
+                        : 'SARH: soft beam while committing FOX-1');
                 if (tree) {
                     tree.push(
-                        `fox1Doctrine: illuminateSoftBreak=1 chaff=${ctx.shouldChaffNow ? 1 : 0} flare=${ctx.shouldFlareNow ? 1 : 0} paint=${ctx.underSarhPaint ? 1 : 0}`
+                        `fox1Doctrine: illuminateSoftBreak=1 hardIn=${hardIn ? 1 : 0} chaff=${ctx.shouldChaffNow ? 1 : 0} flare=${ctx.shouldFlareNow ? 1 : 0} paint=${ctx.underSarhPaint ? 1 : 0} keepIllum=1`
                     );
                 }
                 return action;
             }
-            action.joyX = stick.joyX;
-            action.joyY = stick.joyY;
-            action.roll = stick.roll;
-            if (action.throttle >= 5) action.throttle = 4;
-            // Keep illuminating; drop breakaway / second-shot queues.
-            if (action.queueAction === 'missile' && inFlight) {
-                action.queueAction = 'none';
-                action.singleMissile = false;
-            }
-            if (!action.debug) action.debug = {};
-            action.debug.fox1IlluminateHold = 1;
-            action.debug.fox1InFlight = inFlight ? 1 : 0;
-            action.debug.fox1GunLead = stick.usedLead ? 1 : 0;
-            if (prevState && prevState !== 'fox1Illuminate') {
-                action.debug.fox1OverrodeState = prevState;
-            }
-            if (inFlight) {
-                action.state = 'fox1Illuminate';
-                action.statusText = `NPC: FOX-1 照射保持 ${Number.isFinite(angleDeg) ? Math.floor(angleDeg) : '?'}°`;
-                action.reason = 'SARH: gun-like nose hold while FOX-1 in flight';
-            } else if (action.statusText && String(action.statusText).indexOf('照射') < 0) {
-                action.statusText = `${action.statusText}｜SARH照射`;
-            }
-            if (tree) {
-                tree.push(
-                    `fox1Doctrine: illuminateHold=1 inFlight=${inFlight ? 1 : 0} lead=${stick.usedLead ? 1 : 0}` +
-                    ` overrode=${prevState || 'n/a'} joy=${stick.joyX.toFixed(2)},${stick.joyY.toFixed(2)}`
-                );
-            }
-            return action;
+            // A1: force fox1Illuminate on commit and in-flight (open sky included).
+            return applyFox1HoldState({ survivalBlend: false });
         }
 
         // Post-illuminate: if another FOX-1 remains, open range before next wave.
@@ -1105,12 +1564,384 @@ window.AirArenaAI = {
         const throttle = openSoft
             ? (angleDeg > 80 ? 3 : 4)
             : ((angleDeg > 55 || fwdY > 0.45) ? 2 : 3);
+        // Soft lead blend (lookahead) so align does not ignore predicted track.
+        const leadW = Number(ctx.leadWeight);
+        const leadHx = Number(ctx.leadHx);
+        const leadHy = Number(ctx.leadHy);
+        if (Number.isFinite(leadW) && leadW > 0.05 && Number.isFinite(leadHx)) {
+            const w = Math.min(0.55, leadW);
+            alignJoyX = this.clamp(alignJoyX * (1 - w) + leadHx * w, -turnCap, turnCap);
+            if (Number.isFinite(leadHy)) {
+                joyY = this.clamp(joyY * (1 - w * 0.6) + leadHy * (w * 0.6), -0.55, 0.45);
+            }
+        }
         return {
             joyX: this.clamp(alignJoyX, -1, 1),
             joyY: this.clamp(joyY, -0.75, fwdY < -0.28 ? 0.62 : 0.42),
             roll: this.clamp(alignJoyX * Math.PI / (openSoft ? 5 : 3.2), -Math.PI / 3.2, Math.PI / 3.2),
             throttle
         };
+    },
+
+    /**
+     * Lookahead blend weight: full on low risk; reduced on medium (dense-urban default);
+     * tiny only when high risk but cover already far.
+     */
+    resolveLookaheadWeight(coverInfo = {}, opts = {}, tuning = this.getTuning()) {
+        if (opts.stalled) return 0;
+        const ap = Number(opts.ap);
+        const lowAp = Number(tuning.lowAp) || 65;
+        if (Number.isFinite(ap) && ap <= lowAp + 6) return 0;
+        const alt = Number(opts.altitude);
+        if (Number.isFinite(alt) && alt <= 26) return 0;
+        if (opts.loopTrap) return 0;
+        if (opts.hardContact) return 0;
+        const risk = coverInfo.collisionRisk || 'low';
+        const cov = Number(coverInfo.distance);
+        if (risk === 'high') {
+            const farNeed = Number(tuning.lookaheadHighFarCoverDist);
+            const far = Number.isFinite(farNeed) ? farNeed : 28;
+            if (Number.isFinite(cov) && cov >= far) {
+                const w = Number(tuning.lookaheadHighFarWeight);
+                return Number.isFinite(w) ? Math.max(0, Math.min(0.4, w)) : 0.22;
+            }
+            return 0;
+        }
+        if (risk === 'medium') {
+            const w = Number(tuning.lookaheadMediumWeight);
+            return Number.isFinite(w) ? Math.max(0, Math.min(0.85, w)) : 0.52;
+        }
+        return 1;
+    },
+
+    /**
+     * Soft-yield: when already in weapon envelope during alignFirst, allow fire instead of queue none.
+     * Gun-close uses a wider aspect window than missile (dump T140/T150: align owns turns at ~50m
+     * with ang often past the old 52° soft gate).
+     */
+    resolveAlignSoftFire(ctx = {}, tuning = this.getTuning()) {
+        if (!(Number(tuning.alignSoftFire) > 0)) {
+            return { queueAction: 'none', weapon: null, note: 'off' };
+        }
+        if (ctx.lineOfSightBlocked || ctx.openingTooClose) {
+            return { queueAction: 'none', weapon: null, note: 'blocked' };
+        }
+        const dist = Number(ctx.distance);
+        const ang = Number(ctx.angleDeg);
+        const lz = Number(ctx.localZ);
+        if (!Number.isFinite(dist) || !Number.isFinite(ang)) {
+            return { queueAction: 'none', weapon: null, note: 'na' };
+        }
+        const gunR = this.gunRangeOr(tuning);
+        const gunA = Number(tuning.gunAngle) || 22;
+        const mslMin = this.missileMinOr(tuning);
+        const mslMax = this.missileMaxOr(tuning);
+        const mslA = Number(tuning.missileAngle) || 27;
+        const softAng = Number.isFinite(Number(tuning.alignSoftFireAngMax))
+            ? Number(tuning.alignSoftFireAngMax)
+            : 34;
+        const gunAngMax = Number.isFinite(Number(tuning.alignSoftFireGunAngMax))
+            ? Number(tuning.alignSoftFireGunAngMax)
+            : 92;
+        const softLz = Number.isFinite(Number(tuning.alignSoftFireLocalZMin))
+            ? Number(tuning.alignSoftFireLocalZMin)
+            : 0.18;
+        const gunLzMin = Number.isFinite(Number(tuning.alignSoftFireGunLocalZMin))
+            ? Number(tuning.alignSoftFireGunLocalZMin)
+            : 0.06;
+        const lzVal = Number.isFinite(lz) ? lz : 1;
+        const knifeDist = Number.isFinite(Number(tuning.alignSoftFireKnifeDist))
+            ? Number(tuning.alignSoftFireKnifeDist)
+            : 32;
+        const knifeAng = Number.isFinite(Number(tuning.alignSoftFireKnifeAngMax))
+            ? Number(tuning.alignSoftFireKnifeAngMax)
+            : 98;
+        // Missiles spawn on nose; soft msl must stay near seeker cone (guns stay wide).
+        // Weapon knife: tighten soft msl (was mslA*1.05 / lz 0.72 → waste FOX-2 off-boresight).
+        const mslSoftAng = Math.min(softAng, Math.max(mslA * 1.02, mslA + 1));
+        const mslSoftLz = Math.max(softLz, 0.78);
+        const inGunBand = dist <= gunR + 12;
+        const preferMsl = !!(ctx.preferMissile || ctx.rangeMode === 'missile');
+        // Knife: do not soft-queue FOX when head-on merge will waste the shot.
+        const frontMergeWaste =
+            !!ctx.frontAspectHardBan ||
+            (Number(ctx.headOnFactor) > 0.55 && Number(ctx.predictedSeparation) < 36);
+
+        // Knife: close merge — spray gun even at ~90° off (SOFT B stuck align@85°/ed24).
+        if (dist <= knifeDist && ang <= knifeAng && lzVal >= -0.05) {
+            if (
+                preferMsl &&
+                !frontMergeWaste &&
+                ctx.hasArmedMissile &&
+                dist >= mslMin &&
+                dist <= mslMax &&
+                ang <= mslSoftAng &&
+                lzVal >= mslSoftLz
+            ) {
+                return { queueAction: 'missile', weapon: 'missile', note: 'mslKnife' };
+            }
+            return { queueAction: 'gun', weapon: 'gun', note: 'gunKnife' };
+        }
+
+        // Knife gun while aligning: wider off-boresight than seeker shots.
+        if (inGunBand && ang <= gunAngMax && lzVal >= gunLzMin) {
+            // Prefer missile only when already nearly on-seeker; otherwise spray gun.
+            if (
+                preferMsl &&
+                !frontMergeWaste &&
+                ctx.hasArmedMissile &&
+                dist >= mslMin &&
+                dist <= mslMax &&
+                ang <= mslSoftAng &&
+                lzVal >= mslSoftLz
+            ) {
+                return { queueAction: 'missile', weapon: 'missile', note: 'mslClose' };
+            }
+            return { queueAction: 'gun', weapon: 'gun', note: ang <= gunA * 1.45 ? 'gun' : 'gunWide' };
+        }
+
+        // Standoff soft fire (missile / near-gun).
+        if (ang > softAng || lzVal < softLz) {
+            return { queueAction: 'none', weapon: null, note: 'aspect' };
+        }
+        if (
+            preferMsl &&
+            !frontMergeWaste &&
+            ctx.hasArmedMissile &&
+            dist >= mslMin &&
+            dist <= mslMax &&
+            ang <= mslSoftAng &&
+            lzVal >= mslSoftLz
+        ) {
+            return { queueAction: 'missile', weapon: 'missile', note: 'msl' };
+        }
+        if (dist <= gunR + 8 && ang <= gunA * 1.6) {
+            return { queueAction: 'gun', weapon: 'gun', note: 'gun' };
+        }
+        if (
+            preferMsl &&
+            ctx.hasAnyMissile &&
+            !ctx.hasArmedMissile &&
+            dist >= mslMin * 0.85 &&
+            dist <= mslMax
+        ) {
+            return { queueAction: 'none', weapon: 'missile', powerPylons: true, note: 'power' };
+        }
+        return { queueAction: 'none', weapon: null, note: 'hold' };
+    },
+
+    /**
+     * Typed CM while building-escaping (M24): FOX-1/paint → chaff; IR inbound → flare.
+     * Does not change escape stick geometry — only queueAction / state label.
+     */
+    resolveEscapeCountermeasure(ctx = {}) {
+        const alt = Number(ctx.altitude);
+        const altOk = !Number.isFinite(alt) || alt >= 14;
+        if (!altOk) return null;
+        const chaff =
+            !!ctx.shouldChaffNow &&
+            !!ctx.canUseChaff &&
+            !!ctx.chaffCooldownReady &&
+            !ctx.shouldSaveChaff;
+        if (chaff) {
+            return {
+                queueAction: 'chaff',
+                state: 'defensiveChaff',
+                tag: 'chaffWhileEscape',
+                statusPrefix: '避撞干擾絲',
+                reasonSuffix: 'chaff while building-escaping'
+            };
+        }
+        const flare =
+            !!ctx.actualMissileThreat &&
+            !!ctx.canUseFlare &&
+            !!ctx.flareCooldownReady &&
+            !ctx.shouldSaveFlare &&
+            !ctx.lineOfSightBlocked;
+        if (flare) {
+            return {
+                queueAction: 'flare',
+                state: 'defensiveFlare',
+                tag: 'flareWhileEscape',
+                statusPrefix: '避撞熱焰',
+                reasonSuffix: 'flare while building-escaping'
+            };
+        }
+        return null;
+    },
+
+    /** True when enemy is inside a useful shoot/align window (softYield bake should not thrash). */
+    isWeaponWindowOpen(ctx = {}, tuning = this.getTuning()) {
+        const dist = Number(ctx.distance);
+        const ang = Number(ctx.angleDeg);
+        if (!Number.isFinite(dist) || dist <= 0) return false;
+        const gunR = this.gunRangeOr(tuning);
+        const mslMin = this.missileMinOr(tuning);
+        const mslMax = this.missileMaxOr(tuning);
+        const inGun = dist <= gunR + 12;
+        const inMsl = dist >= mslMin * 0.9 && dist <= mslMax * 1.05;
+        if (!inGun && !inMsl) return false;
+        const softAng = Number.isFinite(Number(tuning.alignSoftFireAngMax))
+            ? Number(tuning.alignSoftFireAngMax)
+            : 68;
+        const gunAngMax = Number.isFinite(Number(tuning.alignSoftFireGunAngMax))
+            ? Number(tuning.alignSoftFireGunAngMax)
+            : 78;
+        const angCap = inGun ? gunAngMax : softAng;
+        if (Number.isFinite(ang) && ang > angCap) return false;
+        const lz = Number(ctx.localZ);
+        const gunLzMin = Number.isFinite(Number(tuning.alignSoftFireGunLocalZMin))
+            ? Number(tuning.alignSoftFireGunLocalZMin)
+            : 0.10;
+        const softLz = Number.isFinite(Number(tuning.alignSoftFireLocalZMin))
+            ? Number(tuning.alignSoftFireLocalZMin)
+            : 0.22;
+        if (Number.isFinite(lz) && lz < (inGun ? gunLzMin : softLz)) return false;
+        return true;
+    },
+
+    /**
+     * Soft reclaim score when binary handoff is false but contact + cover are borderline open.
+     * Never reclaim true undercroft / hardContact / dirt glue.
+     */
+    scoreEngageHandoffReclaim(coverInfo = {}, opts = {}) {
+        const tuning = opts.tuning || this.getTuning();
+        if (!(Number(tuning.engageHandoffSoftReclaim) > 0)) {
+            return { ok: false, score: 0, note: 'off' };
+        }
+        const hardContact = !!(opts.hardContact || this.isHardBuildingContact(coverInfo));
+        const trueUndercroft = this.isTrueUnderRoof(coverInfo, { ...opts, hardContact });
+        if (hardContact || trueUndercroft) {
+            return { ok: false, score: 0, note: 'hardUrban' };
+        }
+        const lane = opts.altitudeLane && opts.altitudeLane.lane
+            ? String(opts.altitudeLane.lane)
+            : String(opts.lane || '');
+        if (lane === 'dirt' && Number(coverInfo.distance) < 10) {
+            return { ok: false, score: 0, note: 'dirt' };
+        }
+        if (!opts.combatContact) {
+            return { ok: false, score: 0, note: 'noContact' };
+        }
+        const risk = coverInfo.collisionRisk || 'low';
+        const dist = Number(coverInfo.distance);
+        const fwd = Number(coverInfo.forwardDistance);
+        const fy = Number(opts.forwardY);
+        const alt = Number(opts.altitude);
+        let score = 0.35;
+        if (opts.combatContact) score += 0.22;
+        if (risk === 'low') score += 0.22;
+        else if (risk === 'medium') score += 0.08;
+        else score -= 0.12;
+        if (Number.isFinite(dist)) {
+            if (dist >= 22) score += 0.18;
+            else if (dist >= 14) score += 0.1;
+            else if (dist < 8) score -= 0.25;
+        }
+        if (Number.isFinite(fwd) && fwd > 0 && fwd < 12 && risk !== 'low') score -= 0.2;
+        if (Number.isFinite(fy) && fy < -0.28 && Number.isFinite(alt) && alt < 52) score -= 0.28;
+        else if (Number.isFinite(fy) && fy > 0.05) score += 0.08;
+        if (opts.aiMapClearAbove || opts.aiMapSkyOpen) score += 0.1;
+        const min = Number(tuning.engageHandoffSoftScoreMin);
+        const need = Number.isFinite(min) ? min : 0.58;
+        return {
+            ok: score >= need,
+            score,
+            note: score >= need ? 'softReclaim' : 'low'
+        };
+    },
+
+    /**
+     * Binary handoff OR soft reclaim (contact×cover). Never soft-reclaims hardContact/undercroft/dirt.
+     */
+    resolveEngageHandoffDefer(coverInfo = {}, opts = {}, tree = null) {
+        if (this.shouldHandoffEscapeToEngage(coverInfo, opts)) {
+            if (Array.isArray(tree)) tree.push('engageHandoff: binary=1');
+            return { ok: true, tag: 'binary' };
+        }
+        const soft = this.scoreEngageHandoffReclaim(coverInfo, opts);
+        if (soft.ok) {
+            if (Array.isArray(tree)) {
+                tree.push(`engageHandoff: softReclaim=1 score=${soft.score.toFixed(2)}`);
+            }
+            return { ok: true, tag: 'soft', score: soft.score };
+        }
+        return { ok: false, tag: soft.note || 'hold', score: soft.score };
+    },
+
+    /** Apply airspace/band soft blends onto a chosen combat action (never on hard escape). */
+    applyDecideSoftHints(action, hints = {}, tree = null) {
+        if (!action || !hints) return action;
+        const hardStates = new Set([
+            'obstacleEmergencyEscape',
+            'terrainEscape',
+            'emergencyPullUp',
+            'safetyEmbedPushOut',
+            'safetyCanyonDivePull',
+            'safetyGroundPull',
+            'safetyGroundPullLat',
+            'airspaceAvoid',
+            'altitudeBandLevelOut',
+            'postGroundClimbOut'
+        ]);
+        if (hardStates.has(action.state)) return action;
+        const outTree = (action.debug && Array.isArray(action.debug.tree))
+            ? action.debug.tree
+            : (Array.isArray(tree) ? tree : null);
+        const blend = hints.airspaceBlend;
+        if (blend && Number.isFinite(Number(blend.joyX))) {
+            const bx = Number(blend.joyX);
+            const by = Number.isFinite(Number(blend.joyY)) ? Number(blend.joyY) : 0;
+            const w = Number.isFinite(Number(blend.weight)) ? Number(blend.weight) : 0.35;
+            action.joyX = this.clamp(
+                (Number(action.joyX) || 0) * (1 - w) + bx * w,
+                -1,
+                1
+            );
+            if (by < 0 && (Number(action.joyY) || 0) > by) {
+                action.joyY = this.clamp(
+                    (Number(action.joyY) || 0) * (1 - w * 0.7) + by * (w * 0.7),
+                    -0.55,
+                    0.55
+                );
+            }
+            if (outTree && !outTree.some((l) => String(l).indexOf('airspaceSoftBlend: w=') === 0)) {
+                outTree.push(
+                    `airspaceSoftBlend: w=${w.toFixed(2)} joyX=${Number(action.joyX).toFixed(2)} joyY=${Number(action.joyY).toFixed(2)} clear=${blend.clear != null ? blend.clear : 'n/a'}`
+                );
+            }
+            if (!action.debug) action.debug = {};
+            action.debug.airspaceSoftBlend = 1;
+        }
+        const band = hints.bandSoftCombat;
+        if (band && Number.isFinite(Number(band.joyY))) {
+            const by = Number(band.joyY);
+            const w = Number.isFinite(Number(band.weight)) ? Number(band.weight) : 0.4;
+            if (by < 0) {
+                action.joyY = this.clamp(
+                    Math.min(Number(action.joyY) || 0, (Number(action.joyY) || 0) * (1 - w) + by * w),
+                    -0.55,
+                    0.55
+                );
+            }
+            if (Number.isFinite(Number(band.joyX))) {
+                const bx = Number(band.joyX);
+                const wx = Math.min(0.55, w * 0.85);
+                action.joyX = this.clamp(
+                    (Number(action.joyX) || 0) * (1 - wx) + bx * wx,
+                    -1,
+                    1
+                );
+            }
+            if (outTree && !outTree.some((l) => String(l).indexOf('bandSoftCombat: w=') === 0)) {
+                outTree.push(
+                    `bandSoftCombat: w=${w.toFixed(2)} joyY=${Number(action.joyY).toFixed(2)} joyX=${Number(action.joyX).toFixed(2)} excess=${band.excess != null ? band.excess : 'n/a'}${band.far ? ' far=1' : ''}${band.radial ? ' radial=1' : ''}`
+                );
+            }
+            if (!action.debug) action.debug = {};
+            action.debug.bandSoftCombat = 1;
+        }
+        return action;
     },
 
     // AB (5) cuts turn rate; steep dives need MIL/ECO throttle for pitch authority.
@@ -1247,8 +2078,343 @@ window.AirArenaAI = {
     },
 
     /**
+     * P0/T150 → soft rebalance: ban only true undercroft / closing-into-roof,
+     * not bare beside-tall AABB (roof&lt;0 at range) which starved engagement.
+     * opts.forMask: slightly wider — never advance mask under deep negative roof.
+     */
+    isNegativeRoofCruiseBan(coverInfo = {}, opts = {}) {
+        const roof = Number(coverInfo.roofClearance != null ? coverInfo.roofClearance : opts.roofClearance);
+        const dist = Number(coverInfo.distance != null ? coverInfo.distance : opts.coverDistance);
+        const fwd = Number(
+            coverInfo.forwardDistance != null ? coverInfo.forwardDistance : opts.forwardDistance
+        );
+        const risk = String(coverInfo.collisionRisk || opts.collisionRisk || 'low');
+        const fy = Number(opts.forwardY);
+        const choke = coverInfo.hardChokeKind || opts.hardChokeKind || null;
+        const earlyCov = Number(this.EARLY_UNDERCROFT_COV) || 14;
+        const forMask = !!opts.forMask;
+
+        if (choke === 'tableUndercroft' || choke === 'tightUndercroft') {
+            if (!Number.isFinite(dist) || dist < 48) return 'tableUndercroft';
+        }
+        // Early undercroft: already under slab volume with tight cover.
+        if (Number.isFinite(roof) && roof < -0.8 && Number.isFinite(dist) && dist < earlyCov) {
+            return 'earlyUndercroft';
+        }
+        // Mask ingress under deep negative roof nearby — always refuse.
+        if (forMask && Number.isFinite(roof) && roof < -2 && Number.isFinite(dist) && dist < 36) {
+            return 'aabbRoofProximity';
+        }
+        const closing =
+            (Number.isFinite(fwd) && fwd > 0 && fwd < 20) ||
+            (Number.isFinite(fy) && fy < -0.18) ||
+            risk === 'high' ||
+            (risk === 'medium' && Number.isFinite(dist) && dist < 18);
+        // Approach/engage: only when closing into the roof volume (b2 lag@cov23 roof-22).
+        if (Number.isFinite(roof) && roof < -2 && Number.isFinite(dist) && dist < 28 && closing) {
+            return 'aabbRoofProximity';
+        }
+        // Deep embed pocket without fwd sample.
+        if (Number.isFinite(roof) && roof < -10 && Number.isFinite(dist) && dist < 12) {
+            return 'aabbRoofDeep';
+        }
+        return null;
+    },
+
+    /**
+     * Open-sky facade exit: courtyard ring (T54) OR rim wall with real overhead (T150/T123).
+     * Prefer climb-out / soft bank — not nest lateral / deepNestUnload into the face.
+     * Distinct from true tableUndercroft (deep glue under continuous slab, headroom false-open).
+     */
+    isFacadeBowlOpen(coverInfo = {}, opts = {}) {
+        const info = coverInfo || {};
+        const roof = Number(opts.roofClearance != null ? opts.roofClearance : info.roofClearance);
+        const dist = Number(opts.coverDistance != null ? opts.coverDistance : info.distance);
+        const hr = Number(opts.headroom != null ? opts.headroom : info.headroom);
+        const left = Number(info.corridorLeftClear);
+        const right = Number(info.corridorRightClear);
+        const gap = Number(info.corridorGap);
+        const fwd = Number(
+            opts.coverForwardDistance != null
+                ? opts.coverForwardDistance
+                : (info.forwardDistance != null ? info.forwardDistance : info.corridorFwdClear)
+        );
+        const alt = Number(opts.altitude);
+        const bakeClear = !!(opts.aiMapClearAbove || opts.aiMapSkyOpen || opts.bakeSkyOpen);
+        const choke = info.hardChokeKind || opts.hardChokeKind || null;
+
+        // Include rooftop rim contacts (T123 blue2 ~alt68).
+        if (!(Number.isFinite(alt) && alt >= 10 && alt <= 92)) return false;
+
+        // T150 03:30 red: tableUndercroft + hr=48 false-open → bowlExit climb into slab.
+        // T150 13:23 blue2: bowlExit@cov=23 roof=-22 while tableUndercroft — never climb bowl.
+        if (choke === 'tableUndercroft' || choke === 'tightUndercroft') {
+            if (!bakeClear) return false;
+            if (Number.isFinite(dist) && dist < 42) return false;
+            if (Number.isFinite(roof) && roof < -4) return false;
+        }
+        // Mid cover under slab silhouette: dirt-arrest→bowl climb was glue (T111 blue2).
+        if (
+            Number.isFinite(dist) &&
+            dist < 24 &&
+            Number.isFinite(roof) &&
+            roof < 2 &&
+            !bakeClear
+        ) {
+            return false;
+        }
+        // Classic false-open-above-slab: deep neg roof + glued cover, even with hr≫.
+        if (
+            Number.isFinite(roof) &&
+            roof < -6 &&
+            Number.isFinite(dist) &&
+            dist < 6 &&
+            !bakeClear
+        ) {
+            return false;
+        }
+        // T145: mild neg roof + tight cov + false hr still not a climbable bowl.
+        if (
+            Number.isFinite(roof) &&
+            roof < -2 &&
+            Number.isFinite(dist) &&
+            dist < 12 &&
+            !bakeClear
+        ) {
+            return false;
+        }
+        // T129: deep/mega neg roof @cov≈33–40 still slab silhouette (blue2/red).
+        // Mega AABB roof≪0 must win over bake clearAbove (beside-tall false sky).
+        if (
+            Number.isFinite(roof) &&
+            roof < -20 &&
+            Number.isFinite(dist) &&
+            dist < 48
+        ) {
+            return false;
+        }
+        if (
+            Number.isFinite(roof) &&
+            roof < -10 &&
+            Number.isFinite(dist) &&
+            dist < 42 &&
+            !bakeClear
+        ) {
+            return false;
+        }
+        // Steep dive into cover is never "bowl climb-out" (T145/T150/T129).
+        const fyBowlGate = Number(opts.forwardY);
+        if (
+            Number.isFinite(fyBowlGate) &&
+            fyBowlGate < -0.35 &&
+            Number.isFinite(dist) &&
+            dist < 36
+        ) {
+            return false;
+        }
+
+        // Overhead open enough to climb / ban nest.
+        // hr≥24 alone must NOT open when deep neg roof (false sky above slab).
+        const openOverhead =
+            bakeClear ||
+            (
+                Number.isFinite(hr) &&
+                hr >= 24 &&
+                !(Number.isFinite(roof) && roof < -8 && Number.isFinite(dist) && dist < 42)
+            ) ||
+            (
+                Number.isFinite(hr) &&
+                hr >= 16 &&
+                !(Number.isFinite(roof) && roof < -10 && Number.isFinite(dist) && dist < 8)
+            ) ||
+            (Number.isFinite(roof) && roof >= -1 && Number.isFinite(hr) && hr >= 12) ||
+            (
+                Number.isFinite(roof) &&
+                roof >= -6 &&
+                Number.isFinite(dist) &&
+                dist >= 8 &&
+                Number.isFinite(hr) &&
+                hr >= 14
+            );
+        if (!openOverhead) return false;
+
+        // Collapsed-overhead deep embed stays nest; open-sky wall mash still exits (T123 cov=0 hr=48).
+        if (opts.deepEmbed && Number.isFinite(hr) && hr < 12 && !bakeClear) return false;
+        if (
+            opts.hardContact &&
+            Number.isFinite(dist) &&
+            dist < 2.5 &&
+            Number.isFinite(hr) &&
+            hr < 12 &&
+            !bakeClear
+        ) {
+            return false;
+        }
+
+        const sidesPinched =
+            Number.isFinite(left) && Number.isFinite(right) && left < 10 && right < 10;
+        const gapDead =
+            info.corridorClear !== true &&
+            ((Number.isFinite(gap) && gap < 8) || sidesPinched);
+        const ringPressure =
+            gapDead ||
+            sidesPinched ||
+            (
+                Number.isFinite(fwd) &&
+                fwd > 0 &&
+                fwd < 28 &&
+                Number.isFinite(dist) &&
+                dist < 36 &&
+                Number.isFinite(left) &&
+                Number.isFinite(right) &&
+                left < 14 &&
+                right < 14
+            );
+        // Single rim / wall-mash with open sky (dist may be 0 at impact).
+        const facadeClosing =
+            (Number.isFinite(fwd) && fwd > 0 && fwd < 24 && Number.isFinite(dist) && dist < 42) ||
+            (Number.isFinite(dist) && dist < 30);
+        const besideTall =
+            Number.isFinite(roof) &&
+            roof < 6 &&
+            Number.isFinite(hr) &&
+            hr >= 14;
+        const rimFacade = facadeClosing && besideTall;
+
+        return !!(ringPressure || rimFacade);
+    },
+
+    /**
+     * Soft bank + nose-up when open sky forbids nest unload (climb/nest contention, T123/T150).
+     */
+    applyOpenSkyFacadeExitStick(stick, opts = {}) {
+        if (!stick) return stick;
+        const side = Math.sign(Number(stick.joyX) || opts.side || 1) || 1;
+        const alt = Number(opts.altitude);
+        const dist = Number(opts.coverDistance);
+        const heat = Number(opts.heat) || 0;
+        const tight = Number.isFinite(dist) && dist < 4;
+        stick.joyX = this.clamp(side * (tight ? 0.48 : 0.42), -0.52, 0.52);
+        stick.joyY = Math.max(
+            Number(stick.joyY) || 0,
+            Number.isFinite(alt) && alt < 40 ? 0.52 : 0.42
+        );
+        stick.throttle = opts.energyCritical || heat > 86 || opts.lowEnergyEscape ? 3 : 4;
+        stick.pitchScale = Math.max(Number(stick.pitchScale) || 0, 0.48);
+        stick.diveLevelPull = true;
+        stick.dirtPullFloor = true;
+        stick.rollAuth = Math.PI / 12;
+        stick.navMode = 'openSkyFacadeExit';
+        if (stick.reason && !/openSkyFacadeExit/i.test(String(stick.reason))) {
+            stick.reason = `${stick.reason} | openSkyFacadeExit=1 banNest=1`;
+        } else if (!stick.reason) {
+            stick.reason = 'Open-sky facade exit: soft bank + climb (ban deepNestUnload)';
+        }
+        return stick;
+    },
+
+    /**
+     * Low embed + dirt-arrest but open/near wall: lateral owns stick (T150 23:37 wall-pull death).
+     * True under-slab steep dive into dirt still uses full arrest joyY.
+     */
+    wantsEmbedDirtLateralArrest(coverInfo = {}, opts = {}) {
+        const info = coverInfo || {};
+        const alt = Number(opts.altitude);
+        const fy = Number(opts.forwardY);
+        const hr = Number(opts.headroom != null ? opts.headroom : info.headroom);
+        const dist = Number(opts.coverDistance != null ? opts.coverDistance : info.distance);
+        const fwd = Number(
+            opts.coverForwardDistance != null
+                ? opts.coverForwardDistance
+                : (info.forwardDistance != null ? info.forwardDistance : info.corridorFwdClear)
+        );
+        if (!(Number.isFinite(alt) && alt < 18)) return false;
+        if (!this.wantsSlabDirtArrest(alt, fy, {
+            coverInfo: info,
+            headroom: hr,
+            coverDistance: dist,
+            roofClearance: opts.roofClearance != null ? opts.roofClearance : info.roofClearance,
+            hardChokeKind: opts.hardChokeKind || info.hardChokeKind
+        })) return false;
+        const bakeClear = !!(opts.aiMapClearAbove || opts.aiMapSkyOpen || opts.bakeSkyOpen);
+        const openHr = bakeClear || (Number.isFinite(hr) && hr >= 16);
+        const steep = Number.isFinite(fy) && fy < -0.5;
+        const wallClose =
+            (Number.isFinite(dist) && dist < (steep ? 11 : 8)) ||
+            (Number.isFinite(fwd) && fwd > 0 && fwd < (steep ? 18 : 14));
+        // Open sky / tall headroom while glued to a face → do not yank joyY into the wall.
+        return !!(openHr && wallClose);
+    },
+
+    /** Soft joyY for embedDirtLateral: steep wall-pocket needs more nose-up than flat soft cap. */
+    getEmbedDirtLateralSoftY(altitude, forwardY, opts = {}) {
+        const alt = Number(altitude);
+        const fy = Number(forwardY);
+        const arrestY = this.getSlabDirtArrestJoyY(alt, fy, opts);
+        const steep = Number.isFinite(fy) && fy < -0.45;
+        const verySteep = Number.isFinite(fy) && fy < -0.58;
+        const roof = Number(opts.roofClearance != null ? opts.roofClearance : (opts.coverInfo && opts.coverInfo.roofClearance));
+        const dist = Number(
+            opts.coverDistance != null
+                ? opts.coverDistance
+                : (opts.coverInfo && opts.coverInfo.distance)
+        );
+        const deepNeg = Number.isFinite(roof) && roof < -8;
+        const edgeTable =
+            (Number.isFinite(roof) && roof < 4) ||
+            (Number.isFinite(dist) && dist < 16 && Number.isFinite(alt) && alt < 12);
+        // T100 blue: deep-neg roof + embedDirt jy≈0.78 → ground; keep lateral, soft level only.
+        // T150 blue2: mild/flicker roof still soft-cap at extreme low (owner may have dropped).
+        if (deepNeg || (edgeTable && Number.isFinite(alt) && alt < 12)) {
+            if (verySteep && Number.isFinite(alt) && alt < 8) return Math.min(arrestY, 0.32);
+            if (steep) return Math.min(arrestY, alt < 12 ? 0.24 : 0.18);
+            return Math.min(arrestY, 0.14);
+        }
+        if (steep) {
+            return Math.min(arrestY, verySteep ? (alt < 10 ? 0.52 : 0.44) : (alt < 8 ? 0.42 : 0.34));
+        }
+        return Math.min(arrestY, Number.isFinite(alt) && alt < 8 ? 0.32 : 0.26);
+    },
+
+    getEmbedDirtLateralJoyX(side, forwardY) {
+        const fy = Number(forwardY);
+        const steep = Number.isFinite(fy) && fy < -0.45;
+        const verySteep = Number.isFinite(fy) && fy < -0.58;
+        const lat = verySteep ? 0.74 : (steep ? 0.66 : 0.58);
+        return this.clamp((Math.sign(side) || 1) * lat, -0.82, 0.82);
+    },
+
+    applyEmbedDirtLateralArrestStick(stick, opts = {}) {
+        if (!stick) return stick;
+        const side = Math.sign(Number(stick.joyX) || opts.side || 1) || 1;
+        const alt = Number(opts.altitude);
+        const fy = Number(opts.forwardY);
+        const heat = Number(opts.heat) || 0;
+        const verySteep = Number.isFinite(fy) && fy < -0.58;
+        stick.joyX = this.getEmbedDirtLateralJoyX(side, fy);
+        stick.joyY = Math.max(
+            Number(stick.joyY) || 0,
+            this.getEmbedDirtLateralSoftY(alt, fy, opts)
+        );
+        stick.throttle = opts.energyCritical || heat > 86 || opts.lowEnergyEscape ? 3 : 4;
+        stick.pitchScale = Math.max(Number(stick.pitchScale) || 0, verySteep ? 0.42 : 0.32);
+        stick.diveLevelPull = true;
+        stick.dirtPullFloor = true;
+        stick.rollAuth = Math.PI / (verySteep ? 8 : 10);
+        stick.navMode = 'embedDirtLateral';
+        this.markEscapePitchOwner(stick, 'arrest');
+        if (stick.reason && !/embedDirtLateral/i.test(String(stick.reason))) {
+            stick.reason = `${stick.reason} | embedDirtLateral=1 banWallPull=1`;
+        } else if (!stick.reason) {
+            stick.reason = 'Low-alt embed: dirt arrest lateral (ban wall-pull joyY)';
+        }
+        // Deep-neg roof / table: same stick owner (ban joyY≈0.8 smash under slab).
+        return this.applyTableEscapeStickOwner(stick, opts);
+    },
+
+    /**
      * P0/T102: under tableUndercroft / deep negative roof — never unlock climb via bake/skyOpen.
-     * skyOpen can be true above the slab while the airframe is still trapped under mesh.
+     * skyOpen / huge headroom can be true above the slab while the airframe is still trapped under mesh.
      */
     isSlabClimbBlocked(opts = {}) {
         const coverInfo = opts.coverInfo || {
@@ -1262,6 +2428,8 @@ window.AirArenaAI = {
             corridorRightClear: opts.corridorRightClear,
             hardChokeKind: opts.hardChokeKind
         };
+        // Open courtyard: climb/corridor exit is the right route (T54 C-bowl).
+        if (this.isFacadeBowlOpen(coverInfo, opts)) return false;
         let chokeKind = opts.hardChokeKind || coverInfo.hardChokeKind || null;
         if (
             !chokeKind &&
@@ -1275,6 +2443,7 @@ window.AirArenaAI = {
 
         const roofClear = Number(opts.roofClearance != null ? opts.roofClearance : coverInfo.roofClearance);
         const coverDist = Number(opts.coverDistance != null ? opts.coverDistance : coverInfo.distance);
+        const headroom = Number(opts.headroom != null ? opts.headroom : coverInfo.headroom);
         const deepEmbed = !!opts.deepEmbed;
         const underRoof = !!opts.underRoof;
         const trueUndercroft =
@@ -1286,13 +2455,1780 @@ window.AirArenaAI = {
         if (trueUndercroft) return true;
         if (deepEmbed && Number.isFinite(roofClear) && roofClear < -2) return true;
         // P1: early undercroft — negative roof + close cover must not climb on gap/sky.
-        if (Number.isFinite(roofClear) && roofClear < -1.5 && Number.isFinite(coverDist) && coverDist < (Number(this.EARLY_UNDERCROFT_COV) || 10)) {
+        const earlyCov = Number(this.EARLY_UNDERCROFT_COV) || 14;
+        if (Number.isFinite(roofClear) && roofClear < -0.8 && Number.isFinite(coverDist) && coverDist < earlyCov) {
             return true;
         }
         if (Number.isFinite(roofClear) && roofClear < -2 && Number.isFinite(coverDist) && coverDist < 3) {
             return true;
         }
+        // T113 red2: roof=-10 cov=16.6 hr=48 missed earlyCov=14 → dirt-pull joyY=0.85 into ground/mesh.
+        // Mid-range deep negative roof still means overhead slab silhouette (not open combat cov≫50).
+        if (Number.isFinite(roofClear) && Number.isFinite(coverDist)) {
+            if (roofClear < -8 && coverDist < 42) return true;
+            if (roofClear < -4 && coverDist < 28) return true;
+            // False-open headroom: sensor reads sky above slab while roofClearance≪0.
+            if (roofClear < -2 && coverDist < 40 && Number.isFinite(headroom) && headroom >= 24) return true;
+        }
         return false;
+    },
+
+    /**
+     * Single overhead classifier for dense-urban survival sticks.
+     * See docs/Urban-Survival-Convergence.md — prefer this over new dump bans.
+     *
+     * @returns {{
+     *   class: 'clear'|'openBowl'|'besideTall'|'tableWide'|'tableClose'|'facadeClose',
+     *   choke: string|null,
+     *   roof: number,
+     *   dist: number,
+     *   headroom: number,
+     *   bowlOpen: boolean,
+     *   slabBlocked: boolean
+     * }}
+     */
+    classifyUrbanOverhead(coverInfo = {}, opts = {}) {
+        const cover = coverInfo || {};
+        const roof = Number(
+            opts.roofClearance != null ? opts.roofClearance : cover.roofClearance
+        );
+        const dist = Number(
+            opts.coverDistance != null ? opts.coverDistance : cover.distance
+        );
+        const fwd = Number(
+            opts.coverForwardDistance != null
+                ? opts.coverForwardDistance
+                : (cover.forwardDistance != null ? cover.forwardDistance : cover.corridorFwdClear)
+        );
+        const hr = Number(opts.headroom != null ? opts.headroom : cover.headroom);
+        let choke = opts.hardChokeKind || cover.hardChokeKind || null;
+        if (
+            !choke &&
+            typeof AirArenaBuildingRisk !== 'undefined' &&
+            AirArenaBuildingRisk.classifyUrbanHardChoke
+        ) {
+            const c = AirArenaBuildingRisk.classifyUrbanHardChoke(cover, opts);
+            if (c && c.active) choke = c.kind || null;
+        }
+        const bowlOpen = this.isFacadeBowlOpen(cover, {
+            altitude: opts.altitude,
+            forwardY: opts.forwardY,
+            roofClearance: roof,
+            coverDistance: dist,
+            headroom: hr,
+            coverForwardDistance: fwd,
+            hardChokeKind: choke,
+            aiMapClearAbove: opts.aiMapClearAbove,
+            aiMapSkyOpen: opts.aiMapSkyOpen,
+            bakeSkyOpen: opts.bakeSkyOpen,
+            hardContact: opts.hardContact,
+            deepEmbed: opts.deepEmbed
+        });
+        const slabBlocked = this.isSlabClimbBlocked({
+            coverInfo: cover,
+            altitude: opts.altitude,
+            forwardY: opts.forwardY,
+            roofClearance: roof,
+            coverDistance: dist,
+            headroom: hr,
+            hardChokeKind: choke,
+            underRoof: !!opts.underRoof,
+            deepEmbed: !!opts.deepEmbed,
+            aiMapClearAbove: opts.aiMapClearAbove,
+            aiMapSkyOpen: opts.aiMapSkyOpen
+        });
+        const tableChoke = choke === 'tableUndercroft' || choke === 'tightUndercroft';
+        const deepRoof = Number.isFinite(roof) && roof < -16;
+        const midDeepRoof = Number.isFinite(roof) && roof < -8;
+        const close = Number.isFinite(dist) && dist < 14;
+        const mid = Number.isFinite(dist) && dist < 36;
+        const glued = Number.isFinite(dist) && dist < 6;
+        const altOh = Number(opts.altitude);
+        // T114 red: alt≈84 roof≈−34 classified tableClose → deepNestUnload into silhouette.
+        // Priority #3: high AABB deep-neg is besideTall, not true table (unless choke says undercroft).
+        const highSilhouette = Number.isFinite(altOh) && altOh >= 48;
+        const facadeClosing =
+            (Number.isFinite(dist) && dist < 18) ||
+            (Number.isFinite(fwd) && fwd > 0 && fwd < 14) ||
+            cover.collisionRisk === 'high';
+
+        let cls = 'clear';
+        if (tableChoke && close) cls = 'tableClose';
+        else if (deepRoof && close && !highSilhouette) cls = 'tableClose';
+        else if (deepRoof && close && highSilhouette) cls = 'besideTall';
+        else if (tableChoke && mid) cls = 'tableWide';
+        else if (deepRoof && mid && !highSilhouette) cls = 'tableWide';
+        else if (deepRoof && mid && highSilhouette) cls = 'besideTall';
+        else if (bowlOpen) cls = 'openBowl';
+        else if (glued || (facadeClosing && !midDeepRoof)) cls = 'facadeClose';
+        else if (slabBlocked || midDeepRoof) cls = 'besideTall';
+        else if (facadeClosing) cls = 'facadeClose';
+
+        return {
+            class: cls,
+            choke,
+            roof,
+            dist,
+            headroom: hr,
+            forwardDistance: fwd,
+            bowlOpen,
+            slabBlocked
+        };
+    },
+
+    /**
+     * Urban survival stick priority (single source of truth):
+     * 1) Steep dive + sinking → level/arrest (ban ground smash)
+     * 2) True tableUndercroft + close cov → lateral skim (ban climb-into-slab)
+     * 3) High alt (≥48) + silhouette/far cov → allow escape bank+soft climb
+     * 4) Else soft bake / route
+     * Full process: docs/Urban-Survival-Convergence.md
+     */
+    isTrueTableUndercroftClose(coverInfo = {}, opts = {}) {
+        const oh = this.classifyUrbanOverhead(coverInfo, opts);
+        return oh.class === 'tableClose';
+    },
+
+    /**
+     * TableGlue attitude lock — do not expand stall/recover nose-up into slab.
+     */
+    isTableGlueAttitudeLock(coverInfo = {}, opts = {}) {
+        const oh = this.classifyUrbanOverhead(coverInfo, opts);
+        if (oh.class === 'tableClose' || oh.class === 'tableWide') return true;
+        const dist = Number(oh.dist);
+        const roof = Number(oh.roof);
+        if (oh.slabBlocked && Number.isFinite(dist) && dist < 14 && Number.isFinite(roof) && roof < -4) {
+            return true;
+        }
+        if (Number.isFinite(dist) && dist < 6 && Number.isFinite(roof) && roof < 2) return true;
+        return false;
+    },
+
+    /**
+     * Narrow: stalled / AP-critical may use larger attitude — only off tableGlue.
+     */
+    allowsExpandedStallAttitude(coverInfo = {}, opts = {}) {
+        if (!(opts.stalled || opts.energyCritical)) return false;
+        if (this.isTableGlueAttitudeLock(coverInfo, opts)) return false;
+        return true;
+    },
+
+    /**
+     * Single stick owner for table / deep-neg-roof undercroft (incl. besideTall mid-cov).
+     * Merged emitters: dirtBleed + nestExitRetain + tableStickOwner.
+     * Priority: (1) sinking → pitch owns  (2) tableClose/Wide → soft lateral skim
+     *           (3) else capped residual. Bake/gap only as side hint.
+     * Wire as finalizer; do not re-apply nest exit after this.
+     */
+    wantsTableEscapeStickOwner(coverInfo = {}, opts = {}) {
+        const cover = coverInfo || {};
+        if (opts.teamId && this.isTableStickLingerClear(cover, opts)) {
+            this.clearTableStickOwnerLinger(opts.teamId);
+        }
+        const oh = this.classifyUrbanOverhead(cover, opts);
+        if (oh.class === 'openBowl' || oh.class === 'clear') {
+            // Linger still owns low-alt slab-edge flicker (T150 blue2 roof +1.2 @alt6 → dirt smash).
+            const linger = opts.teamId && this.tableStickOwnerLinger[opts.teamId];
+            const t = Math.max(1, Number(opts.turnNo) || 1);
+            if (
+                linger &&
+                t <= Number(linger.untilTurn || 0) &&
+                Number.isFinite(Number(opts.altitude)) &&
+                Number(opts.altitude) < 22
+            ) {
+                return true;
+            }
+            return false;
+        }
+        if (oh.class === 'tableClose' || oh.class === 'tableWide') return true;
+        const roof = Number(oh.roof);
+        const dist = Number(oh.dist);
+        const alt = Number(opts.altitude);
+        const deepNeg = Number.isFinite(roof) && roof < -8;
+        const veryDeep = Number.isFinite(roof) && roof < -16;
+        // T103/T135: dirt smash under roof≪0 at cov 20–36 (classifier besideTall — still table air).
+        if (deepNeg && Number.isFinite(dist) && dist < 42) {
+            if (oh.slabBlocked || oh.class === 'besideTall' || !!opts.underRoof || !!opts.deepEmbed) {
+                return true;
+            }
+            if (veryDeep) return true;
+            if (Number.isFinite(alt) && alt < 36) return true;
+        }
+        if (
+            oh.slabBlocked &&
+            Number.isFinite(dist) &&
+            dist < 14 &&
+            deepNeg
+        ) {
+            return true;
+        }
+        // T150 blue2: mild/flicker roof at extreme-low still table air — own before dirt-pull thrash.
+        if (
+            Number.isFinite(alt) &&
+            alt < 14 &&
+            Number.isFinite(dist) &&
+            dist < 22 &&
+            (oh.slabBlocked ||
+                !!opts.underRoof ||
+                !!opts.deepEmbed ||
+                (Number.isFinite(roof) && roof < 4) ||
+                oh.class === 'besideTall' ||
+                oh.class === 'facadeClose')
+        ) {
+            return true;
+        }
+        // T150c / T142 red: mid–high mild-neg nest (roof≈−1…−4, cov→0) — own through perch band.
+        if (
+            Number.isFinite(alt) &&
+            alt < 72 &&
+            Number.isFinite(dist) &&
+            dist < 14 &&
+            Number.isFinite(roof) &&
+            roof < 2 &&
+            (oh.slabBlocked ||
+                !!opts.underRoof ||
+                !!opts.deepEmbed ||
+                oh.class === 'besideTall' ||
+                oh.class === 'facadeClose' ||
+                (Number.isFinite(oh.forwardDistance) &&
+                    oh.forwardDistance > 0 &&
+                    oh.forwardDistance < 12))
+        ) {
+            return true;
+        }
+        const linger = opts.teamId && this.tableStickOwnerLinger[opts.teamId];
+        const t = Math.max(1, Number(opts.turnNo) || 1);
+        if (
+            linger &&
+            t <= Number(linger.untilTurn || 0) &&
+            Number.isFinite(alt) &&
+            alt < 28 &&
+            Number.isFinite(dist) &&
+            dist < 36
+        ) {
+            return true;
+        }
+        return false;
+    },
+
+    noteTableStickOwnerLinger(teamId, turnNo = 1) {
+        if (!teamId) return;
+        const t = Math.max(1, Number(turnNo) || 1);
+        this.tableStickOwnerLinger[teamId] = { untilTurn: t + 8 };
+    },
+
+    clearTableStickOwnerLinger(teamId) {
+        if (teamId && this.tableStickOwnerLinger[teamId]) delete this.tableStickOwnerLinger[teamId];
+    },
+
+    /**
+     * True open exit — drop linger so soft bake can resume (少強制).
+     * Bake clearAbove + mid/far cov + roof not deep-neg.
+     */
+    isTableStickLingerClear(coverInfo = {}, opts = {}) {
+        const cover = coverInfo || {};
+        const dist = Number(
+            opts.coverDistance != null ? opts.coverDistance : cover.distance
+        );
+        const roof = Number(
+            opts.roofClearance != null ? opts.roofClearance : cover.roofClearance
+        );
+        const bakeOpen = !!(opts.aiMapClearAbove || opts.aiMapSkyOpen || opts.bakeSkyOpen);
+        if (!bakeOpen) return false;
+        if (!(Number.isFinite(dist) && dist > 24)) return false;
+        if (Number.isFinite(roof) && roof < -2) return false;
+        return true;
+    },
+
+    /**
+     * Per-team Δalt (current − previous). Negative = sinking this turn.
+     */
+    noteTableAltDelta(teamId, altitude, turnNo = 1) {
+        const alt = Number(altitude);
+        if (!teamId || !Number.isFinite(alt)) return 0;
+        const t = Math.max(1, Number(turnNo) || 1);
+        const prev = this.tableAltSinkMemory[teamId];
+        let dAlt = 0;
+        if (prev && Number.isFinite(prev.alt) && t === Number(prev.turn || 0) + 1) {
+            dAlt = alt - Number(prev.alt);
+        } else if (prev && Number.isFinite(prev.alt) && t > Number(prev.turn || 0)) {
+            // Skipped turns: still use last sample.
+            dAlt = alt - Number(prev.alt);
+        }
+        this.tableAltSinkMemory[teamId] = { alt, turn: t };
+        return dAlt;
+    },
+
+    clearTableAltSink(teamId) {
+        if (teamId && this.tableAltSinkMemory[teamId]) delete this.tableAltSinkMemory[teamId];
+    },
+
+    noteDirtBleedLock(teamId, turnNo = 1) {
+        if (!teamId) return;
+        const t = Math.max(1, Number(turnNo) || 1);
+        this.dirtBleedLockMemory[teamId] = { untilTurn: t + 3 };
+    },
+
+    isDirtBleedLockActive(teamId, turnNo = 1) {
+        if (!teamId) return false;
+        const mem = this.dirtBleedLockMemory[teamId];
+        if (!mem) return false;
+        const t = Math.max(1, Number(turnNo) || 1);
+        if (t > Number(mem.untilTurn || 0)) {
+            delete this.dirtBleedLockMemory[teamId];
+            return false;
+        }
+        return true;
+    },
+
+    clearDirtBleedLock(teamId) {
+        if (teamId && this.dirtBleedLockMemory[teamId]) delete this.dirtBleedLockMemory[teamId];
+    },
+
+    /**
+     * Prefer away-from-mesh, but flip to the corridor-clear side when away is closed.
+     */
+    resolveCollapseExitSide(coverInfo = {}, awaySide = 0, curSide = 0) {
+        const away = Math.sign(Number(awaySide) || 0);
+        const cur = Math.sign(Number(curSide) || 0) || 1;
+        const leftClear = !!(
+            coverInfo.corridorLeftClear ||
+            (Number.isFinite(Number(coverInfo.corridorLeft)) && Number(coverInfo.corridorLeft) > 8)
+        );
+        const rightClear = !!(
+            coverInfo.corridorRightClear ||
+            (Number.isFinite(Number(coverInfo.corridorRight)) && Number(coverInfo.corridorRight) > 8)
+        );
+        if (away > 0 && rightClear) return 1;
+        if (away < 0 && leftClear) return -1;
+        // Away points into closed wall but opposite is open → take clear exit.
+        if (away > 0 && !rightClear && leftClear) return -1;
+        if (away < 0 && !leftClear && rightClear) return 1;
+        if (away) return away;
+        if (rightClear && !leftClear) return 1;
+        if (leftClear && !rightClear) return -1;
+        return cur;
+    },
+
+    noteCollapseExitLock(teamId, side, turnNo = 1, streak = 1) {
+        if (!teamId) return null;
+        const t = Math.max(1, Number(turnNo) || 1);
+        const s = Math.sign(Number(side) || 0);
+        const prev = this.collapseExitMemory[teamId];
+        const hold = Math.max(3, Math.min(6, 2 + Math.floor(Number(streak) || 1)));
+        this.collapseExitMemory[teamId] = {
+            side: s || (prev && prev.side) || 0,
+            untilTurn: t + hold,
+            streak: Math.max(Number(streak) || 1, Number(prev && prev.streak) || 0)
+        };
+        return this.collapseExitMemory[teamId];
+    },
+
+    getCollapseExitLock(teamId, turnNo = 1) {
+        if (!teamId) return { active: false, side: 0, streak: 0 };
+        const mem = this.collapseExitMemory[teamId];
+        if (!mem) return { active: false, side: 0, streak: 0 };
+        const t = Math.max(1, Number(turnNo) || 1);
+        if (t > Number(mem.untilTurn || 0)) {
+            delete this.collapseExitMemory[teamId];
+            return { active: false, side: 0, streak: 0 };
+        }
+        return {
+            active: true,
+            side: Math.sign(mem.side || 0),
+            streak: Number(mem.streak) || 0,
+            untilTurn: mem.untilTurn
+        };
+    },
+
+    clearCollapseExitLock(teamId) {
+        if (teamId && this.collapseExitMemory[teamId]) delete this.collapseExitMemory[teamId];
+    },
+
+    armTableGlueFlipCommit(teamId, side, turnNo = 1, holdTurns = 3) {
+        if (!teamId) return null;
+        const s = Math.sign(Number(side) || 0);
+        if (!s) return null;
+        const t = Math.max(1, Number(turnNo) || 1);
+        const hold = Math.max(2, Math.min(5, Number(holdTurns) || 3));
+        this.tableGlueFlipMemory[teamId] = {
+            side: s,
+            untilTurn: t + hold,
+            bank: 0.78
+        };
+        this.tableStickAwayMemory[teamId] = {
+            side: s,
+            untilTurn: t + 6,
+            confirmFlip: 0
+        };
+        this.noteCollapseExitLock(teamId, s, t, 3);
+        this.clearGlueEscapeLock(teamId);
+        return this.tableGlueFlipMemory[teamId];
+    },
+
+    getTableGlueFlipCommit(teamId, turnNo = 1) {
+        if (!teamId) return { active: false, side: 0, bank: 0 };
+        const mem = this.tableGlueFlipMemory[teamId];
+        if (!mem) return { active: false, side: 0, bank: 0 };
+        const t = Math.max(1, Number(turnNo) || 1);
+        if (t > Number(mem.untilTurn || 0)) {
+            delete this.tableGlueFlipMemory[teamId];
+            return { active: false, side: 0, bank: 0 };
+        }
+        return {
+            active: true,
+            side: Math.sign(mem.side || 0),
+            bank: Number(mem.bank) || 0.78,
+            untilTurn: mem.untilTurn
+        };
+    },
+
+    clearTableGlueFlipCommit(teamId) {
+        if (teamId && this.tableGlueFlipMemory[teamId]) delete this.tableGlueFlipMemory[teamId];
+    },
+
+    isCollapseExitStick(stick = {}) {
+        if (!stick) return false;
+        if (stick.collapseExit) return true;
+        const mode = String(stick.navMode || stick.mode || stick.branch || '');
+        if (/scoreCollapse|collapseAway|collapseLevel|collapseHigh|collapseExit/i.test(mode)) return true;
+        return /collapseRecover=|collapseEarly=1|collapseExit=1/i.test(String(stick.reason || ''));
+    },
+
+    resolveTableStickAwaySide(teamId, instantAway, turnNo = 1, opts = {}) {
+        const t = Math.max(1, Number(turnNo) || 1);
+        const away = Math.sign(Number(instantAway) || 0);
+        if (!teamId) return away;
+        // tableGlueFlip commit: sticky must accept opposite bank even under deep glue.
+        if (opts.forceFlip && away) {
+            this.tableStickAwayMemory[teamId] = {
+                side: away,
+                untilTurn: t + 6,
+                confirmFlip: 0
+            };
+            return away;
+        }
+        const glued =
+            (Number.isFinite(Number(opts.coverDistance)) && Number(opts.coverDistance) < 10) ||
+            (Number.isFinite(Number(opts.dist)) && Number(opts.dist) < 10);
+        const prev = this.tableStickAwayMemory[teamId];
+        if (prev && prev.side && t <= Number(prev.untilTurn || 0)) {
+            if (!away || away === prev.side) {
+                this.tableStickAwayMemory[teamId] = {
+                    side: prev.side,
+                    untilTurn: t + 6,
+                    confirmFlip: 0
+                };
+                return prev.side;
+            }
+            // Deep glue: never flip sticky with AABB — T106 red −jx→+jx into mesh.
+            // Exception: forceFlip (tableGlue hitFlip) handled above.
+            if (glued) {
+                this.tableStickAwayMemory[teamId] = {
+                    side: prev.side,
+                    untilTurn: t + 6,
+                    confirmFlip: 0
+                };
+                return prev.side;
+            }
+            // AABB flipped: require 4 consecutive opposite readings before accepting.
+            const confirm = (Number(prev.confirmFlip) || 0) + 1;
+            if (confirm < 4) {
+                this.tableStickAwayMemory[teamId] = {
+                    side: prev.side,
+                    untilTurn: t + 5,
+                    confirmFlip: confirm
+                };
+                return prev.side;
+            }
+        }
+        if (away) {
+            this.tableStickAwayMemory[teamId] = {
+                side: away,
+                untilTurn: t + 6,
+                confirmFlip: 0
+            };
+            return away;
+        }
+        if (prev && prev.side && t <= Number(prev.untilTurn || 0) + 3) return prev.side;
+        return 0;
+    },
+
+    clearTableStickAway(teamId) {
+        if (teamId && this.tableStickAwayMemory[teamId]) delete this.tableStickAwayMemory[teamId];
+    },
+
+    /**
+     * Soft all-hit / collapse nest exit / tableOwner soft modes — table stick must not re-amp to thr4+|jx|0.82.
+     */
+    isNestExitSoftStick(stick = {}) {
+        if (!stick) return false;
+        if (stick.nestExitSoft || stick.tableStickOwner) return true;
+        const mode = String(stick.navMode || stick.mode || '');
+        if (
+            mode === 'scoreAllHitNestExit' ||
+            mode === 'scoreCollapseLevel' ||
+            mode === 'scoreCollapseAwayFlip' ||
+            mode === 'scoreCollapseHighEscape' ||
+            mode === 'collapseExit' ||
+            mode === 'dirtBleedRecover' ||
+            mode === 'tableOwnerSkim' ||
+            mode === 'tableStickSkim' ||
+            mode === 'tableStickArrest'
+        ) {
+            return true;
+        }
+        const reason = String(stick.reason || '');
+        return /nestExit=allHit|collapseRecover=|collapseExit=1|nestExitRetain|climbOutSoftRecover|dirtBleedRecover|tableOwner=1/i.test(reason);
+    },
+
+    /**
+     * Knife 2: single escape pitch owner — dirtBleed / collapse / arrest must not be
+     * flattened by provisional undercroftSlabSkim on a later writer.
+     */
+    markEscapePitchOwner(stick, owner) {
+        if (!stick || !owner) return stick;
+        stick.escapePitchOwner = owner;
+        return stick;
+    },
+
+    shouldPreserveEscapePitch(stick = {}) {
+        if (!stick) return false;
+        const o = String(stick.escapePitchOwner || '');
+        return o === 'dirtBleed' || o === 'collapse' || o === 'arrest';
+    },
+
+    hasEscapePitchOwner(stick = {}) {
+        if (!stick) return false;
+        if (this.shouldPreserveEscapePitch(stick)) return true;
+        const mode = String(stick.navMode || stick.mode || '');
+        if (
+            mode === 'dirtBleedRecover' ||
+            mode === 'collapseExit' ||
+            mode === 'scoreCollapseLevel' ||
+            mode === 'scoreCollapseAwayFlip' ||
+            mode === 'scoreCollapseHighEscape' ||
+            mode === 'slabDirtArrest' ||
+            mode === 'tableStickArrest' ||
+            mode === 'embedDirtLateral'
+        ) {
+            return true;
+        }
+        return /dirtBleedRecover|collapseExit=1|collapseRecover=|slabDirtArrest|dirtUnderTable=1|embedDirtLateral|tableStickArrest|midAltLevel=1/i.test(
+            String(stick.reason || '')
+        );
+    },
+
+    /** Drop provisional skim / deepNest unload tags once a pitch owner won. */
+    stripProvisionalUndercroftSkimTag(stick) {
+        if (!stick || !stick.reason || !this.hasEscapePitchOwner(stick)) return stick;
+        stick.reason = String(stick.reason)
+            .replace(/\s*\|\s*undercroftSlabSkim joyY≤[0-9.]+/gi, '')
+            .replace(/\s*\|\s*undercroftNestLevel fy>0\.25 banUnload=1/gi, '')
+            .replace(/\s*\|\s*deepNestUnload=1(?:\s*tableClose=1)?/gi, '')
+            .replace(/\s*\|\s*extremeGlue=1/gi, '');
+        return stick;
+    },
+
+    /**
+     * Soft urban escape owns thr≤3 — late seals must not bump back to thr4
+     * (floor↔building bounce: dirtBleed/nestRetain tagged but dump thr=4).
+     * Knife 7: near-dirt punch is exempt — thr≤3 starved climb-out at alt~1–2.
+     */
+    shouldHoldSoftUrbanThrottle(action = {}) {
+        if (!action) return false;
+        if (action.dirtPunchThrottle) return false;
+        const altHint = Number(
+            action._softThrAlt != null ? action._softThrAlt : action.altitude
+        );
+        if (Number.isFinite(altHint) && altHint < 3.5) return false;
+        if (this.isNestExitSoftStick(action)) return true;
+        return /dirtBleedRecover|climbOutSoftRecover|nestExitRetain|nestExit=allHit|collapseRecover=/i.test(
+            String(action.reason || '')
+        );
+    },
+
+    /** Never raise throttle above 3 while soft urban escape owns the stick. */
+    clampSoftUrbanThrottle(action) {
+        if (!action || !this.shouldHoldSoftUrbanThrottle(action)) return action;
+        if (typeof action.throttle === 'number' && action.throttle > 3) {
+            action.throttle = 3;
+        }
+        return action;
+    },
+
+    /**
+     * Soft nest/dirtBleed owns bank — late reseals must not re-amp |jx|≈0.78
+     * (T78: nestExitRetain + thr3 but death jx=±0.78).
+     */
+    clampSoftUrbanStick(action) {
+        if (!action || !this.shouldHoldSoftUrbanThrottle(action)) return action;
+        // tableGlueFlip commit / hard flip must keep |jx|≈0.78 — soft nest clamp was undoing it.
+        if (
+            action.tableGlueFlipCommit ||
+            /tableGlueCommit=1|tableGlueFlip=1/i.test(String(action.reason || ''))
+        ) {
+            this.clampSoftUrbanThrottle(action);
+            return action;
+        }
+        this.clampSoftUrbanThrottle(action);
+        if (typeof action.joyX === 'number' && Math.abs(action.joyX) > 0.58) {
+            const side = Math.sign(action.joyX) || 1;
+            action.joyX = this.clamp(side * 0.58, -0.58, 0.58);
+            if (typeof action.roll === 'number') {
+                action.roll = this.clamp(action.joyX * Math.PI / 10, -Math.PI / 10, Math.PI / 10);
+            }
+        }
+        return action;
+    },
+
+    /**
+     * ClimbOut / energyClimb after cov already opened (≥12): keep soft bank.
+     * HARD thr4+|jx|≈0.8 skim at mid-cov bleeds alt back into nest (T150 15:53).
+     */
+    shouldSoftAmpRecoveringClimbOut(stick = {}, oh = {}, opts = {}) {
+        const dist = Number(oh && oh.dist != null ? oh.dist : opts.coverDistance);
+        if (!(Number.isFinite(dist) && dist >= 12 && dist < 36)) return false;
+        const st = String(stick.state || '');
+        const nav = String(stick.navMode || '');
+        const reason = String(stick.reason || '');
+        if (
+            st === 'postGroundClimbOut' ||
+            st === 'obstacleEnergyClimb' ||
+            st === 'obstacleEnergyClimbRoute'
+        ) {
+            return true;
+        }
+        if (/climbOut|ClimbOut|climbOutSkim|openSkyFacade|highFacadeEscape/i.test(nav)) {
+            return true;
+        }
+        if (/Nav climb-out|postGroundClimbOut|obstacleEnergyClimb/i.test(reason)) {
+            return true;
+        }
+        return false;
+    },
+
+    applyTableEscapeStickOwner(stick, opts = {}) {
+        if (!stick) return stick;
+        const cover = opts.coverInfo || {
+            roofClearance: opts.roofClearance,
+            distance: opts.coverDistance,
+            headroom: opts.headroom,
+            forwardDistance: opts.forwardDistance != null ? opts.forwardDistance : opts.coverForwardDistance,
+            hardChokeKind: opts.hardChokeKind,
+            direction: opts.coverDirection || opts.direction
+        };
+        const ohOpts = {
+            altitude: opts.altitude,
+            forwardY: opts.forwardY,
+            coverDistance: opts.coverDistance != null ? opts.coverDistance : cover.distance,
+            roofClearance: opts.roofClearance != null ? opts.roofClearance : cover.roofClearance,
+            headroom: opts.headroom != null ? opts.headroom : cover.headroom,
+            hardChokeKind: opts.hardChokeKind || cover.hardChokeKind,
+            aiMapClearAbove: opts.aiMapClearAbove,
+            aiMapSkyOpen: opts.aiMapSkyOpen,
+            hardContact: opts.hardContact,
+            deepEmbed: opts.deepEmbed,
+            underRoof: opts.underRoof,
+            teamId: opts.teamId,
+            turnNo: opts.turnNo
+        };
+        const oh = this.classifyUrbanOverhead(cover, ohOpts);
+        if (!this.wantsTableEscapeStickOwner(cover, ohOpts)) {
+            const distClear = Number(oh.dist);
+            if (
+                opts.teamId &&
+                (oh.class === 'clear' || oh.class === 'openBowl' ||
+                    (Number.isFinite(distClear) && distClear > 48) ||
+                    this.isTableStickLingerClear(cover, ohOpts))
+            ) {
+                this.clearTableStickAway(opts.teamId);
+                this.clearTableStickOwnerLinger(opts.teamId);
+                this.clearDirtBleedLock(opts.teamId);
+                this.clearCollapseExitLock(opts.teamId);
+            }
+            return stick;
+        }
+
+        if (opts.teamId) this.noteTableStickOwnerLinger(opts.teamId, opts.turnNo);
+
+        const fy = Number(opts.forwardY);
+        const alt = Number(opts.altitude);
+        const fwd = Number(
+            oh.forwardDistance != null
+                ? oh.forwardDistance
+                : (opts.forwardDistance != null ? opts.forwardDistance : opts.coverForwardDistance)
+        );
+        const dAlt = this.noteTableAltDelta(opts.teamId, alt, opts.turnNo);
+        const sinkingHard =
+            Number.isFinite(dAlt) &&
+            dAlt < -2 &&
+            Number.isFinite(alt) &&
+            alt < 48;
+        const sinkingMild =
+            Number.isFinite(dAlt) &&
+            dAlt < -1.0 &&
+            Number.isFinite(alt) &&
+            alt < 52;
+        const nestBleed =
+            Number.isFinite(dAlt) &&
+            dAlt < -0.6 &&
+            Number.isFinite(alt) &&
+            alt < 22 &&
+            Number.isFinite(oh.dist) &&
+            oh.dist < 14;
+        const climbingInto = Number.isFinite(fy) && fy > 0.2;
+        // Rising out of dirt: drop priority-1 lock so skim/level can resume.
+        if (
+            opts.teamId &&
+            this.isDirtBleedLockActive(opts.teamId, opts.turnNo) &&
+            Number.isFinite(dAlt) &&
+            dAlt > 0.8 &&
+            Number.isFinite(fy) &&
+            fy > -0.12
+        ) {
+            this.clearDirtBleedLock(opts.teamId);
+        }
+        const dirtLock = !!(opts.teamId && this.isDirtBleedLockActive(opts.teamId, opts.turnNo));
+        // Priority 1: catastrophic Δalt into dirt — pitch owns; soft bank (tableGlue merge).
+        // Widened vs dump T101/T69 dirtBleed ground: alt<18 + mild sink still pitch-own.
+        // Lock holds pitch a few turns so nest skim cannot reclaim after one mild Δalt.
+        const dirtBleedPriority =
+            !climbingInto &&
+            (
+                (
+                    Number.isFinite(alt) &&
+                    alt < 18 &&
+                    (
+                        (Number.isFinite(dAlt) && dAlt < -2.0) ||
+                        (sinkingHard && alt < 16) ||
+                        (sinkingMild && alt < 12) ||
+                        (nestBleed && Number.isFinite(dAlt) && dAlt < -1.2) ||
+                        (alt < 10 && Number.isFinite(fy) && fy < -0.35)
+                    )
+                ) ||
+                (
+                    Number.isFinite(alt) &&
+                    alt < 22 &&
+                    (
+                        (Number.isFinite(dAlt) && dAlt < -2.5) ||
+                        (sinkingHard && Number.isFinite(fy) && fy < -0.45)
+                    )
+                ) ||
+                (
+                    dirtLock &&
+                    Number.isFinite(alt) &&
+                    alt < 22 &&
+                    (
+                        (Number.isFinite(dAlt) && dAlt < -0.35) ||
+                        (Number.isFinite(fy) && fy < -0.18) ||
+                        alt < 14
+                    )
+                )
+            );
+
+        const instantAway = Math.sign(
+            Number(opts.awaySide) ||
+            this.getAwayFromMeshSide(cover, opts.selfForward) ||
+            0
+        );
+        const stickyAway = this.resolveTableStickAwaySide(
+            opts.teamId,
+            instantAway,
+            opts.turnNo,
+            { coverDistance: oh.dist }
+        ) || instantAway;
+        const glued = Number.isFinite(oh.dist) && oh.dist < 6;
+        const nearGlue = Number.isFinite(oh.dist) && oh.dist < 10;
+        const pocket = Number.isFinite(oh.dist) && oh.dist < 18;
+        const gapAsym = this.getCorridorGapAsymmetry(cover);
+        const gapOwns =
+            gapAsym.strength >= 1 &&
+            !!gapAsym.side &&
+            !glued &&
+            !(
+                (nearGlue || pocket) &&
+                (sinkingHard || sinkingMild || nestBleed || stickyAway || dirtLock)
+            );
+        let away = stickyAway;
+        let side = Math.sign(Number(stick.joyX) || Number(opts.side) || 1) || 1;
+        if (gapOwns) {
+            side = gapAsym.side;
+            away = gapAsym.side;
+            if (opts.teamId) {
+                const t = Math.max(1, Number(opts.turnNo) || 1);
+                this.tableStickAwayMemory[opts.teamId] = {
+                    side: gapAsym.side,
+                    untilTurn: t + 6,
+                    confirmFlip: 0
+                };
+            }
+        } else if (away && side !== away) {
+            side = away;
+        }
+
+        // Priority 1 over nest/ClimbOut skim: sinking into dirt — soft bank + final pitch write.
+        if (dirtBleedPriority) {
+            const fwdCollapseDirt = Number.isFinite(fwd) && fwd > 0 && fwd < 8;
+            const bankDirt = glued || (fwdCollapseDirt && nearGlue) ? 0.58 : 0.5;
+            stick.joyX = this.clamp(side * bankDirt, -0.58, 0.58);
+            let arrestY = alt < 6 ? 0.56 : (alt < 10 ? 0.48 : (alt < 14 ? 0.42 : 0.34));
+            if (Number.isFinite(fy) && fy < -0.45) {
+                arrestY = Math.max(arrestY, alt < 10 ? 0.56 : 0.46);
+            }
+            if (Number.isFinite(dAlt) && dAlt < -4) {
+                arrestY = Math.max(arrestY, alt < 10 ? 0.58 : 0.48);
+            }
+            const deepNegDirt = Number.isFinite(oh.roof) && oh.roof < -8;
+            // Under true table: mid-alt caps smash-into-slab; near dirt keep strong arrest (Knife 6).
+            if (deepNegDirt && (oh.class === 'tableClose' || oh.class === 'tableWide')) {
+                if (!(Number.isFinite(alt) && alt < 8)) {
+                    arrestY = Math.min(arrestY, alt < 14 ? 0.42 : 0.34);
+                } else {
+                    arrestY = Math.max(arrestY, alt < 4 ? 0.78 : (alt < 6 ? 0.68 : 0.58));
+                }
+            } else if (deepNegDirt) {
+                if (!(Number.isFinite(alt) && alt < 8)) {
+                    arrestY = Math.min(arrestY, alt < 14 ? 0.38 : 0.3);
+                } else {
+                    arrestY = Math.max(arrestY, alt < 4 ? 0.72 : 0.58);
+                }
+            }
+            // Final write — do NOT Math.max with upstream emergencyPullUp jy≈0.8 (T150a desk smash).
+            const floorY = alt < 6 ? 0.42 : (alt < 10 ? 0.28 : (alt < 14 ? 0.18 : 0.14));
+            stick.joyY = this.clamp(arrestY, floorY, Math.max(arrestY, floorY));
+            // Knife 7: near-dirt punch — thr↑ + softer bank so MIL/AB can rebuild energy / exit table.
+            if (Number.isFinite(alt) && alt < 3.5) {
+                stick.joyX = this.clamp(side * 0.36, -0.4, 0.4);
+                stick.throttle = 5;
+                stick.dirtPunchThrottle = 1;
+                stick._softThrAlt = alt;
+            } else if (Number.isFinite(alt) && alt < 6) {
+                stick.joyX = this.clamp(side * Math.min(bankDirt, 0.46), -0.48, 0.48);
+                stick.throttle = 4;
+                stick.dirtPunchThrottle = 1;
+                stick._softThrAlt = alt;
+            } else {
+                stick.throttle = Math.min(3, Number(stick.throttle) || 3);
+            }
+            stick.diveLevelPull = true;
+            stick.dirtPullFloor = true;
+            stick.nestExitSoft = 1;
+            stick.tableStickOwner = true;
+            stick.rollAuth = Math.min(Number(stick.rollAuth) || (Math.PI / 9), Math.PI / 9);
+            stick.pitchScale = Math.max(Number(stick.pitchScale) || 0, 0.36);
+            stick.navMode = 'dirtBleedRecover';
+            this.markEscapePitchOwner(stick, 'dirtBleed');
+            if (opts.teamId) this.noteDirtBleedLock(opts.teamId, opts.turnNo);
+            const bleedTags = [];
+            if (away) bleedTags.push(`away=${away}`);
+            if (Number.isFinite(dAlt)) bleedTags.push(`sink=${dAlt.toFixed(1)}`);
+            if (gapOwns) bleedTags.push(`gapOwns=${gapAsym.side}`);
+            if (dirtLock) bleedTags.push('dirtLock=1');
+            if (stick.dirtPunchThrottle) bleedTags.push(`dirtPunch=thr${stick.throttle}`);
+            const bleedStr = bleedTags.length ? ` ${bleedTags.join(' ')}` : '';
+            const ownerTag = `tableOwner=1 mode=pitch oh=${oh.class}`;
+            if (stick.reason && !/dirtBleedRecover|tableOwner=1/i.test(String(stick.reason))) {
+                stick.reason = `${stick.reason} | dirtBleedRecover=1 ${ownerTag}${bleedStr}`;
+            } else if (stick.reason && !/tableOwner=1/i.test(String(stick.reason))) {
+                stick.reason = `${stick.reason} | ${ownerTag}${bleedStr}`;
+            } else if (!stick.reason) {
+                stick.reason = `Table stick dirt-bleed recover (${ownerTag})${bleedStr}`;
+            }
+            return this.stripProvisionalUndercroftSkimTag(stick);
+        }
+
+        // Soft all-hit / collapse / recovering ClimbOut / tableGlue class:
+        // one soft emission — ban thr4+|jx|≈0.82 hard skim on tableClose/Wide.
+        const collapseArm = opts.teamId
+            ? this.getScoredEscapeCollapse(opts.teamId, opts.turnNo)
+            : { shouldRecover: false };
+        const collapseExitLock = opts.teamId
+            ? this.getCollapseExitLock(opts.teamId, opts.turnNo)
+            : { active: false, side: 0, streak: 0 };
+        const climbRecoverSoft = this.shouldSoftAmpRecoveringClimbOut(stick, oh, {
+            ...opts,
+            coverDistance: oh.dist
+        });
+        const tableGlueSoft =
+            oh.class === 'tableClose' ||
+            oh.class === 'tableWide' ||
+            (Number.isFinite(alt) &&
+                alt < 16 &&
+                Number.isFinite(oh.dist) &&
+                oh.dist < 14 &&
+                (oh.slabBlocked || (Number.isFinite(oh.roof) && oh.roof < -4)));
+
+        // Knife 2: second-pass owner — do not soft-skim flatten an already-owned pitch
+        // unless collapse exit is actively re-affirming.
+        const collapseReaffirm =
+            this.isCollapseExitStick(stick) ||
+            collapseExitLock.active ||
+            collapseArm.shouldRecover;
+        if (this.shouldPreserveEscapePitch(stick) && !collapseReaffirm) {
+            stick.joyX = this.clamp(side * (glued ? 0.5 : 0.48), -0.58, 0.58);
+            stick.tableStickOwner = true;
+            stick.nestExitSoft = 1;
+            stick.dirtPullFloor = true;
+            if (opts.teamId) this.noteTableStickOwnerLinger(opts.teamId, opts.turnNo);
+            return this.stripProvisionalUndercroftSkimTag(stick);
+        }
+
+        // Knife 3: collapse exit owns bank — do not rewrite into soft skim scrape.
+        if (
+            !dirtBleedPriority &&
+            (this.isCollapseExitStick(stick) || collapseExitLock.active || collapseArm.shouldRecover)
+        ) {
+            const glueHold = opts.teamId ? this.getGlueEscapeLock(opts.teamId, opts.turnNo) : { active: false };
+            const flipCommit = opts.teamId
+                ? this.getTableGlueFlipCommit(opts.teamId, opts.turnNo)
+                : { active: false, side: 0, bank: 0 };
+            const preferAway =
+                (flipCommit.active && flipCommit.side) ||
+                (glueHold.active && glueHold.side && !flipCommit.active) ||
+                collapseExitLock.side ||
+                away ||
+                stickyAway;
+            const exitSide = this.resolveCollapseExitSide(
+                cover,
+                preferAway,
+                (flipCommit.active && flipCommit.side) ||
+                    (glueHold.active && glueHold.side) ||
+                    side
+            ) || preferAway || side;
+            // tableGlueFlip commit wins over glue lock / sticky scrape.
+            const finalSide =
+                (flipCommit.active && flipCommit.side) ||
+                (glueHold.active && glueHold.side && !flipCommit.active
+                    ? glueHold.side
+                    : exitSide);
+            const streak = Math.max(
+                Number(collapseExitLock.streak) || 0,
+                Number(collapseArm.streak) || 0,
+                Number(opts.collapseStreak) || 0
+            );
+            const bank = flipCommit.active
+                ? (Number(flipCommit.bank) || 0.78)
+                : (streak >= 4 || (Number.isFinite(oh.dist) && oh.dist < 4)
+                    ? 0.62
+                    : (streak >= 2 || (Number.isFinite(oh.dist) && oh.dist < 8) ? 0.58 : 0.52));
+            stick.joyX = this.clamp(
+                finalSide * bank,
+                flipCommit.active ? -0.82 : -0.62,
+                flipCommit.active ? 0.82 : 0.62
+            );
+            let mode = 'collapseExit';
+            const dirtUnderTable =
+                Number.isFinite(alt) &&
+                alt < 16 &&
+                (Number.isFinite(fy) && fy < -0.08 || alt < 14 || !!stick.dirtPullFloor);
+            if (dirtUnderTable) {
+                // Doctrine P1: arrest under table near dirt — ban 0.18 skim smash.
+                const arrestY = alt < 12 ? 0.42 : (fy < -0.25 ? 0.36 : 0.3);
+                stick.joyY = Math.max(Number(stick.joyY) || 0, arrestY);
+                stick.diveLevelPull = true;
+                stick.dirtPullFloor = true;
+                mode = 'collapseExitArrest';
+            } else if (Number.isFinite(fy) && fy < -0.55) {
+                stick.joyY = this.clamp(
+                    Math.max(Number(stick.joyY) || 0, alt < 28 ? 0.36 : 0.28),
+                    0.12,
+                    alt < 10 ? 0.42 : 0.36
+                );
+                stick.diveLevelPull = true;
+                mode = 'collapseExitArrest';
+            } else if (Number.isFinite(fy) && fy < -0.25) {
+                stick.joyY = this.clamp(Math.max(Number(stick.joyY) || 0, 0.2), 0.12, 0.28);
+                stick.diveLevelPull = true;
+                mode = 'collapseExitArrest';
+            } else if (climbingInto) {
+                stick.joyY = fy > 0.5 ? 0.04 : 0.1;
+                stick.diveLevelPull = false;
+                mode = 'collapseExitLevel';
+            } else {
+                // Knife 7: mid-alt undercroft — soft level-out (ban forever-skim scrape into mesh).
+                const midAltNest =
+                    Number.isFinite(alt) &&
+                    alt >= 24 &&
+                    alt < 52 &&
+                    (
+                        oh.class === 'tableClose' ||
+                        oh.class === 'tableWide' ||
+                        oh.slabBlocked ||
+                        (Number.isFinite(oh.roof) && oh.roof < -0.8)
+                    );
+                if (midAltNest) {
+                    stick.joyY = this.clamp(
+                        Math.max(Number(stick.joyY) || 0.28, 0.28),
+                        0.22,
+                        0.38
+                    );
+                    stick.diveLevelPull = true;
+                    mode = 'collapseExitLevelMid';
+                } else if (this.shouldPreserveEscapePitch(stick)) {
+                    // Knife 2: keep prior arrest/dirtBleed joyY — ban soft skim flatten.
+                    mode = 'collapseExitHoldPitch';
+                } else {
+                    // Lateral exit under table — keep nose flat, do not re-skim into mesh.
+                    stick.joyY = this.clamp(Number(stick.joyY) || 0.14, 0.08, 0.18);
+                    stick.diveLevelPull = false;
+                }
+            }
+            stick.throttle = Math.min(3, Number(stick.throttle) || 3);
+            stick.nestExitSoft = 1;
+            stick.collapseExit = 1;
+            stick.tableStickOwner = true;
+            stick.rollAuth = Math.min(Number(stick.rollAuth) || (Math.PI / 9), Math.PI / 9);
+            stick.pitchScale = Math.max(Number(stick.pitchScale) || 0, dirtUnderTable ? 0.48 : 0.22);
+            stick.navMode = 'collapseExit';
+            this.markEscapePitchOwner(
+                stick,
+                dirtUnderTable || mode === 'collapseExitArrest' || mode === 'collapseExitLevelMid'
+                    ? (dirtUnderTable ? 'arrest' : 'collapse')
+                    : 'collapse'
+            );
+            if (opts.teamId) {
+                this.noteCollapseExitLock(opts.teamId, finalSide, opts.turnNo, streak || 2);
+                this.resolveTableStickAwaySide(opts.teamId, finalSide, opts.turnNo, {
+                    coverDistance: oh.dist,
+                    forceFlip: !!flipCommit.active
+                });
+            }
+            const ownerTag = `tableOwner=1 mode=${mode} oh=${oh.class} collapseExit=1 away=${finalSide}${dirtUnderTable ? ' dirtUnderTable=1' : ''}${flipCommit.active ? ' tableGlueCommit=1' : ''}`;
+            if (stick.reason && !/collapseExit=1|tableOwner=1 mode=collapse/i.test(String(stick.reason))) {
+                stick.reason = `${stick.reason} | ${ownerTag}`;
+            } else if (!stick.reason) {
+                stick.reason = `Table stick collapse exit (${ownerTag})`;
+            }
+            if (!stick.statusText || /gapCut/i.test(String(stick.statusText))) {
+                stick.statusText = `NPC: 評分脫離(collapseExit)`;
+            }
+            return this.stripProvisionalUndercroftSkimTag(stick);
+        }
+
+        if (
+            this.shouldPreserveEscapePitch(stick)
+        ) {
+            // Knife 2: soft nest pass — bank only; pitch already owned.
+            const bank = Number.isFinite(oh.dist) && oh.dist < 4 ? 0.58 : 0.5;
+            stick.joyX = this.clamp(side * bank, -0.58, 0.58);
+            stick.throttle = Math.min(3, Number(stick.throttle) || 3);
+            stick.dirtPullFloor = true;
+            stick.nestExitSoft = 1;
+            stick.tableStickOwner = true;
+            return this.stripProvisionalUndercroftSkimTag(stick);
+        }
+
+        if (
+            this.isNestExitSoftStick(stick) ||
+            collapseArm.shouldRecover ||
+            climbRecoverSoft ||
+            tableGlueSoft
+        ) {
+            const bank = Number.isFinite(oh.dist) && oh.dist < 4 ? 0.58 : 0.5;
+            stick.joyX = this.clamp(side * bank, -0.58, 0.58);
+            let mode = 'skim';
+            if (Number.isFinite(fy) && fy < -0.55) {
+                stick.joyY = Math.max(Number(stick.joyY) || 0, alt < 28 ? 0.38 : 0.3);
+                stick.diveLevelPull = true;
+                mode = 'arrest';
+            } else if (Number.isFinite(fy) && fy < -0.25) {
+                stick.joyY = Math.max(Number(stick.joyY) || 0, 0.22);
+                stick.diveLevelPull = true;
+                mode = 'arrest';
+            } else if (climbingInto) {
+                // Ban nest unload into slab (T150 blue2 jy≤0 building under tableOwner).
+                if (
+                    tableGlueSoft ||
+                    oh.class === 'tableClose' ||
+                    oh.class === 'tableWide' ||
+                    glued ||
+                    (Number.isFinite(oh.roof) && oh.roof < -2 && Number.isFinite(oh.dist) && oh.dist < 12)
+                ) {
+                    stick.joyY = fy > 0.5 ? 0.04 : 0.1;
+                    stick.diveLevelPull = false;
+                    mode = 'level';
+                } else {
+                    stick.joyY = fy > 0.45 ? -0.08 : Math.min(Number(stick.joyY) || 0.04, 0.06);
+                    mode = 'unload';
+                }
+            } else if (
+                sinkingHard ||
+                (sinkingMild && Number.isFinite(alt) && alt < 18) ||
+                (nestBleed && Number.isFinite(alt) && alt < 16) ||
+                (Number.isFinite(alt) && alt < 8 && (oh.class === 'tableClose' || oh.class === 'tableWide' || oh.slabBlocked))
+            ) {
+                const arrestFloor = alt < 4 ? 0.72 : (alt < 8 ? 0.58 : (alt < 14 ? 0.36 : 0.28));
+                stick.joyY = Math.max(Number(stick.joyY) || 0, arrestFloor);
+                stick.diveLevelPull = true;
+                mode = 'pitch';
+            } else {
+                const skimFloor = Number.isFinite(alt) && alt < 12 ? 0.16 : 0.14;
+                stick.joyY = Math.max(Math.min(Number(stick.joyY) || skimFloor, 0.2), skimFloor);
+            }
+            stick.throttle = Math.min(3, Number(stick.throttle) || 3);
+            stick.dirtPullFloor = true;
+            stick.nestExitSoft = 1;
+            stick.tableStickOwner = true;
+            stick.rollAuth = Math.min(Number(stick.rollAuth) || (Math.PI / 9), Math.PI / 9);
+            if (!stick.navMode || /score|allHit|nest|collapse|table|dirt|climb|embed/i.test(String(stick.navMode || ''))) {
+                stick.navMode = climbRecoverSoft
+                    ? 'climbOutSoftRecover'
+                    : (this.isNestExitSoftStick(stick) && stick.navMode === 'scoreAllHitNestExit'
+                        ? 'scoreAllHitNestExit'
+                        : (mode === 'pitch' ? 'dirtBleedRecover' : 'tableOwnerSkim'));
+            }
+            if (mode === 'arrest' || mode === 'pitch') {
+                this.markEscapePitchOwner(stick, mode === 'pitch' ? 'dirtBleed' : 'arrest');
+            }
+            const retainTags = [];
+            if (away) retainTags.push(`away=${away}`);
+            if (gapOwns) retainTags.push(`gapOwns=${gapAsym.side}`);
+            const retainStr = retainTags.length ? ` ${retainTags.join(' ')}` : '';
+            const ownerTag = `tableOwner=1 mode=${mode} oh=${oh.class}`;
+            if (climbRecoverSoft && stick.reason && !/climbOutSoftRecover/i.test(String(stick.reason))) {
+                stick.reason = `${stick.reason} | climbOutSoftRecover=1 ${ownerTag}${retainStr}`;
+            } else if (stick.reason && !/nestExitRetain|climbOutSoftRecover|tableOwner=1/i.test(String(stick.reason))) {
+                stick.reason = `${stick.reason} | nestExitRetain=1 ${ownerTag}${retainStr}`;
+            } else if (stick.reason && !/tableOwner=1/i.test(String(stick.reason))) {
+                stick.reason = `${stick.reason} | ${ownerTag}${retainStr}`;
+            } else if (!stick.reason) {
+                stick.reason = climbRecoverSoft
+                    ? `Table stick soft ClimbOut recover (${ownerTag})${retainStr}`
+                    : `Table stick soft nest-exit retain (${ownerTag})${retainStr}`;
+            }
+            return this.stripProvisionalUndercroftSkimTag(stick);
+        }
+
+        // Non-table residual (besideTall linger / high silhouette): capped hard path.
+        // fwd collapse under table: punch harder; side-AABB (fwd≫dist) keeps sticky, no thrash.
+        const fwdCollapse = Number.isFinite(fwd) && fwd > 0 && fwd < 8;
+        const sideGlue =
+            Number.isFinite(fwd) &&
+            fwd > 18 &&
+            Number.isFinite(oh.dist) &&
+            oh.dist < 8;
+        let bank = glued ? 0.62 : 0.55;
+        if (fwdCollapse && nearGlue) bank = 0.62;
+        else if (sideGlue) bank = Math.max(bank, 0.58);
+        stick.joyX = this.clamp(side * bank, -0.62, 0.62);
+
+        let steepDirt =
+            Number.isFinite(fy) &&
+            fy < -0.72 &&
+            Number.isFinite(alt) &&
+            alt < 28;
+        let midDive =
+            !steepDirt &&
+            Number.isFinite(fy) &&
+            fy < -0.45 &&
+            Number.isFinite(alt) &&
+            alt < 28;
+        // T100: deepNeg + sinking while fy softens → still arm capped midDive (not skim into dirt).
+        const deepNegRoof = Number.isFinite(oh.roof) && oh.roof < -8;
+        const mildNegNest =
+            Number.isFinite(oh.roof) &&
+            oh.roof < 2 &&
+            Number.isFinite(oh.dist) &&
+            oh.dist < 12;
+        if (!steepDirt && !climbingInto && sinkingHard && Number.isFinite(alt) && alt < 48) {
+            midDive = true;
+        } else if (
+            !steepDirt &&
+            !midDive &&
+            !climbingInto &&
+            (sinkingMild || nestBleed) &&
+            (deepNegRoof || mildNegNest || oh.class === 'tableClose' || oh.class === 'tableWide') &&
+            Number.isFinite(fy) &&
+            fy < 0.05 &&
+            Number.isFinite(alt) &&
+            alt < 52
+        ) {
+            midDive = true;
+        }
+        if (!steepDirt && !midDive && deepNegRoof && Number.isFinite(fy) && fy < -0.35 && Number.isFinite(alt) && alt < 36) {
+            midDive = true;
+        }
+        // Pocket nest bleed while nose soft: still arm capped arrest (T114 red2 fy≈0 skim sink).
+        if (
+            !steepDirt &&
+            !midDive &&
+            nestBleed &&
+            (oh.class === 'tableClose' || oh.class === 'tableWide' || mildNegNest)
+        ) {
+            midDive = true;
+        }
+
+        if (steepDirt) {
+            const cap = deepNegRoof
+                ? (alt < 8 ? 0.36 : (alt < 14 ? 0.28 : 0.22))
+                : (alt < 10 ? 0.42 : (alt < 18 ? 0.32 : 0.24));
+            const floor = alt < 12 ? 0.18 : 0.14;
+            stick.joyY = this.clamp(Math.max(Number(stick.joyY) || 0, floor), -0.1, cap);
+            stick.joyX = this.clamp(side * (fwdCollapse ? 0.58 : 0.52), -0.58, 0.58);
+            stick.diveLevelPull = true;
+            stick.pitchScale = Math.min(Number(stick.pitchScale) || 0.36, 0.36);
+        } else if (midDive) {
+            const cap = alt < 10 ? 0.26 : (alt < 18 ? 0.2 : (alt < 36 ? 0.16 : 0.14));
+            const floor = sinkingHard ? 0.14 : 0.1;
+            stick.joyY = this.clamp(Math.max(Number(stick.joyY) || 0, floor), -0.1, cap);
+            stick.joyX = this.clamp(side * (fwdCollapse ? 0.58 : 0.52), -0.58, 0.58);
+            stick.diveLevelPull = true;
+            stick.pitchScale = Math.min(Number(stick.pitchScale) || 0.24, 0.24);
+        } else if (climbingInto) {
+            // Nest glue: never nose-unload into mesh — level + soft bank until cov opens.
+            if (glued || (fwdCollapse && nearGlue) || oh.class === 'tableClose' || oh.class === 'tableWide') {
+                stick.joyY = fy > 0.45 ? 0.04 : 0.1;
+                stick.joyX = this.clamp(side * 0.58, -0.58, 0.58);
+                stick.diveLevelPull = false;
+                stick.pitchScale = Math.min(Number(stick.pitchScale) || 0.12, 0.12);
+            } else {
+                stick.joyY = fy > 0.45 ? 0.02 : 0.08;
+                stick.diveLevelPull = false;
+                stick.pitchScale = Math.min(Number(stick.pitchScale) || 0.16, 0.16);
+            }
+        } else {
+            const skimCap = Number.isFinite(alt) && alt < 12
+                ? 0.18
+                : (Number.isFinite(alt) && alt < 22 ? 0.12 : 0.08);
+            let y = Number(stick.joyY) || 0;
+            if (y > skimCap) y = skimCap;
+            if (y < -0.16) y = -0.12;
+            stick.joyY = y;
+            stick.diveLevelPull = false;
+            stick.pitchScale = Math.min(Number(stick.pitchScale) || 0.18, 0.18);
+            if (fwdCollapse || glued) {
+                stick.joyX = this.clamp(side * 0.58, -0.58, 0.58);
+            }
+        }
+
+        stick.throttle = Math.min(3, Number(stick.throttle) || 3);
+        stick.dirtPullFloor = true;
+        stick.nestExitSoft = 1;
+        stick.rollAuth = Math.min(Number(stick.rollAuth) || (Math.PI / 9), Math.PI / 9);
+        stick.tableStickOwner = true;
+        if (!stick.navMode || /score|allHit|nest|dirt|climb|embed/i.test(String(stick.navMode || ''))) {
+            stick.navMode = steepDirt || midDive ? 'tableStickArrest' : 'tableStickSkim';
+        }
+        const tags = [];
+        if (away) tags.push(`away=${away}`);
+        if (gapOwns) tags.push(`gapOwns=${gapAsym.side}`);
+        else if (
+            gapAsym.strength >= 1 &&
+            gapAsym.side &&
+            !glued &&
+            (nearGlue || pocket) &&
+            (sinkingHard || sinkingMild || nestBleed || stickyAway)
+        ) {
+            tags.push('gapHold=1');
+        }
+        if (fwdCollapse) tags.push('fwdCollapse=1');
+        if (glued && climbingInto) tags.push('nestLevel=1');
+        if (sinkingHard) tags.push(`sink=${dAlt.toFixed(1)}`);
+        else if (sinkingMild) tags.push(`sinkMild=${dAlt.toFixed(1)}`);
+        else if (nestBleed) tags.push(`nestBleed=${dAlt.toFixed(1)}`);
+        const tagStr = tags.length ? ` ${tags.join(' ')}` : '';
+        const ownerTag = `tableOwner=1 mode=${steepDirt || midDive ? 'arrest' : 'skim'} oh=${oh.class}`;
+        if (stick.reason && !/tableStickOwner|tableOwner=1/i.test(String(stick.reason))) {
+            stick.reason = `${stick.reason} | tableStickOwner=1 ${ownerTag}${tagStr}`;
+        } else if (stick.reason && !/tableOwner=1/i.test(String(stick.reason))) {
+            stick.reason = `${stick.reason} | ${ownerTag}${tagStr}`;
+        } else if (!stick.reason) {
+            stick.reason = `Table escape stick owner: ${steepDirt || midDive ? 'capped arrest' : 'lateral skim'} (${ownerTag})${tagStr}`;
+        }
+        return stick;
+    },
+
+    wantsHighFacadeEscape(altitude, coverInfo = {}, opts = {}) {
+        const alt = Number(altitude);
+        if (!(Number.isFinite(alt) && alt >= 48)) return false;
+        const oh = this.classifyUrbanOverhead(coverInfo, {
+            ...opts,
+            altitude: alt
+        });
+        if (oh.class === 'tableClose') return false;
+        // Mid table / tightening cov: lateral skim owns (T147 high escape @cov≈13→glue).
+        if (oh.class === 'tableWide' && Number.isFinite(oh.dist) && oh.dist < 22) return false;
+        // True glue still lateral; pocket besideTall at high alt may soft-climb (T114 silhouette).
+        if (Number.isFinite(oh.dist) && oh.dist < 6) return false;
+        if (
+            Number.isFinite(oh.dist) &&
+            oh.dist < 14 &&
+            oh.class !== 'besideTall' &&
+            !oh.slabBlocked
+        ) {
+            return false;
+        }
+        return oh.class === 'besideTall' || oh.class === 'tableWide' || oh.class === 'facadeClose' || oh.slabBlocked;
+    },
+
+    /**
+     * T150 A blue2: under-slab lateral skim with fwdY≪0 + alt sink hits ground, not the slab.
+     * Allow dirt arrest only while nose is still steep; once leveled, keep slab skim caps.
+     * Knife 6: near-dirt under table always arrests (mild fy still smashes ground).
+     */
+    wantsSlabDirtArrest(altitude, forwardY, opts = {}) {
+        const alt = Number(altitude);
+        const fy = Number(forwardY);
+        if (!Number.isFinite(alt) || !Number.isFinite(fy)) return false;
+        // Near dirt under any slab/table: doctrine P1 — arrest even if nose already soft.
+        if (alt < 8 && fy < 0.15) {
+            const coverEarly = opts.coverInfo || {};
+            const roofEarly = Number(
+                opts.roofClearance != null ? opts.roofClearance : coverEarly.roofClearance
+            );
+            const chokeEarly = String(opts.hardChokeKind || coverEarly.hardChokeKind || '');
+            if (
+                (Number.isFinite(roofEarly) && roofEarly < 0) ||
+                /table|undercroft/i.test(chokeEarly) ||
+                !!opts.underRoof
+            ) {
+                return true;
+            }
+        }
+        // T150 A blue2: sink started ~alt24 fwdY=-0.75 → skim joyY=0.14 until ground.
+        // T150 B red2: fy=-0.397 @alt15.8 missed fy<-0.4 — widen to -0.35.
+        let want = false;
+        if (alt < 14 && fy < -0.25) want = true;
+        else if (alt < 20 && fy < -0.35) want = true;
+        else if (alt < 24 && fy < -0.55) want = true;
+        // T84 blue2: alt 30–46 fy≪-0.6 still slab-skim jy=0.2 → sealed bowl death before alt<24.
+        // T112 blue: fy=-0.636 @alt40 skim jy=0.2 missed fy<-0.65 by a hair.
+        else if (alt < 36 && fy < -0.55) want = true;
+        else if (alt < 48 && fy < -0.58) want = true;
+        else if (alt < 52 && fy < -0.62) want = true;
+        else if (alt < 72 && fy < -0.65) want = true;
+        if (!want) return false;
+
+        const cover = opts.coverInfo || {};
+        const oh = this.classifyUrbanOverhead(cover, {
+            hardChokeKind: opts.hardChokeKind || cover.hardChokeKind,
+            roofClearance: opts.roofClearance != null ? opts.roofClearance : cover.roofClearance,
+            coverDistance: opts.coverDistance != null ? opts.coverDistance : cover.distance,
+            headroom: opts.headroom != null ? opts.headroom : cover.headroom,
+            altitude: alt,
+            forwardY: fy,
+            aiMapClearAbove: opts.aiMapClearAbove,
+            aiMapSkyOpen: opts.aiMapSkyOpen,
+            underRoof: opts.underRoof,
+            deepEmbed: opts.deepEmbed
+        });
+        const tableClose = oh.class === 'tableClose';
+        const tableWide = oh.class === 'tableWide' || tableClose;
+
+        // Priority 1: steep dive-level beats table ban (T120 weak-skim dive into table).
+        if (fy < -0.72) return true;
+        if (fy < -0.55 && !tableClose && !tableWide) return true;
+        // Near dirt: never defer to skim under table (23:05 / 23:14 ground dumps).
+        if (alt < 8 && (tableClose || tableWide || oh.slabBlocked)) return true;
+        // Priority 2: table owns lateral skim once nose is no longer steep (dirt→ground deaths).
+        if (tableClose) {
+            if (fy > -0.55 && alt >= 14) return false;
+            if (fy > -0.68 && alt >= 20) return false;
+            // Steep under table still arrests; mild/leveled stays skim.
+            if (alt >= 22 && fy > -0.72) return false;
+        }
+        if (tableWide && !tableClose) {
+            if (fy > -0.58 && alt >= 16) return false;
+            if (fy > -0.65 && alt >= 28) return false;
+        }
+        if (fy < -0.55 && !tableClose) return true;
+        return true;
+    },
+
+    getSlabDirtArrestJoyY(altitude, forwardY, opts = {}) {
+        const alt = Number(altitude);
+        const fy = Number(forwardY) || 0;
+        const roof = Number(
+            opts.roofClearance != null
+                ? opts.roofClearance
+                : (opts.coverInfo && opts.coverInfo.roofClearance)
+        );
+        // T100/T75: open-sky arrestY≈0.78 under roof≪0 → ground smash; match table stick owner caps.
+        // Knife 6: near-dirt under deepNeg table → dirt P1 floors (ban weak 0.18 skim smash).
+        const deepNeg = Number.isFinite(roof) && roof < -8;
+        if (deepNeg) {
+            if (!(Number.isFinite(alt))) return 0.22;
+            if (alt < 8) {
+                if (fy < -0.35) return alt < 4 ? 0.88 : (alt < 6 ? 0.78 : 0.68);
+                if (fy < -0.08 || alt < 5) return alt < 4 ? 0.72 : 0.58;
+                return alt < 5 ? 0.48 : 0.36;
+            }
+            if (alt < 12) {
+                if (fy < -0.55) return 0.52;
+                if (fy < -0.25) return 0.38;
+                return 0.26;
+            }
+            if (fy < -0.72) return alt < 14 ? 0.28 : 0.22;
+            if (fy < -0.45 || fy < -0.35) return alt < 18 ? 0.2 : 0.14;
+            return 0.12;
+        }
+        if (!(Number.isFinite(alt))) return 0.42;
+        if (alt < 6) return fy < -0.5 ? 0.78 : 0.68;
+        if (alt < 10) return fy < -0.5 ? 0.72 : 0.62;
+        if (alt < 14) return fy < -0.55 ? 0.62 : 0.52;
+        if (alt < 18) return fy < -0.55 ? 0.55 : 0.42;
+        if (alt < 28) return fy < -0.55 ? 0.52 : 0.42;
+        if (alt < 48) return fy < -0.58 ? 0.48 : 0.38;
+        return 0.38;
+    },
+
+    /**
+     * Horizontal bank that pushes away from nearest cover AABB (+1/-1).
+     */
+    getAwayFromMeshSide(coverInfo = {}, selfForward = null) {
+        const fwd = selfForward || coverInfo.selfForward || null;
+        if (
+            typeof AirArenaUrbanAvoidSide !== 'undefined' &&
+            AirArenaUrbanAvoidSide.computeAabbEscapeSide
+        ) {
+            return Math.sign(
+                AirArenaUrbanAvoidSide.computeAabbEscapeSide(coverInfo.direction, fwd) || 0
+            );
+        }
+        if (!coverInfo.direction || !fwd) return 0;
+        const dx = Number(coverInfo.direction.x);
+        const dz = Number(coverInfo.direction.z);
+        const fx = Number(fwd.x);
+        const fz = Number(fwd.z);
+        if (![dx, dz, fx, fz].every(Number.isFinite)) return 0;
+        return Math.sign(dx * (-fz) + dz * fx) || 0;
+    },
+
+    /**
+     * Undercroft side commit: hold lock to stop thrash, but never lock into mesh.
+     * Unlock only with evidence — gap, allHit flip, fwd collapse, or lock≠away.
+     */
+    resolveUndercroftCommitSide(opts = {}) {
+        const candidate = Math.sign(Number(opts.candidateSide) || 0);
+        const lock = Math.sign(Number(opts.lockSide) || 0);
+        const away = Math.sign(Number(opts.awaySide) || 0);
+        const gap = Math.sign(Number(opts.gapSide) || 0);
+        const gapOwns = !!opts.gapOwns && !!gap;
+        const fwd = Number(opts.forwardDistance);
+        const fwdCollapse = Number.isFinite(fwd) && fwd > 0 && fwd < 8;
+        const allHitUnlock = !!opts.allHitUnlock;
+        const intoMesh = !!(lock && away && lock !== away);
+        const allowUnlock = allHitUnlock || fwdCollapse || intoMesh;
+
+        if (gapOwns) {
+            return {
+                side: gap,
+                source: 'gap',
+                unlocked: !!(lock && lock !== gap),
+                intoMesh: intoMesh ? 1 : 0
+            };
+        }
+        if (lock && !allowUnlock) {
+            return {
+                side: lock,
+                source: 'lockHold',
+                unlocked: false,
+                intoMesh: 0
+            };
+        }
+        if (away) {
+            return {
+                side: away,
+                source: intoMesh
+                    ? 'awayFromMesh'
+                    : (fwdCollapse ? 'fwdUnlock' : (allHitUnlock ? 'allHitUnlock' : 'awayFromMesh')),
+                unlocked: !!(lock && lock !== away),
+                intoMesh: intoMesh ? 1 : 0
+            };
+        }
+        if (allowUnlock && candidate) {
+            return {
+                side: candidate,
+                source: allHitUnlock ? 'allHitUnlock' : 'fwdUnlock',
+                unlocked: !!(lock && lock !== candidate),
+                intoMesh: intoMesh ? 1 : 0
+            };
+        }
+        if (candidate) {
+            return {
+                side: candidate,
+                source: 'candidate',
+                unlocked: false,
+                intoMesh: intoMesh ? 1 : 0
+            };
+        }
+        return {
+            side: lock || 1,
+            source: 'fallback',
+            unlocked: false,
+            intoMesh: intoMesh ? 1 : 0
+        };
+    },
+
+    /**
+     * Soft bank while nose closes into facade — avoid scraping AABB with max |joyX|.
+     * Skip for dirt-arrest / deep-nest unload (those own bank doctrine).
+     */
+    applyFacadeBankCap(stick, opts = {}) {
+        if (!stick) return stick;
+        if (
+            /slabDirtArrest|dirt arrest|deepNestUnload|embedDirtLateral|openSkyFacadeExit|highUndercroft|true-table|tableClose|all-hit|undercroft|slabSkim|slab-silhouette/i.test(String(stick.reason || '')) ||
+            stick.navMode === 'slabDirtArrest' ||
+            stick.navMode === 'deepNestUnload' ||
+            stick.navMode === 'embedDirtLateral' ||
+            stick.navMode === 'openSkyFacadeExit' ||
+            stick.navMode === 'highUndercroftLateral' ||
+            stick.navMode === 'scoreAllHitHold' ||
+            stick.navMode === 'scoreAllHitFlip' ||
+            stick.navMode === 'scoreUndercroft' ||
+            stick.navMode === 'climbOutSkim'
+        ) {
+            return stick;
+        }
+        // tableGlue / undercroft skim: never soften bank (cap was undoing |joyX|≈0.72 before nest tags).
+        if (
+            opts.overheadClass === 'tableClose' ||
+            opts.overheadClass === 'tableWide' ||
+            opts.undercroftSkim ||
+            opts.slabOverhead
+        ) {
+            return stick;
+        }
+        const fwd = Number(opts.forwardDistance);
+        const fy = Number(opts.forwardY);
+        const closing =
+            (Number.isFinite(fwd) && fwd > 0 && fwd < 10) ||
+            (!!opts.facadeClosing && Number.isFinite(fy) && fy < -0.15);
+        if (!closing) return stick;
+        const x = Number(stick.joyX) || 0;
+        if (Math.abs(x) <= 0.45) return stick;
+        const side = Math.sign(x) || 1;
+        stick.joyX = this.clamp(side * 0.42, -0.48, 0.48);
+        if (stick.reason && !/facadeBankCap/i.test(String(stick.reason))) {
+            stick.reason = `${stick.reason} | facadeBankCap=1`;
+        }
+        return stick;
+    },
+
+    /**
+     * cov≈0–6 table nest: max bank + nose unload (T7/T81 red still died level skim while thrashing).
+     * Mutates stick in place.
+     */
+    applyDeepUndercroftNestStick(stick, opts = {}) {
+        if (!stick) return stick;
+        // Soft all-hit nest exit owns bank/thr — do not re-amp to |joyX|≈0.82 thr4 scrape.
+        // Knife 2 residual: pitch owner must not be flattened by deepNestUnload joyY unload.
+        if (
+            stick.nestExitSoft ||
+            stick.navMode === 'scoreAllHitNestExit' ||
+            stick.mode === 'scoreAllHitNestExit' ||
+            this.shouldPreserveEscapePitch(stick) ||
+            this.hasEscapePitchOwner(stick)
+        ) {
+            return stick;
+        }
+        const dist = Number(opts.coverDistance);
+        const nestCover = opts.coverInfo || {
+            roofClearance: opts.roofClearance,
+            distance: dist,
+            headroom: opts.headroom,
+            forwardDistance: opts.forwardDistance,
+            corridorClear: opts.corridorClear,
+            corridorGap: opts.corridorGap,
+            corridorLeftClear: opts.corridorLeftClear,
+            corridorRightClear: opts.corridorRightClear,
+            hardChokeKind: opts.hardChokeKind
+        };
+        const oh = this.classifyUrbanOverhead(nestCover, {
+            altitude: opts.altitude,
+            forwardY: opts.forwardY,
+            coverDistance: dist,
+            roofClearance: opts.roofClearance != null ? opts.roofClearance : nestCover.roofClearance,
+            headroom: opts.headroom,
+            hardChokeKind: opts.hardChokeKind || nestCover.hardChokeKind,
+            aiMapClearAbove: opts.aiMapClearAbove,
+            aiMapSkyOpen: opts.aiMapSkyOpen,
+            hardContact: opts.hardContact,
+            deepEmbed: opts.deepEmbed
+        });
+        const tableClose = oh.class === 'tableClose';
+        // tableGlue: commit nest earlier than cov<2.5 (thrash→glue).
+        // T114 red2: cov≈11 pocket stayed outside dist<10 — widen tableClose claim.
+        if (!(Number.isFinite(dist) && (dist < 6 || (tableClose && dist < 12)))) return stick;
+        // Open courtyard: do not nest-unload — climb/corridor owns the stick (T54 bowl).
+        if (oh.class === 'openBowl' || this.isFacadeBowlOpen(nestCover, {
+            altitude: opts.altitude,
+            coverDistance: dist,
+            headroom: opts.headroom,
+            aiMapClearAbove: opts.aiMapClearAbove,
+            aiMapSkyOpen: opts.aiMapSkyOpen,
+            hardContact: opts.hardContact,
+            deepEmbed: opts.deepEmbed
+        })) {
+            // Replace nest unload with soft bank + climb (do not leave prior joyY=-0.12).
+            return this.applyOpenSkyFacadeExitStick(stick, opts);
+        }
+        const forwardY = Number(opts.forwardY);
+        const alt = Number(opts.altitude);
+        const heat = Number(opts.heat) || 0;
+        const side = Math.sign(Number(stick.joyX) || opts.side || 1) || 1;
+        const extremeGlue = Number.isFinite(dist) && dist < 1.5;
+        const bank = extremeGlue ? 0.82 : (dist < 2.5 ? 0.78 : (tableClose ? 0.76 : 0.72));
+        // Level / climbing into underside: unload. Steep dirt dive under slab: arrest ground first.
+        // Open-sky / wall-close embed: lateral arrest (ban joyY wall-pull, T150 23:37).
+        // T34: cov≈0.3 all-hit hold with soft jy — punch bank + nose unload at extreme glue.
+        if (this.wantsSlabDirtArrest(alt, forwardY, {
+            hardChokeKind: opts.hardChokeKind || nestCover.hardChokeKind,
+            roofClearance: opts.roofClearance != null ? opts.roofClearance : nestCover.roofClearance,
+            coverDistance: dist,
+            coverInfo: nestCover
+        })) {
+            if (this.wantsEmbedDirtLateralArrest(nestCover, {
+                altitude: alt,
+                forwardY,
+                coverDistance: dist,
+                headroom: opts.headroom,
+                coverForwardDistance: opts.forwardDistance,
+                aiMapClearAbove: opts.aiMapClearAbove,
+                aiMapSkyOpen: opts.aiMapSkyOpen
+            })) {
+                return this.applyTableEscapeStickOwner(
+                    this.applyEmbedDirtLateralArrestStick(stick, {
+                        ...opts,
+                        side,
+                        coverDistance: dist,
+                        altitude: alt,
+                        forwardY,
+                        heat
+                    }),
+                    {
+                        ...opts,
+                        coverInfo: nestCover,
+                        coverDistance: dist,
+                        altitude: alt,
+                        forwardY,
+                        side,
+                        awaySide: opts.awaySide || this.getAwayFromMeshSide(nestCover, opts.selfForward),
+                        selfForward: opts.selfForward
+                    }
+                );
+            }
+            const arrestY = this.getSlabDirtArrestJoyY(alt, forwardY, {
+                roofClearance: opts.roofClearance != null ? opts.roofClearance : (nestCover && nestCover.roofClearance),
+                coverInfo: nestCover
+            });
+            stick.joyX = this.clamp(side * 0.38, -0.42, 0.42);
+            stick.joyY = Math.max(Number(stick.joyY) || 0, arrestY);
+            stick.throttle = opts.energyCritical || heat > 86 || opts.lowEnergyEscape ? 3 : 4;
+            stick.pitchScale = 0.62;
+            stick.diveLevelPull = true;
+            stick.dirtPullFloor = true;
+            stick.rollAuth = Math.PI / 12;
+            if (!stick.navMode || stick.navMode === 'scoreUndercroft' || stick.navMode === 'scoreAllHitHold') {
+                stick.navMode = 'slabDirtArrest';
+            }
+            this.markEscapePitchOwner(stick, 'arrest');
+            if (stick.reason && !/slabDirtArrest/i.test(String(stick.reason))) {
+                stick.reason = `${stick.reason} | slabDirtArrest=1`;
+            } else if (!stick.reason) {
+                stick.reason = 'Deep undercroft nest: dirt arrest under slab (ban ground smash)';
+            }
+            return this.applyTableEscapeStickOwner(stick, {
+                ...opts,
+                coverInfo: nestCover,
+                coverDistance: dist,
+                altitude: alt,
+                forwardY,
+                side,
+                awaySide: opts.awaySide || this.getAwayFromMeshSide(nestCover, opts.selfForward),
+                selfForward: opts.selfForward
+            });
+        }
+        // High silhouette (besideTall): max bank + soft climb/level — even when glued.
+        // True tableClose stays nest unload (tableGlue deaths used highUndercroft@cov→0).
+        if (Number.isFinite(alt) && alt >= 48 && !tableClose) {
+            const highBank = Math.max(bank, dist < 6 ? 0.82 : 0.76);
+            stick.joyX = this.clamp(side * highBank, -0.82, 0.82);
+            if (Number.isFinite(forwardY) && forwardY < -0.5) {
+                stick.joyY = Math.min(
+                    Math.max(
+                        Number(stick.joyY) || 0.18,
+                        forwardY < -0.72 ? 0.42 : (forwardY < -0.6 ? 0.32 : 0.22)
+                    ),
+                    forwardY < -0.72 ? 0.48 : 0.36
+                );
+                stick.diveLevelPull = true;
+            } else if (Number.isFinite(forwardY) && forwardY > 0.2) {
+                // Climbing into tall face: keep light climb, do not unload into mesh plane.
+                stick.joyY = oh.class === 'besideTall' ? 0.18 : 0.02;
+                stick.diveLevelPull = false;
+            } else {
+                stick.joyY = oh.class === 'besideTall' ? 0.22 : 0.06;
+                stick.diveLevelPull = false;
+            }
+            stick.throttle = opts.energyCritical || heat > 86 || opts.lowEnergyEscape ? 3 : 4;
+            stick.pitchScale = 0.28;
+            stick.dirtPullFloor = true;
+            stick.rollAuth = Math.PI / 9;
+            stick.navMode = 'highUndercroftLateral';
+            const cleaned = String(stick.reason || '')
+                .replace(/\s*\|\s*deepNestUnload=1/gi, '')
+                .replace(/\bdeepNestUnload=1\b/gi, '')
+                .trim();
+            stick.reason = cleaned
+                ? (/highUndercroft|banNest/i.test(cleaned)
+                    ? cleaned
+                    : `${cleaned} | highUndercroft=1 banNest=1`)
+                : 'High undercroft: max bank + level (ban deepNestUnload)';
+            return this.applyTableEscapeStickOwner(stick, {
+                ...opts,
+                coverInfo: nestCover,
+                coverDistance: dist,
+                altitude: alt,
+                forwardY,
+                side,
+                awaySide: opts.awaySide || this.getAwayFromMeshSide(nestCover, opts.selfForward),
+                selfForward: opts.selfForward
+            });
+        }
+        stick.joyX = this.clamp(side * bank, -0.82, 0.82);
+        if (Number.isFinite(forwardY) && forwardY < -0.4) {
+            stick.joyY = Math.min(Number(stick.joyY) || 0.16, alt < 12 ? 0.22 : 0.16);
+        } else if (Number.isFinite(forwardY) && forwardY > 0.2) {
+            // tableGlue: nose-high into underside — unload, do not keep joyY≈0.1 skim.
+            stick.joyY = forwardY > 0.45 ? -0.14 : (alt >= 36 ? -0.06 : -0.12);
+        } else {
+            stick.joyY = Number.isFinite(alt) && alt >= 36 ? 0.02 : -0.06;
+        }
+        // T34: extreme glue all-hit — max bank + unload (ban soft skim into AABB).
+        if (extremeGlue) {
+            stick.joyX = this.clamp(side * 0.82, -0.82, 0.82);
+            if (!(Number.isFinite(forwardY) && forwardY < -0.45)) {
+                stick.joyY = Number.isFinite(forwardY) && forwardY > 0.15 ? -0.12 : -0.08;
+            }
+            if (stick.reason && !/extremeGlue/i.test(String(stick.reason))) {
+                stick.reason = `${stick.reason} | extremeGlue=1`;
+            }
+        }
+        stick.throttle = opts.energyCritical || heat > 86 || opts.lowEnergyEscape ? 3 : 4;
+        stick.pitchScale = 0.18;
+        stick.diveLevelPull = false;
+        stick.dirtPullFloor = true;
+        stick.rollAuth = Math.PI / 9;
+        if (!stick.navMode || stick.navMode === 'scoreUndercroft' || stick.navMode === 'scoreAllHitHold') {
+            stick.navMode = 'deepNestUnload';
+        }
+        if (stick.reason && !/deepNestUnload/i.test(String(stick.reason))) {
+            stick.reason = `${stick.reason} | deepNestUnload=1${tableClose ? ' tableClose=1' : ''}`;
+        } else if (!stick.reason) {
+            stick.reason = `Deep undercroft nest: thr4 lateral + nose unload${tableClose ? ' | tableClose=1' : ''}`;
+        }
+        return this.applyTableEscapeStickOwner(stick, {
+            ...opts,
+            coverInfo: nestCover,
+            coverDistance: dist,
+            altitude: alt,
+            forwardY,
+            side,
+            awaySide: opts.awaySide || this.getAwayFromMeshSide(nestCover, opts.selfForward),
+            selfForward: opts.selfForward
+        });
     },
 
     /**
@@ -1345,14 +4281,85 @@ window.AirArenaAI = {
         // T66/T53: under-roof hardLock with joyY≈0.1–0.5 while alt<14 still dug into dirt.
         // Near-dirt nose-down always levels first; lateral only after the nose rises.
         // P1 (T109/T139): widen gate — alt<16 / fwdY<-0.08 so 14–16m undercroft does not fall to joyY≈0.06 flat push.
+        // Table/true slab: ban high joyY climb-into-slab (headroom above mesh is a trap).
         if (alt < 16 && forwardY < -0.08 && (embedNow || underRoof || deepEmbed || hardContact || divingAtBldg)) {
-            const joyY = alt < 6 ? 0.92 : (alt < 10 ? 0.82 : (alt < 14 ? 0.72 : 0.62));
             const coverDistDirt = Number(opts.coverDistance);
             const gluedDirt =
                 deepEmbed ||
                 underRoof ||
                 hardContact ||
                 (Number.isFinite(coverDistDirt) && coverDistDirt < 8);
+            if (slabClimbBlocked) {
+                if (this.wantsSlabDirtArrest(alt, forwardY)) {
+                    const dirtCover = {
+                        roofClearance: opts.roofClearance,
+                        distance: opts.coverDistance,
+                        headroom: opts.headroom,
+                        forwardDistance: opts.coverForwardDistance || opts.forwardDistance,
+                        hardChokeKind: opts.hardChokeKind
+                    };
+                    if (this.wantsEmbedDirtLateralArrest(dirtCover, {
+                        altitude: alt,
+                        forwardY,
+                        coverDistance: opts.coverDistance,
+                        headroom: opts.headroom,
+                        coverForwardDistance: opts.coverForwardDistance || opts.forwardDistance,
+                        aiMapClearAbove: opts.aiMapClearAbove,
+                        aiMapSkyOpen: opts.aiMapSkyOpen
+                    })) {
+                        const softY = this.getEmbedDirtLateralSoftY(alt, forwardY, {
+                            coverInfo: dirtCover,
+                            roofClearance: opts.roofClearance
+                        });
+                        const verySteep = Number.isFinite(forwardY) && forwardY < -0.58;
+                        return {
+                            mode: 'dirtEmbedPull',
+                            joyX: this.getEmbedDirtLateralJoyX(side, forwardY),
+                            joyY: softY,
+                            throttle: energyCritical || heat > 86 ? 3 : 4,
+                            pitchScale: verySteep ? 0.55 : 0.45,
+                            rollAuth: Math.PI / (verySteep ? 8 : 10),
+                            diveLevelPull: true,
+                            dirtPullFloor: true,
+                            statusText: `NPC: 近地嵌樓側拉改平 ${opts.coverLabel || ''}`,
+                            reason: 'Near-dirt embed: dirt arrest lateral (ban wall-pull) P0 | embedDirtLateral=1'
+                        };
+                    }
+                    const arrestY = this.getSlabDirtArrestJoyY(alt, forwardY, {
+                        roofClearance: opts.roofClearance,
+                        coverInfo: dirtCover
+                    });
+                    return {
+                        mode: 'dirtEmbedPull',
+                        joyX: this.clamp(side * (forwardY < -0.55 ? 0.28 : 0.38), -0.42, 0.42),
+                        joyY: arrestY,
+                        throttle: energyCritical || heat > 86 ? 3 : 4,
+                        pitchScale: 0.62,
+                        rollAuth: Math.PI / 12,
+                        diveLevelPull: true,
+                        dirtPullFloor: true,
+                        statusText: `NPC: 桌下砸地改平 ${opts.coverLabel || ''}`,
+                        reason: 'Near-dirt undercroft slab: dirt arrest (ban ground smash) P0'
+                    };
+                }
+                const joyY = alt < 6 ? 0.28 : (alt < 10 ? 0.2 : 0.16);
+                const bank = forwardY < -0.55
+                    ? (alt < 8 ? 0.42 : 0.52)
+                    : ((Number.isFinite(coverDistDirt) && coverDistDirt < 6) ? 0.62 : 0.58);
+                return {
+                    mode: 'dirtEmbedPull',
+                    joyX: this.clamp(side * bank, -0.72, 0.72),
+                    joyY,
+                    throttle: energyCritical || heat > 86 ? 3 : 3,
+                    pitchScale: 0.22,
+                    rollAuth: Math.PI / 10,
+                    diveLevelPull: false,
+                    dirtPullFloor: true,
+                    statusText: `NPC: 桌下側推 ${opts.coverLabel || ''}`,
+                    reason: 'Near-dirt undercroft slab: lateral skim (ban climb-into-slab)'
+                };
+            }
+            const joyY = alt < 6 ? 0.92 : (alt < 10 ? 0.82 : (alt < 14 ? 0.72 : 0.62));
             // T61 dirt: |joyX|≈0.48 while fwdY≪0 stole the pull — keep bank soft while steep.
             // P1: once nose recovers, hard-cut out of mesh (was soft 0.36 → stuck @cov≈5).
             let bank;
@@ -1475,7 +4482,25 @@ window.AirArenaAI = {
                 };
             }
             // T61 red: cover≈1.5m + diveFacade leveled into the wall — break glue laterally first.
+            // P0/T150: under tableUndercroft this must NOT climb (joyY=0.55 into slab killed blue2).
             if (gluedClose && diveIntoFacade && alt >= 24) {
+                if (slabClimbBlocked) {
+                    const skimY = forwardY < -0.55
+                        ? 0.18
+                        : (forwardY < -0.25 ? 0.14 : 0.12);
+                    return {
+                        mode: 'diveGlueBreak',
+                        joyX: this.clamp(side * 0.72, -0.78, 0.78),
+                        joyY: skimY,
+                        throttle: energyCritical || heat > 82 ? 3 : 4,
+                        pitchScale: 0.16,
+                        rollAuth: Math.PI / 9,
+                        diveLevelPull: forwardY < -0.35,
+                        dirtPullFloor: true,
+                        statusText: `NPC: 桌下俯衝側破 ${opts.coverLabel || ''}`,
+                        reason: 'T38 tableUndercroft: diveGlue lateral skim (no climb into slab) P0'
+                    };
+                }
                 return {
                     mode: 'diveGlueBreak',
                     joyX: this.clamp(side * 0.52, -0.55, 0.55),
@@ -1604,58 +4629,68 @@ window.AirArenaAI = {
             const earlyUndercroft =
                 !!underRoof &&
                 Number.isFinite(roofClear) &&
-                roofClear < -1.5 &&
+                roofClear < -0.8 &&
                 Number.isFinite(coverDist) &&
-                coverDist < (Number(this.EARLY_UNDERCROFT_COV) || 10);
+                coverDist < (Number(this.EARLY_UNDERCROFT_COV) || 14);
             const undercroftLat = trueUndercroft || earlyUndercroft || slabClimbBlocked;
             if (glued && noseHigh) {
                 const allowClimb =
                     !slabClimbBlocked &&
                     !earlyUndercroft &&
                     (gapClimbOk || bakeExitUp || (Number.isFinite(coverDist) && coverDist < 2.5 && forwardY > -0.15 && !(Number.isFinite(roofClear) && roofClear < -1)));
-                // P1: undercroft nose-high — skim floor (was 0.08/0.12) so thr4 bank actually exits AABB.
-                const undercroftUnloadY = alt < 18 ? 0.16 : (alt < 28 ? 0.12 : 0.08);
+                // T80: undercroft nose-high — skim floor; never sink while exiting AABB.
+                const undercroftUnloadY = alt < 18 ? 0.18 : (alt < 28 ? 0.14 : 0.1);
+                const deepNest = Number.isFinite(coverDist) && coverDist < 2.5 && undercroftLat;
                 return {
                     mode: 'noseUnload',
-                    joyX: this.clamp(side * (deepEmbed || coverDist < 1.5 ? 0.58 : 0.54), -0.62, 0.62),
-                    joyY: allowClimb
-                        ? (alt < 28 ? 0.36 : 0.26)
-                        : (gapClimbOk && !undercroftLat
-                            ? (alt < 22 ? 0.28 : 0.18)
-                            : (undercroftLat
-                                ? undercroftUnloadY
-                                : (alt < 28 ? 0.16 : 0.1))),
+                    joyX: this.clamp(side * (undercroftLat ? (slabClimbBlocked || deepNest ? 0.78 : 0.7) : (deepEmbed || coverDist < 1.5 ? 0.58 : 0.54)), -0.82, 0.82),
+                    joyY: deepNest
+                        ? -0.12
+                        : (allowClimb
+                            ? (alt < 28 ? 0.36 : 0.26)
+                            : (gapClimbOk && !undercroftLat
+                                ? (alt < 22 ? 0.28 : 0.18)
+                                : (undercroftLat
+                                    ? undercroftUnloadY
+                                    : (alt < 28 ? 0.16 : 0.1)))),
                     throttle: energyCritical || heat > 82 || lowEnergyEscape ? 3 : 4,
-                    pitchScale: allowClimb ? 0.34 : (gapClimbOk && !undercroftLat ? 0.24 : 0.16),
-                    rollAuth: Math.PI / 10,
+                    pitchScale: deepNest ? 0.18 : (allowClimb ? 0.34 : (gapClimbOk && !undercroftLat ? 0.24 : 0.16)),
+                    rollAuth: Math.PI / 9,
                     diveLevelPull: false,
-                    dirtPullFloor: alt < 5,
-                    statusText: 'NPC: 嵌樓抬頭側推 ' + (opts.coverLabel || ''),
-                    reason: allowClimb
-                        ? 'T38 glued nose-high: thr4 lateral + controlled climb exit'
-                        : (slabClimbBlocked
-                            ? 'T38 tableUndercroft: thr4 lateral first (no skyOpen climb) P1 undercroftBoost'
-                            : (undercroftLat
-                                ? 'T38 true undercroft: thr4 lateral first (no climb into slab) P1 undercroftBoost'
-                                : (gapClimbOk
-                                    ? 'T38 gap-open: unload lateral + climb floor (no flat glue)'
-                                    : 'T38 glued under-roof: unload + strong lateral + climb floor (no slab dive)')))
+                    dirtPullFloor: undercroftLat || alt < 8,
+                    statusText: deepNest
+                        ? 'NPC: 桌下卸鼻側推 ' + (opts.coverLabel || '')
+                        : 'NPC: 嵌樓抬頭側推 ' + (opts.coverLabel || ''),
+                    reason: deepNest
+                        ? 'T38 deep undercroft nest: thr4 lateral + nose unload (cov<2.5)'
+                        : (allowClimb
+                            ? 'T38 glued nose-high: thr4 lateral + controlled climb exit'
+                            : (slabClimbBlocked
+                                ? 'T38 tableUndercroft: thr4 lateral first (no skyOpen climb) P1 undercroftBoost'
+                                : (undercroftLat
+                                    ? 'T38 true undercroft: thr4 lateral first (no climb into slab) P1 undercroftBoost'
+                                    : (gapClimbOk
+                                        ? 'T38 gap-open: unload lateral + climb floor (no flat glue)'
+                                        : 'T38 glued under-roof: unload + strong lateral + climb floor (no slab dive)'))))
                 };
             }
             if (glued && !noseDown) {
-                // P1: deep / early undercroft — max thr4-safe bank (was 0.52) + skim joyY (was 0.06 flat).
+                // T80: early undercroft max bank + never-negative skim (preDeath had joyY=-0.12).
                 const deepClose = (Number.isFinite(coverDist) && coverDist < 3) || deepEmbed;
+                // T150 table: max bank under slab — scored may miss; T38 must still cut hard.
                 const auth = undercroftLat
-                    ? (deepClose || (Number.isFinite(coverDist) && coverDist < 6) ? 0.62 : 0.58)
+                    ? (slabClimbBlocked
+                        ? (deepClose || (Number.isFinite(coverDist) && coverDist < 8) ? 0.8 : 0.74)
+                        : (deepClose || (Number.isFinite(coverDist) && coverDist < 8) ? 0.76 : 0.7))
                     : (deepClose ? 0.58 : 0.52);
                 const allowClimb =
                     !slabClimbBlocked &&
                     !earlyUndercroft &&
                     (gapClimbOk || bakeExitUp || (Number.isFinite(coverDist) && coverDist < 2 && !(Number.isFinite(roofClear) && roofClear < -1)));
                 const flatY = mildDescend
-                    ? (alt < 16 ? 0.22 : 0.14)
+                    ? (alt < 16 ? 0.24 : 0.16)
                     : (undercroftLat
-                        ? (alt < 18 ? 0.14 : (alt < 28 ? 0.1 : 0.08))
+                        ? (alt < 18 ? 0.16 : (alt < 28 ? 0.12 : 0.1))
                         : (alt < 10 ? 0.06 : 0.02));
                 const gapY = mildDescend
                     ? (alt < 16 ? 0.36 : 0.28)
@@ -1667,26 +4702,38 @@ window.AirArenaAI = {
                 const mode = deepEmbed || earlyUndercroft
                     ? 'embedPush'
                     : (gapClimbOk || allowClimb ? 'embedGapPush' : 'embedPush');
-                return {
-                    mode,
-                    joyX: this.clamp(side * auth, -0.62, 0.62),
-                    joyY: allowClimb ? climbY : (gapClimbOk && !undercroftLat ? gapY : flatY),
+                const joyYOut = allowClimb ? climbY : (gapClimbOk && !undercroftLat ? gapY : flatY);
+                const deepNest = Number.isFinite(coverDist) && coverDist < 2.5 && undercroftLat;
+                const stick = {
+                    mode: deepNest ? 'noseUnload' : mode,
+                    joyX: this.clamp(side * (deepNest ? Math.max(auth, 0.78) : auth), -0.82, 0.82),
+                    // Deep nest: never force skim floor that cancels unload (T7 cov=0).
+                    joyY: deepNest
+                        ? (noseHigh || forwardY > 0.05 ? -0.12 : -0.06)
+                        : (undercroftLat ? Math.max(0.12, joyYOut) : joyYOut),
                     throttle: energyCritical || heat > 82 || lowEnergyEscape ? 3 : 4,
-                    pitchScale: allowClimb ? (mildDescend ? 0.4 : 0.28) : (gapClimbOk && !undercroftLat ? (mildDescend ? 0.36 : 0.2) : (mildDescend ? 0.28 : 0.14)),
-                    rollAuth: Math.PI / 10,
-                    diveLevelPull: !!mildDescend && alt < 20,
-                    dirtPullFloor: alt < 5,
-                    statusText: 'NPC: 嵌樓側推脫離 ' + (opts.coverLabel || ''),
-                    reason: allowClimb
-                        ? 'T38 glued mesh: thr4 lateral + controlled climb exit (bake/sky/gap)'
-                        : (trueUndercroft || earlyUndercroft || deepEmbed || slabClimbBlocked
-                            ? (earlyUndercroft && !trueUndercroft
-                                ? 'T38 early undercroft: thr4 lateral push (cov<10, no slab climb) P1 undercroftBoost'
-                                : 'T38 true undercroft/deep: thr4 lateral push (no embedFlip, no slab climb) P1 undercroftBoost')
-                            : (gapClimbOk
-                                ? 'T38 gap-open: thr4 lateral + climb floor (no flat glue)'
-                                : 'T38 glued mesh: sustained thr4 horizontal push-out (climb only after clear)'))
+                    pitchScale: deepNest
+                        ? 0.18
+                        : (allowClimb ? (mildDescend ? 0.4 : 0.28) : (gapClimbOk && !undercroftLat ? (mildDescend ? 0.36 : 0.2) : (mildDescend ? 0.28 : 0.14))),
+                    rollAuth: Math.PI / 9,
+                    diveLevelPull: !deepNest && !!mildDescend && alt < 20,
+                    dirtPullFloor: undercroftLat || alt < 8,
+                    statusText: deepNest
+                        ? 'NPC: 桌下卸鼻側推 ' + (opts.coverLabel || '')
+                        : 'NPC: 嵌樓側推脫離 ' + (opts.coverLabel || ''),
+                    reason: deepNest
+                        ? 'T38 deep undercroft nest: thr4 lateral + nose unload (cov<2.5)'
+                        : (allowClimb
+                            ? 'T38 glued mesh: thr4 lateral + controlled climb exit (bake/sky/gap)'
+                            : (trueUndercroft || earlyUndercroft || deepEmbed || slabClimbBlocked
+                                ? (earlyUndercroft && !trueUndercroft
+                                    ? 'T38 early undercroft: thr4 lateral push (cov<14, no slab climb) P1 undercroftBoost'
+                                    : 'T38 true undercroft/deep: thr4 lateral push (no embedFlip, no slab climb) P1 undercroftBoost')
+                                : (gapClimbOk
+                                    ? 'T38 gap-open: thr4 lateral + climb floor (no flat glue)'
+                                    : 'T38 glued mesh: sustained thr4 horizontal push-out (climb only after clear)')))
                 };
+                return stick;
             }
 
             const joyY = steepNose
@@ -1705,13 +4752,15 @@ window.AirArenaAI = {
             const undercroftCap = trueUndercroft || earlyUndercroft || slabClimbBlocked || (deepEmbed && Number.isFinite(roofClear) && roofClear < -2);
             return {
                 mode: 'embedPush',
-                joyX: this.clamp(side * (undercroftCap ? Math.max(auth, 0.55) : auth), -0.62, 0.62),
-                joyY: undercroftCap ? Math.min(joyY, mildDescend ? 0.28 : 0.14) : joyY,
+                joyX: this.clamp(side * (undercroftCap ? Math.max(auth, 0.58) : auth), -0.7, 0.7),
+                joyY: undercroftCap
+                    ? Math.max(0.12, Math.min(joyY, mildDescend ? 0.28 : 0.16))
+                    : joyY,
                 throttle: energyCritical || heat > 82 || lowEnergyEscape ? 3 : 4,
                 pitchScale: steepNose ? 0.52 : (noseDown || mildDescend ? 0.36 : 0.14),
                 rollAuth: Math.PI / 10,
                 diveLevelPull: !!(noseDown || (mildDescend && alt < 20)),
-                dirtPullFloor: alt < 5,
+                dirtPullFloor: undercroftCap || alt < 8,
                 statusText: 'NPC: 嵌樓側推脫離 ' + (opts.coverLabel || ''),
                 reason: deepEmbed
                     ? 'Deep embed: preferred-side thr4 push-out (no flip under slab) P1 undercroftBoost'
@@ -1805,9 +4854,523 @@ window.AirArenaAI = {
         return action;
     },
 
+    /** P0: bake WP / bake-corridor escape modes that must not own stick into mesh. */
+    isBakeRouteEscapeMode(mode) {
+        return mode === 'scoreBakeWp' || mode === 'scoreBakeWpClimb' || mode === 'scoreBakeCut';
+    },
+
+    /**
+     * P0: dead bake route cut — buildingHit or collapsed score on WP/corridor candidate.
+     * Dump fingerprint: "bake survival … hit=1" / "bake-corridor … hit=1".
+     */
+    isDeadBakeRouteCut(mode, buildingHit, score) {
+        if (!this.isBakeRouteEscapeMode(mode)) return false;
+        if (buildingHit) return true;
+        return Number(score) < -160;
+    },
+
+    /**
+     * P0: drop sticky WP memory + gapHold so next turn can flip homotopy (not stick ban).
+     */
+    breakSurvivalWpDeadCut(teamId, turnNo, why = 'deadWp') {
+        if (!teamId) return;
+        if (this.survivalWaypointMemory[teamId]) {
+            delete this.survivalWaypointMemory[teamId];
+        }
+        const t = Math.max(1, Number(turnNo) || 1);
+        const avoid = this.getUrbanAvoidMemory(teamId);
+        if (avoid && Number(avoid.gapHoldUntil) >= t) {
+            avoid.gapHoldUntil = t - 1;
+            avoid.gapHoldSource = `pocketReject:${why}`;
+        }
+        // P1: flip to alternate corridor homotopy when dead WP cut rejected.
+        const ht = this.corridorHomotopyMemory[teamId];
+        if (ht && ht.alt && ht.active) {
+            this.corridorHomotopyMemory[teamId] = {
+                active: ht.alt,
+                alt: ht.active,
+                untilTurn: t + 6,
+                switchWhy: `deadWp:${why}`,
+                updatedTurn: t
+            };
+        } else if (ht) {
+            delete this.corridorHomotopyMemory[teamId];
+        }
+    },
+
+    /** Map side / climbBias → homotopy id (L | R | C). */
+    homotopyIdFromSide(side, climbBias = 0) {
+        const climb = Number(climbBias) || 0;
+        if (climb >= 0.55) return 'C';
+        const s = Math.sign(Number(side) || 0);
+        if (s < 0) return 'L';
+        if (s > 0) return 'R';
+        return climb >= 0.35 ? 'C' : null;
+    },
+
+    /**
+     * Climb homotopy (C) is unsafe: funnel WP, true undercroft, or diving into closing cover.
+     * Dump T150a t28–30 still had homotopy=C pocket=0.22 before wpFunnel lit — reject earlier.
+     * Returns why tag or null.
+     */
+    climbHomotopyRejectWhy(coverInfo = {}, opts = {}) {
+        const wp = opts.survivalWp && opts.survivalWp.ok ? opts.survivalWp : opts.survivalWp;
+        const wpRisk = Number(wp && wp.pocketRisk) || 0;
+        const wpFunnel = !!(wp && (wp.isFunnel || wpRisk >= 0.28));
+        const replanWhy = String((wp && wp.replanWhy) || opts.wpReplanWhy || '');
+        const funnelReplan = /funnelGapFlip|funnelAltPick|lowerPocket/.test(replanWhy);
+        if (funnelReplan) return 'funnelReplanLateral';
+        if (wpFunnel) return 'funnelRejectC';
+
+        const choke = opts.hardChokeKind || coverInfo.hardChokeKind || null;
+        if (choke === 'tableUndercroft' || choke === 'tightUndercroft') return 'slabRejectC';
+
+        const trueUnder = !!(opts.trueUnderRoof || this.isTrueUnderRoof(coverInfo, {
+            hardContact: opts.hardContact
+        }));
+        if (trueUnder) return 'slabRejectC';
+
+        const roof = Number(coverInfo.roofClearance);
+        const cov = Number(coverInfo.distance);
+        const fwd = Number(coverInfo.forwardDistance);
+        const head = Number(coverInfo.headroom);
+        const fy = Number(opts.forwardY);
+        // Entering nest: low roof + tight cover (before formal undercroft).
+        if (Number.isFinite(roof) && roof < 12 && Number.isFinite(cov) && cov < 16) return 'slabRejectC';
+        if (Number.isFinite(roof) && roof < 4 && Number.isFinite(cov) && cov < 28) return 'slabRejectC';
+        if (Number.isFinite(head) && head < 12 && Number.isFinite(cov) && cov < 18) return 'slabRejectC';
+        if (opts.hardContact && Number.isFinite(roof) && roof < 14) return 'slabRejectC';
+        // Diving into closing facade / cover — skyOpen must not soft-min C.
+        if (
+            Number.isFinite(fy) &&
+            fy < -0.12 &&
+            Number.isFinite(cov) &&
+            cov < 22 &&
+            Number.isFinite(roof) &&
+            roof < 18
+        ) {
+            return 'slabRejectC';
+        }
+        if (
+            Number.isFinite(fy) &&
+            fy < -0.12 &&
+            Number.isFinite(fwd) &&
+            fwd > 0 &&
+            fwd < 16 &&
+            Number.isFinite(roof) &&
+            roof < 22
+        ) {
+            return 'slabRejectC';
+        }
+        return null;
+    },
+
+    /**
+     * P1: build topologically distinct corridor options (left street / right street / climb).
+     * pocketScore 0 = open corridor … 1 = funnel. Returns sorted best-first, distinct ids.
+     */
+    buildCorridorHomotopyOptions(coverInfo = {}, opts = {}) {
+        const gap = this.getCorridorGapAsymmetry(coverInfo);
+        const wp = opts.survivalWp && opts.survivalWp.ok ? opts.survivalWp : opts.survivalWp;
+        const bake = opts.bakeCorridor && opts.bakeCorridor.ok ? opts.bakeCorridor : opts.bakeCorridor;
+        const dual = opts.dualHomotopyCorridors && opts.dualHomotopyCorridors.ok
+            ? opts.dualHomotopyCorridors
+            : null;
+        const cov = Number(coverInfo.distance);
+        const fwd = Number(coverInfo.forwardDistance);
+        const narrowing =
+            (Number.isFinite(cov) && cov < 14) ||
+            (Number.isFinite(fwd) && fwd > 0 && fwd < 16);
+        const wpRisk = Number(wp && wp.pocketRisk) || 0;
+        const wpFunnel = !!(wp && (wp.isFunnel || wpRisk >= 0.28));
+        const wpSide = Math.sign(Number(wp && wp.preferredSide) || 0);
+        const climbRejectWhy = this.climbHomotopyRejectWhy(coverInfo, opts);
+        const climbUnsafe = !!climbRejectWhy;
+        const dualBySide = {};
+        if (dual && Array.isArray(dual.corridors)) {
+            for (let i = 0; i < dual.corridors.length; i++) {
+                const c = dual.corridors[i];
+                if (!c || !c.side) continue;
+                dualBySide[Math.sign(c.side)] = c;
+            }
+        }
+        const options = [];
+        for (const side of [-1, 1]) {
+            let pocket = 0.42;
+            let source = 'lateral';
+            const dualC = dualBySide[side];
+            // Bake dual corridor is authoritative when present (mid-term top-2).
+            if (dualC && dualC.ok !== false) {
+                pocket = Number(dualC.pocketRisk);
+                if (!Number.isFinite(pocket)) pocket = 0.42;
+                if (dualC.isFunnel) pocket = Math.max(pocket, 0.45);
+                if (dualC.corridorOpen) pocket = Math.min(pocket, Math.max(0.12, pocket * 0.85));
+                source = 'bakeDual';
+            }
+            if (gap.side === side && (Number(gap.strength) || 0) >= 1) {
+                const gapPocket = (Number(gap.strength) || 0) >= 2 ? 0.12 : 0.22;
+                pocket = source === 'bakeDual' ? Math.min(pocket, gapPocket + 0.08) : gapPocket;
+                if (source !== 'bakeDual') source = 'gap';
+            } else if (gap.side === -side && (Number(gap.strength) || 0) >= 1) {
+                const gapPocket = (Number(gap.strength) || 0) >= 2 ? 0.72 : 0.55;
+                pocket = source === 'bakeDual' ? Math.max(pocket, gapPocket * 0.85) : gapPocket;
+            }
+            if (wp && wpSide === side) {
+                // Dump T150a: WP funnel wash set R pocket=1 while bakeDual R=0.08 open.
+                // Do not overwrite a clearly open bakeDual street with sticky WP risk.
+                const dualOpenEscape =
+                    dualC &&
+                    (
+                        dualC.corridorOpen ||
+                        (Number.isFinite(Number(dualC.pocketRisk)) &&
+                            Number(dualC.pocketRisk) + 0.18 < wpRisk)
+                    );
+                if (!dualOpenEscape) {
+                    pocket = Math.max(pocket, wpRisk);
+                    if (wp.isFunnel || wpRisk >= 0.28) pocket = Math.max(pocket, 0.45);
+                    if (source !== 'bakeDual') source = 'wp';
+                }
+            }
+            if (wpFunnel && wpSide && side === -wpSide) {
+                // Opposite of funnel WP = escape street — keep low pocket.
+                pocket = Math.min(pocket, Math.max(0.1, 0.38 - wpRisk * 0.25));
+            }
+            if (bake && Math.sign(Number(bake.preferredSide) || 0) === side) {
+                if (bake.corridorOpen) pocket = Math.min(pocket, 0.28);
+                else pocket = Math.max(pocket, 0.38);
+            }
+            if (narrowing) pocket = Math.min(1, pocket + 0.12);
+            options.push({
+                homotopyId: side < 0 ? 'L' : 'R',
+                side,
+                climbBias: 0,
+                pocketScore: Number(Math.max(0, Math.min(1, pocket)).toFixed(2)),
+                source
+            });
+        }
+        let climbPocket = 0.4;
+        const roof = Number(coverInfo.roofClearance);
+        if (Number.isFinite(roof) && roof < -0.5) climbPocket = 0.78;
+        else if (!climbUnsafe && (opts.aiMapSkyOpen || opts.aiMapClearAbove)) climbPocket = 0.22;
+        // Dump fix: climbBias/forwardClimb used to *lower* C pocket during funnel → active=C hold
+        // while wpFunnel=1. Funnel / slab / dive-in → punish C; only soft-min C when open corridor.
+        if (climbUnsafe) {
+            climbPocket = Math.max(climbPocket, 0.68, wpFunnel ? wpRisk * 0.9 : 0.68);
+            if (Number.isFinite(roof) && roof < -0.8) climbPocket = Math.max(climbPocket, 0.82);
+        } else if (wp && (wp.forwardClimb || Number(wp.climbBias) >= 0.35)) {
+            climbPocket = Math.min(
+                climbPocket,
+                Math.max(0.14, (wpRisk || 0.28) * 0.85)
+            );
+        }
+        if (narrowing && Number.isFinite(roof) && roof >= 2 && !climbUnsafe) {
+            climbPocket = Math.min(climbPocket, 0.32);
+        }
+        const climbSide =
+            Math.sign(Number(wp && wp.preferredSide) || Number(bake && bake.preferredSide) || Number(gap.side) || 0) || 0;
+        options.push({
+            homotopyId: 'C',
+            side: climbSide,
+            climbBias: Math.max(0.4, Number(wp && wp.climbBias) || 0.4),
+            pocketScore: Number(Math.max(0, Math.min(1, climbPocket)).toFixed(2)),
+            source: 'climb'
+        });
+        options.sort((a, b) => a.pocketScore - b.pocketScore);
+
+        // Funnel / slab: prefer L+R pair so climb cannot monopolize top-2 commit slots.
+        if (climbUnsafe) {
+            const laterals = options
+                .filter((o) => o.homotopyId !== 'C')
+                .sort((a, b) => a.pocketScore - b.pocketScore);
+            const climb = options.find((o) => o.homotopyId === 'C') || null;
+            if (laterals.length >= 2) return laterals.slice(0, 2);
+            if (laterals.length === 1) {
+                return climb ? [laterals[0], climb] : laterals;
+            }
+        }
+
+        const top = [];
+        const seen = {};
+        for (let i = 0; i < options.length; i++) {
+            const o = options[i];
+            if (seen[o.homotopyId]) continue;
+            seen[o.homotopyId] = 1;
+            top.push(o);
+            if (top.length >= 2) break;
+        }
+        return top;
+    },
+
+    /**
+     * P1: commit corridor homotopy (active + alt). Switch only on pocket margin / facade narrow / forceFlip.
+     */
+    resolveCorridorHomotopy(teamId, turnNo, coverInfo = {}, opts = {}) {
+        if (!teamId) return null;
+        const t = Math.max(1, Number(turnNo) || 1);
+        const options = this.buildCorridorHomotopyOptions(coverInfo, opts);
+        if (!options.length) return null;
+        const mem = this.corridorHomotopyMemory[teamId];
+        // Mid-term hysteresis: wider pocket margin + longer hold (less joyX flicker).
+        const margin = 0.26;
+        let active = options[0];
+        let alt = options[1] || null;
+        let switchWhy = mem ? 'expired' : 'init';
+        const wp = opts.survivalWp && opts.survivalWp.ok ? opts.survivalWp : opts.survivalWp;
+        const wpRisk = Number(wp && wp.pocketRisk) || 0;
+        const wpFunnel = !!(wp && (wp.isFunnel || wpRisk >= 0.28));
+        const replanWhy = String((wp && wp.replanWhy) || opts.wpReplanWhy || '');
+        const funnelReplan = /funnelGapFlip|funnelAltPick|lowerPocket/.test(replanWhy);
+        const climbRejectWhy = this.climbHomotopyRejectWhy(coverInfo, opts);
+        const climbUnsafe = !!climbRejectWhy;
+        const combatSide = Math.sign(Number(opts.combatPreferredSide) || 0);
+        const dual = opts.dualHomotopyCorridors && opts.dualHomotopyCorridors.ok
+            ? opts.dualHomotopyCorridors
+            : null;
+        const dualPrefId = dual && dual.preferredHomotopyId
+            ? String(dual.preferredHomotopyId)
+            : null;
+        const dualPrefRisk = (() => {
+            if (!dual || !dualPrefId) return null;
+            const c = dualPrefId === 'L' ? dual.left : dual.right;
+            return c && Number.isFinite(Number(c.pocketRisk)) ? Number(c.pocketRisk) : null;
+        })();
+        const dualOtherRisk = (() => {
+            if (!dual || !dualPrefId) return null;
+            const c = dualPrefId === 'L' ? dual.right : dual.left;
+            return c && Number.isFinite(Number(c.pocketRisk)) ? Number(c.pocketRisk) : null;
+        })();
+
+        const refresh = (id, fallback) => {
+            const live = options.find((o) => o.homotopyId === id);
+            if (live) return live;
+            return fallback || null;
+        };
+
+        const bestLateral = () => {
+            const laterals = options
+                .filter((o) => o.homotopyId !== 'C')
+                .sort((a, b) => a.pocketScore - b.pocketScore);
+            if (!laterals.length) return null;
+            // Prefer bake dual preferred street when pocket gap is clear.
+            if (dualPrefId) {
+                const match = laterals.find((o) => o.homotopyId === dualPrefId);
+                if (
+                    match &&
+                    dualPrefRisk != null &&
+                    dualOtherRisk != null &&
+                    dualOtherRisk >= dualPrefRisk + 0.18
+                ) {
+                    return match;
+                }
+            }
+            const wpSide = Math.sign(Number(wp && wp.preferredSide) || 0);
+            // After funnel replan, preferredSide is already the escape street.
+            if (funnelReplan && wpSide) {
+                const match = laterals.find((o) => o.side === wpSide);
+                if (match) return match;
+            } else if (wpFunnel && wpSide) {
+                // Sticky funnel WP still points into the trap — take opposite / best pocket.
+                const opp = laterals.find((o) => o.side === -wpSide);
+                if (opp) return opp;
+            } else if (wpSide) {
+                const match = laterals.find((o) => o.side === wpSide);
+                if (match) return match;
+            }
+            return laterals[0];
+        };
+
+        const rejectClimbToLateral = (liveActive, liveAlt, whyTag) => {
+            const lat = bestLateral() || (liveAlt && liveAlt.homotopyId !== 'C' ? liveAlt : null);
+            if (!lat) return null;
+            return {
+                active: lat,
+                alt: liveActive && liveActive.homotopyId === 'C'
+                    ? (options.find((o) => o.homotopyId !== 'C' && o.homotopyId !== lat.homotopyId) || liveActive)
+                    : liveActive,
+                switchWhy: whyTag
+            };
+        };
+
+        if (mem && mem.active && t <= Number(mem.untilTurn || -1)) {
+            const liveActive = refresh(mem.active.homotopyId, mem.active);
+            const liveAlt =
+                refresh(mem.alt && mem.alt.homotopyId, null) ||
+                options.find((o) => o.homotopyId !== liveActive.homotopyId) ||
+                alt;
+            const activePocket = Number(liveActive.pocketScore);
+            const altPocket = liveAlt != null ? Number(liveAlt.pocketScore) : 1;
+            const cov = Number(coverInfo.distance);
+            const narrowing =
+                Number.isFinite(cov) &&
+                cov < 12 &&
+                liveActive.homotopyId !== 'C';
+
+            if (opts.forceFlip && liveAlt) {
+                active = liveAlt;
+                alt = liveActive;
+                switchWhy = 'deadWpFlip';
+            } else if (
+                // Dump T150a red2: bakeDualHt pref=R R=0.08 but active=L why=hold.
+                // Clear dual pocket gap → force preferred street (not hysteresis hold).
+                dualPrefId &&
+                liveActive.homotopyId !== 'C' &&
+                liveActive.homotopyId !== dualPrefId &&
+                dualPrefRisk != null &&
+                dualOtherRisk != null &&
+                dualOtherRisk >= dualPrefRisk + 0.18
+            ) {
+                const pref = options.find((o) => o.homotopyId === dualPrefId) || bestLateral();
+                if (pref && pref.homotopyId !== liveActive.homotopyId) {
+                    active = pref;
+                    alt = liveActive;
+                    switchWhy = 'bakeDualPref';
+                } else {
+                    active = Object.assign({}, mem.active, liveActive);
+                    alt = liveAlt || mem.alt || null;
+                    switchWhy = 'hold';
+                }
+            } else if (climbUnsafe && liveActive.homotopyId === 'C') {
+                const flipped = rejectClimbToLateral(liveActive, liveAlt, climbRejectWhy);
+                if (flipped) {
+                    active = flipped.active;
+                    alt = flipped.alt;
+                    switchWhy = flipped.switchWhy;
+                } else {
+                    active = Object.assign({}, mem.active, liveActive);
+                    alt = liveAlt || mem.alt || null;
+                    switchWhy = 'hold';
+                }
+            } else if (funnelReplan && liveAlt && liveActive.homotopyId !== liveAlt.homotopyId) {
+                const lat = bestLateral();
+                if (lat && lat.homotopyId !== liveActive.homotopyId) {
+                    active = lat;
+                    alt = liveActive;
+                    switchWhy = 'funnelReplanLateral';
+                } else if (liveAlt && activePocket >= altPocket + 0.08) {
+                    active = liveAlt;
+                    alt = liveActive;
+                    switchWhy = 'funnelReplanLateral';
+                } else {
+                    active = Object.assign({}, mem.active, liveActive);
+                    alt = liveAlt || mem.alt || null;
+                    switchWhy = 'hold';
+                }
+            } else if (
+                // Funnel sticky on trap side while L/R alt is open (T132: WP L funnel, ht R better).
+                wpFunnel &&
+                !funnelReplan &&
+                liveActive.homotopyId !== 'C'
+            ) {
+                const lat = bestLateral();
+                if (lat && lat.homotopyId !== liveActive.homotopyId && Number(lat.pocketScore) + 0.06 < activePocket) {
+                    active = lat;
+                    alt = liveActive;
+                    switchWhy = 'funnelEscapeSide';
+                } else {
+                    active = Object.assign({}, mem.active, liveActive);
+                    alt = liveAlt || mem.alt || null;
+                    switchWhy = 'hold';
+                }
+            } else if (
+                // Combat goal wants the other lateral and alt pocket is not worse by much.
+                combatSide &&
+                liveActive.homotopyId !== 'C' &&
+                liveAlt &&
+                liveAlt.homotopyId !== 'C' &&
+                Math.sign(Number(liveActive.side) || 0) !== combatSide &&
+                Math.sign(Number(liveAlt.side) || 0) === combatSide &&
+                altPocket <= activePocket + 0.12
+            ) {
+                active = liveAlt;
+                alt = liveActive;
+                switchWhy = 'combatGoal';
+            } else if (liveAlt && activePocket >= altPocket + margin) {
+                active = liveAlt;
+                alt = liveActive;
+                switchWhy = 'pocketMargin';
+            } else if (
+                narrowing &&
+                liveAlt &&
+                activePocket >= 0.45 &&
+                altPocket + 0.12 < activePocket
+            ) {
+                active = liveAlt;
+                alt = liveActive;
+                switchWhy = 'facadeNarrow';
+            } else {
+                active = Object.assign({}, mem.active, liveActive);
+                alt = liveAlt || mem.alt || null;
+                switchWhy = 'hold';
+            }
+        } else if (climbUnsafe && active.homotopyId === 'C') {
+            // Fresh commit: do not init on C during funnel / slab / dive-in.
+            const lat = bestLateral();
+            if (lat) {
+                alt = active;
+                active = lat;
+                switchWhy = climbRejectWhy;
+            }
+        } else if (
+            dualPrefId &&
+            active.homotopyId !== dualPrefId &&
+            dualPrefRisk != null &&
+            dualOtherRisk != null &&
+            dualOtherRisk >= dualPrefRisk + 0.18
+        ) {
+            const pref = options.find((o) => o.homotopyId === dualPrefId);
+            if (pref) {
+                alt = active;
+                active = pref;
+                switchWhy = 'bakeDualPref';
+            }
+        }
+
+        if (
+            switchWhy === 'pocketMargin' ||
+            switchWhy === 'facadeNarrow' ||
+            switchWhy === 'deadWpFlip' ||
+            switchWhy === 'funnelRejectC' ||
+            switchWhy === 'funnelReplanLateral' ||
+            switchWhy === 'slabRejectC' ||
+            switchWhy === 'funnelEscapeSide' ||
+            switchWhy === 'combatGoal' ||
+            switchWhy === 'bakeDualPref'
+        ) {
+            const avoid = this.getUrbanAvoidMemory(teamId);
+            if (avoid && Number(avoid.gapHoldUntil) >= t) {
+                avoid.gapHoldUntil = t - 1;
+                avoid.gapHoldSource = `homotopy:${switchWhy}`;
+            }
+        }
+
+        const holdLonger = switchWhy === 'hold' || switchWhy === 'init';
+        const out = {
+            active,
+            alt,
+            untilTurn: t + (holdLonger ? 8 : 5),
+            switchWhy,
+            updatedTurn: t
+        };
+        this.corridorHomotopyMemory[teamId] = out;
+        if (opts.debugTree && Array.isArray(opts.debugTree)) {
+            opts.debugTree.push(
+                `homotopy: active=${active.homotopyId} pocket=${active.pocketScore}` +
+                ` alt=${alt ? alt.homotopyId : 'n/a'} altP=${alt ? alt.pocketScore : 'n/a'} why=${switchWhy}`
+            );
+        }
+        return out;
+    },
+
+    getCorridorHomotopy(teamId, turnNo = 1) {
+        const mem = this.corridorHomotopyMemory[teamId];
+        if (!mem || !mem.active) return null;
+        if (Math.max(1, Number(turnNo) || 1) > Number(mem.untilTurn || -1)) return null;
+        return mem;
+    },
+
     /**
      * Short-horizon scored escape (±side / climb / level) — prefer route quality over T38 flat glue.
-     * Returns null when true undercroft glue should keep hard lateral, or when sim unavailable.
+     * Returns null only when glued with no lateral hint (bake/gap/wp) — T150 table/true still need scored.
      */
     pickScoredUrbanEscapeStick(teamId, opts = {}) {
         const trueUnder = !!opts.trueUnderRoof || this.isTrueUnderRoof({
@@ -1820,17 +5383,18 @@ window.AirArenaAI = {
         const chokeKind = opts.hardChokeKind
             || (opts.coverInfo && opts.coverInfo.hardChokeKind)
             || null;
-        // P1 early undercroft: leave scored for T38 lateral (T91/T76 died T38@cov≤4).
-        const earlyCov = Number(this.EARLY_UNDERCROFT_COV) || 10;
-        if (trueUnder && Number.isFinite(dist) && dist < earlyCov) return null;
-        if (Number.isFinite(roof) && roof < -1.5 && Number.isFinite(dist) && dist < earlyCov) return null;
-        if (
-            (chokeKind === 'tableUndercroft' || chokeKind === 'tightUndercroft') &&
-            Number.isFinite(dist) &&
-            dist < 14
-        ) {
-            return null;
-        }
+        const tableChoke = chokeKind === 'tableUndercroft' || chokeKind === 'tightUndercroft';
+        const bakeOk = !!(opts.bakeCorridor && opts.bakeCorridor.ok && opts.bakeCorridor.preferredSide);
+        const wpOk = !!(opts.survivalWp && opts.survivalWp.ok && opts.survivalWp.preferredSide);
+        const coverInfoEarly = opts.coverInfo || {};
+        const gapHint =
+            !!this.getCorridorGapSide(coverInfoEarly) ||
+            (this.getCorridorGapAsymmetry(coverInfoEarly).strength >= 1);
+        const lateralHint = bakeOk || wpOk || gapHint;
+        // P0/T150: even with zero bake/gap/wp, keep scoring on memory/lock side — hard-null
+        // handed stick to diveGlueBreak climb-into-slab (blue2).
+        const earlyCov = Number(this.EARLY_UNDERCROFT_COV) || 14;
+        const lockSide = Math.sign(Number(opts.lockSide) || 0);
         if (opts.diveOwnsStick && Number(opts.forwardY) < -0.65 && Number(opts.altitude) < 28) return null;
 
         const team = (typeof GameContext !== 'undefined' && GameContext.getTeam)
@@ -1839,8 +5403,22 @@ window.AirArenaAI = {
         if (!team || !team.wrapper || typeof simulateFlight !== 'function') return null;
 
         const coverInfo = opts.coverInfo || {};
+        const awaySide = this.getAwayFromMeshSide(coverInfo, opts.selfForward);
+        const fwdDist = Number(
+            coverInfo.forwardDistance != null ? coverInfo.forwardDistance : opts.coverForwardDistance
+        );
         const gapAsym = this.getCorridorGapAsymmetry(coverInfo);
         const gapSide = gapAsym.side || this.getCorridorGapSide(coverInfo);
+        // B: weak L/R asymmetry is a soft bias only — gapCut needs a real open street.
+        const gapCutStrong =
+            !!(gapSide && (
+                gapAsym.strength >= 2 ||
+                (gapAsym.strength >= 1 &&
+                    Number.isFinite(Number(gapAsym.open)) &&
+                    Number.isFinite(Number(gapAsym.closed)) &&
+                    Number(gapAsym.open) >= 10 &&
+                    Number(gapAsym.closed) < 5)
+            ));
         const bakeCorr = opts.bakeCorridor || null;
         const bakeSide = bakeCorr && bakeCorr.ok && bakeCorr.strength >= 1
             ? Math.sign(bakeCorr.preferredSide || 0)
@@ -1854,10 +5432,33 @@ window.AirArenaAI = {
         // One-sided open street: prefer gap over memory side (T150 red2 L≪R).
         // Phase 2: bake corridor side fills when AABB gap is weak.
         // Phase 3 MVP: survival waypoints outrank corridor when building pressure armed them.
+        // P1: corridor homotopy (L/R) soft-fills when gap weak — tableClose pitch owner still later.
+        // Same-turn resolve: escape used to read stale C (dump T150a t28–30 homotopy=C pocket=0.22).
         const memSide = Math.sign(Number(opts.side) || 0) || 1;
+        const htEsc =
+            this.resolveCorridorHomotopy(teamId, opts.turnNo || 1, coverInfo, {
+                survivalWp: wpSteer || opts.survivalWp,
+                bakeCorridor: bakeCorr || opts.bakeCorridor,
+                dualHomotopyCorridors: opts.dualHomotopyCorridors,
+                aiMapSkyOpen: !!opts.aiMapSkyOpen,
+                aiMapClearAbove: !!opts.aiMapClearAbove,
+                trueUnderRoof: trueUnder,
+                hardContact: !!opts.hardContact,
+                hardChokeKind: chokeKind,
+                forwardY: opts.forwardY,
+                wpReplanWhy: opts.wpReplanWhy || (wpSteer && wpSteer.replanWhy),
+                forceFlip: !!opts.forceFlip,
+                combatPreferredSide: opts.lockSide || opts.side
+                // no debugTree — urban-route resolve already logs; this is same-turn refresh
+            }) || this.getCorridorHomotopy(teamId, opts.turnNo);
+        const htEscSide =
+            htEsc && htEsc.active && htEsc.active.homotopyId !== 'C'
+                ? Math.sign(Number(htEsc.active.side) || 0)
+                : 0;
+        const htEscClimb = !!(htEsc && htEsc.active && htEsc.active.homotopyId === 'C');
         const side = (gapAsym.strength >= 1 && gapSide)
             ? gapSide
-            : (wpSide || bakeSide || memSide);
+            : (htEscSide || wpSide || bakeSide || lockSide || memSide);
         const alt = Number.isFinite(Number(opts.altitude)) ? Number(opts.altitude) : 40;
         const forwardY = Number(opts.forwardY) || 0;
         const heat = (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(opts.heat) : (Number(opts.heat) || 0));
@@ -1873,8 +5474,80 @@ window.AirArenaAI = {
         const climbFloor = forwardY < -0.45
             ? (alt < 22 ? 0.58 : 0.48)
             : (forwardY < -0.2 ? (alt < 28 ? 0.42 : 0.32) : (alt < 28 ? 0.22 : 0.14));
-        const sideAuth = facadeClosing ? (gapAsym.strength >= 2 ? 0.55 : 0.52) : 0.48;
-        const climbAuth = facadeClosing ? (fwdTight ? 0.36 : 0.42) : 0.28;
+        // T54 C-bowl: ring walls + open sky → climb/corridor, not nest lateral.
+        const bowlExit = this.isFacadeBowlOpen(coverInfo, {
+            altitude: alt,
+            forwardY,
+            coverDistance: dist,
+            roofClearance: roof,
+            headroom: opts.headroom != null ? opts.headroom : coverInfo.headroom,
+            coverForwardDistance: fwdDist,
+            aiMapClearAbove: opts.aiMapClearAbove,
+            aiMapSkyOpen: opts.aiMapSkyOpen,
+            hardContact: opts.hardContact,
+            deepEmbed: opts.deepEmbed
+        });
+        // T150 undercroft: lateral skim — never climb into slab; bank harder than open facade.
+        // Soft rebalance: dirt-pull joyY only when overhead is actually clear — tableUndercroft /
+        // true negative roof often reports huge headroom above the slab while airframe is trapped.
+        const undercroftSkim =
+            !bowlExit &&
+            (
+                tableChoke ||
+                trueUnder ||
+                (Number.isFinite(roof) && roof < -0.8 && Number.isFinite(dist) && dist < earlyCov)
+            );
+        const slabOverhead = undercroftSkim && this.isSlabClimbBlocked({
+            coverInfo,
+            roofClearance: roof,
+            coverDistance: dist,
+            hardChokeKind: chokeKind,
+            underRoof: trueUnder || !!opts.underRoof,
+            deepEmbed: !!opts.deepEmbed
+        });
+        const altSink = undercroftSkim && alt < 22;
+        const slabDirtArrest = slabOverhead && this.wantsSlabDirtArrest(alt, forwardY, {
+            hardChokeKind: chokeKind,
+            roofClearance: roof,
+            coverDistance: dist,
+            coverInfo
+        });
+        // Open near-dirt undercroft (no slab): allow dirt-pull. Table/true slab: light skim only
+        // unless nose-down alt-sink threatens ground (T150 A blue2).
+        const skimY = undercroftSkim
+            ? (slabDirtArrest
+                ? this.getSlabDirtArrestJoyY(alt, forwardY, {
+                    roofClearance: roof,
+                    coverInfo
+                })
+                : (slabOverhead
+                    ? (alt < 8
+                        ? Math.max(0.16, Math.min(0.24, climbFloor))
+                        : (alt < 14
+                            ? Math.max(0.12, Math.min(0.18, climbFloor))
+                            : Math.max(0.1, Math.min(climbFloor, 0.16))))
+                    : (alt < 12
+                        ? Math.max(0.42, Math.min(0.62, climbFloor))
+                        : (alt < 16
+                            ? Math.max(0.28, Math.min(0.42, climbFloor))
+                            : (alt < 20
+                                ? Math.max(0.18, Math.min(climbFloor, 0.28))
+                                : Math.max(0.12, Math.min(climbFloor, alt < 22 ? 0.18 : 0.14)))))))
+            : climbFloor;
+        const sideAuth = undercroftSkim
+            ? (slabDirtArrest
+                ? 0.38
+                : (Number.isFinite(dist) && dist < 4
+                    ? 0.74
+                    : (slabOverhead ? (altSink ? 0.68 : 0.7) : (altSink ? 0.58 : 0.64))))
+            : (facadeClosing ? (gapAsym.strength >= 2 ? 0.55 : 0.52) : 0.48);
+        const climbAuth = undercroftSkim
+            ? (slabDirtArrest
+                ? 0.55
+                : (slabOverhead
+                    ? (alt < 10 ? 0.22 : 0.16)
+                    : (alt < 14 ? 0.36 : (alt < 18 ? 0.28 : 0.2))))
+            : (facadeClosing ? (fwdTight ? 0.36 : 0.42) : 0.28);
         const base = {
             state: 'obstacleEmergencyEscape',
             weapon: 'gun',
@@ -1882,32 +5555,67 @@ window.AirArenaAI = {
             ready: true
         };
         const prototypes = [];
-        if (gapAsym.strength >= 1 && gapSide) {
+        const collapsePrev = this.getScoredEscapeCollapse(teamId, opts.turnNo);
+        if (gapCutStrong && gapSide) {
             prototypes.push({
                 mode: 'scoreGapCut',
                 branch: 'gapCut',
-                joyX: this.clamp(gapSide * (facadeClosing ? 0.55 : 0.5), -0.58, 0.58),
-                joyY: Math.max(climbFloor, facadeClosing || forwardY < -0.25 ? 0.48 : climbFloor),
+                joyX: this.clamp(gapSide * (undercroftSkim ? 0.72 : (facadeClosing ? 0.62 : 0.55)), -0.78, 0.78),
+                joyY: Math.max(skimY, (!undercroftSkim && (facadeClosing || forwardY < -0.25)) ? 0.48 : skimY),
                 reason: 'Scored escape: gap-open side cut'
             });
         }
         // T97: always consider bake WP cut/climb when armed — not only when gap absent.
+        // T129 red2/blue2: steep dive + closing cover — WP cut must not own stick into mesh.
+        const wpDiveDeath =
+            Number.isFinite(forwardY) &&
+            forwardY < -0.55 &&
+            (
+                facadeClosing ||
+                undercroftSkim ||
+                slabOverhead ||
+                (Number.isFinite(dist) && dist < 24) ||
+                (Number.isFinite(fwd) && fwd > 0 && fwd < 18)
+            );
         if (wpSide) {
-            prototypes.push({
-                mode: 'scoreBakeWp',
-                branch: 'gapCut',
-                joyX: this.clamp(wpSide * (facadeClosing ? 0.54 : 0.5), -0.58, 0.58),
-                joyY: Math.max(
-                    climbFloor,
-                    Math.max(
-                        Number(wpSteer.climbBias) > 0 ? 0.36 + Number(wpSteer.climbBias) * 0.2 : 0,
-                        facadeClosing || forwardY < -0.25 ? 0.48 : climbFloor
-                    )
-                ),
-                reason: `Scored escape: bake survival waypoint cut steps=${(wpSteer.waypoints && wpSteer.waypoints.length) || 0}`
-            });
+            if (wpDiveDeath) {
+                prototypes.push({
+                    mode: 'scoreBakeWp',
+                    branch: 'gapCut',
+                    joyX: this.clamp(wpSide * (undercroftSkim || slabOverhead ? 0.7 : 0.62), -0.78, 0.78),
+                    joyY: Math.max(
+                        skimY,
+                        forwardY < -0.7
+                            ? (alt < 22 ? 0.62 : (alt < 36 ? 0.48 : 0.36))
+                            : skimY
+                    ),
+                    diveLevelPull: true,
+                    reason: `Scored escape: bake survival waypoint level-cut steps=${(wpSteer.waypoints && wpSteer.waypoints.length) || 0} | diveBan=1`
+                });
+            } else {
+                prototypes.push({
+                    mode: 'scoreBakeWp',
+                    branch: 'gapCut',
+                    joyX: this.clamp(wpSide * (undercroftSkim ? 0.7 : (facadeClosing ? 0.54 : 0.5)), -0.78, 0.78),
+                    joyY: Math.max(
+                        skimY,
+                        undercroftSkim
+                            ? skimY
+                            : Math.max(
+                                Number(wpSteer.climbBias) > 0 ? 0.36 + Number(wpSteer.climbBias) * 0.2 : 0,
+                                facadeClosing || forwardY < -0.25 ? 0.48 : climbFloor
+                            )
+                    ),
+                    reason: `Scored escape: bake survival waypoint cut steps=${(wpSteer.waypoints && wpSteer.waypoints.length) || 0}`
+                });
+            }
         }
-        if (wpSteer && (wpSteer.forwardClimb || Number(wpSteer.climbBias) > 0.2 || wpSteer.source === 'path')) {
+        if (
+            !undercroftSkim &&
+            !wpDiveDeath &&
+            wpSteer &&
+            (wpSteer.forwardClimb || Number(wpSteer.climbBias) > 0.2 || wpSteer.source === 'path')
+        ) {
             // P1: never offer bake forward-climb while diving into closing facade (T91 red2).
             // Needle: ban=bakeForwardClimb
             const closingDive = facadeClosing && forwardY < -0.28;
@@ -1925,51 +5633,116 @@ window.AirArenaAI = {
                 });
             }
         }
-        if (!(gapAsym.strength >= 1 && gapSide) && !wpSide && bakeSide) {
+        if (!(gapCutStrong && gapSide) && !wpSide && bakeSide) {
             prototypes.push({
                 mode: 'scoreBakeCut',
                 branch: 'gapCut',
-                joyX: this.clamp(bakeSide * (facadeClosing ? 0.52 : 0.48), -0.58, 0.58),
-                joyY: Math.max(climbFloor, facadeClosing || forwardY < -0.25 ? 0.46 : climbFloor),
+                joyX: this.clamp(bakeSide * (undercroftSkim ? 0.7 : (facadeClosing ? 0.52 : 0.48)), -0.78, 0.78),
+                joyY: Math.max(skimY, (!undercroftSkim && (facadeClosing || forwardY < -0.25)) ? 0.46 : skimY),
                 reason: 'Scored escape: bake-corridor open side cut'
             });
         }
-        prototypes.push(
-            {
-                mode: 'scoreSide',
-                branch: 'side',
-                joyX: this.clamp(side * sideAuth, -0.55, 0.55),
-                joyY: climbFloor,
-                reason: 'Scored escape: preferred-side hold + climb floor'
-            },
-            {
+        const flipSide = -(Math.sign(side || 1) || 1);
+        // B: under nest, do not offer flip that banks into the mesh (away evidence only).
+        const flipIntoMesh = !!(awaySide && flipSide && flipSide !== awaySide);
+        const offerFlip = !(
+            undercroftSkim &&
+            Number.isFinite(dist) &&
+            dist < 12 &&
+            flipIntoMesh
+        );
+        prototypes.push({
+            mode: 'scoreSide',
+            branch: 'side',
+            joyX: this.clamp(side * sideAuth, -0.78, 0.78),
+            joyY: skimY,
+            reason: undercroftSkim
+                ? 'Scored escape: undercroft preferred-side skim'
+                : 'Scored escape: preferred-side hold + climb floor'
+        });
+        if (offerFlip) {
+            prototypes.push({
                 mode: 'scoreOpp',
                 branch: 'flip',
-                joyX: this.clamp(-side * sideAuth, -0.55, 0.55),
-                joyY: climbFloor,
-                reason: 'Scored escape: opposite-side cut + climb floor'
-            },
-            {
-                mode: 'scoreClimb',
-                branch: 'climb',
-                joyX: this.clamp(side * climbAuth, -0.48, 0.48),
-                joyY: Math.max(climbFloor, alt < 36 ? 0.52 : 0.4),
-                reason: 'Scored escape: climb-biased exit'
-            },
-            {
+                joyX: this.clamp(flipSide * sideAuth, -0.78, 0.78),
+                joyY: skimY,
+                reason: undercroftSkim
+                    ? 'Scored escape: undercroft opposite-side skim'
+                    : 'Scored escape: opposite-side cut + climb floor'
+            });
+        }
+        if (collapsePrev.collapsing || collapsePrev.shouldRecover) {
+            const recoverSide = awaySide || side;
+            prototypes.push({
+                mode: 'scoreCollapseLevel',
+                branch: 'level',
+                joyX: this.clamp(recoverSide * (undercroftSkim ? 0.58 : 0.5), -0.68, 0.68),
+                joyY: Math.max(
+                    skimY,
+                    forwardY < -0.45 ? (alt < 28 ? 0.42 : 0.32) : (undercroftSkim ? 0.16 : 0.24)
+                ),
+                reason: 'Scored escape: collapse recovery level+bank'
+            });
+        }
+        if (!undercroftSkim) {
+            prototypes.push(
+                {
+                    mode: 'scoreClimb',
+                    branch: 'climb',
+                    joyX: this.clamp(side * climbAuth, -0.48, 0.48),
+                    joyY: Math.max(climbFloor, alt < 36 ? 0.52 : 0.4),
+                    reason: 'Scored escape: climb-biased exit'
+                },
+                {
+                    mode: 'scoreLevel',
+                    branch: 'level',
+                    joyX: this.clamp(side * (facadeClosing ? 0.48 : 0.36), -0.52, 0.52),
+                    joyY: Math.max(climbFloor * 0.9, alt < 28 ? 0.36 : 0.24),
+                    reason: 'Scored escape: level-hold exit'
+                }
+            );
+        } else {
+            // Soft level skim only — still lateral-heavy under slab.
+            prototypes.push({
                 mode: 'scoreLevel',
                 branch: 'level',
-                joyX: this.clamp(side * (facadeClosing ? 0.48 : 0.36), -0.52, 0.52),
-                joyY: Math.max(climbFloor * 0.9, alt < 28 ? 0.36 : 0.24),
-                reason: 'Scored escape: level-hold exit'
-            }
-        );
+                joyX: this.clamp(side * sideAuth, -0.78, 0.78),
+                joyY: skimY,
+                reason: 'Scored escape: undercroft level skim'
+            });
+        }
+        if (bowlExit) {
+            // Soft bank + climb: exit the ring without thrashing into a wall.
+            // T150 03:30: do not pitch into deep neg roof while cov collapses.
+            const bowlSide = gapSide || awaySide || side;
+            const roofNegTight =
+                Number.isFinite(roof) &&
+                roof < -4 &&
+                Number.isFinite(dist) &&
+                dist < 18;
+            prototypes.push({
+                mode: 'scoreBowlClimb',
+                branch: 'climb',
+                joyX: this.clamp(bowlSide * (facadeClosing ? 0.42 : 0.32), -0.48, 0.48),
+                joyY: roofNegTight
+                    ? Math.min(0.18, Math.max(0.08, climbFloor * 0.5))
+                    : Math.max(climbFloor, alt < 28 ? 0.58 : 0.48),
+                reason: roofNegTight
+                    ? 'Scored escape: facade-bowl lateral (ban climb-into-neg-roof)'
+                    : 'Scored escape: facade-bowl climb-out'
+            });
+        }
 
         const horizon = 3;
         let best = null;
         let bestScore = -Infinity;
+        let bestClear = null;
+        let bestClearScore = -Infinity;
         let hitCount = 0;
         let scoredCount = 0;
+        // Knife 2: gap may bias scores, but commit/gapOwns only if open side safety-cleared.
+        let gapSideClearEvidence = false;
+        let gapSideHitEvidence = false;
         for (let i = 0; i < prototypes.length; i++) {
             const proto = prototypes[i];
             const candidate = {
@@ -1998,27 +5771,64 @@ window.AirArenaAI = {
                 hitCount += 1;
                 score -= facadeClosing ? (fwdTight ? 140 : 110) : 55;
             }
+            // P0: hard demote bake WP/corridor that already raycasts into mesh (dump hit=1 kills).
+            if (this.isBakeRouteEscapeMode(proto.mode) && ev.buildingHit) {
+                score -= 380;
+            } else if (this.isBakeRouteEscapeMode(proto.mode) && score < -160) {
+                score -= 90;
+            }
             const sx = Math.sign(Number(proto.joyX) || 0) || 0;
+            if (
+                gapSide &&
+                sx === gapSide &&
+                (proto.branch === 'gapCut' || proto.branch === 'side')
+            ) {
+                if (ev.buildingHit) gapSideHitEvidence = true;
+                else if (score > -50) gapSideClearEvidence = true;
+            }
             // Closing face: lateral cut > climb-into-wall (T76 blue scoreClimb hit).
-            if (facadeClosing) {
+            // Bowl exit: climb/corridor preferred over nest lateral into ring walls (T54).
+            if (bowlExit) {
+                if (proto.branch === 'climb' || proto.branch === 'level') score += 48;
+                if (proto.mode === 'scoreBowlClimb') score += 28;
+                if (proto.branch === 'side' || proto.branch === 'flip') score -= 22;
+                if (Math.abs(Number(proto.joyY) || 0) >= 0.42) score += 16;
+            } else if (facadeClosing) {
                 if (proto.branch === 'side' || proto.branch === 'flip' || proto.branch === 'gapCut') score += 36;
                 if (proto.branch === 'climb') score -= fwdTight ? 85 : 55;
                 if (Math.abs(proto.joyX) >= 0.45) score += 18;
             } else if (proto.branch === 'climb' && forwardY < -0.35) {
                 score += 12;
             }
-            // One-sided gap: open-side joyX wins; opposite / flip into wall loses (T150).
-            if (gapAsym.strength >= 1 && gapSide && sx) {
-                if (sx === gapSide) score += gapAsym.strength >= 2 ? 55 : 32;
-                else if (sx === -gapSide) score -= gapAsym.strength >= 2 ? 75 : 42;
+            // One-sided gap: strong open-side wins; mild asymmetry is soft only (B).
+            if (gapCutStrong && gapSide && sx) {
+                if (sx === gapSide) {
+                    score += gapAsym.strength >= 2 ? 55 : 36;
+                    if (ev.buildingHit) score -= 48;
+                } else if (sx === -gapSide) score -= gapAsym.strength >= 2 ? 75 : 48;
+            } else if (gapAsym.strength >= 1 && gapSide && sx) {
+                if (sx === gapSide) score += 12;
+                else if (sx === -gapSide) score -= 18;
+                if (proto.branch === 'gapCut') score -= 28;
             } else if (bakeSide && sx) {
                 const bakeStr = Number(bakeCorr && bakeCorr.strength) || 1;
                 if (sx === bakeSide) score += bakeStr >= 2 ? 48 : 28;
                 else if (sx === -bakeSide) score -= bakeStr >= 2 ? 62 : 36;
             }
             if (proto.branch === 'flip' && gapAsym.strength >= 2 && sx === -gapSide) score -= 40;
+            // B: flip into mesh under nest is almost never the escape.
+            if (proto.branch === 'flip' && awaySide && sx && sx !== awaySide && undercroftSkim) {
+                score -= Number.isFinite(dist) && dist < 12 ? 70 : 36;
+            }
+            if (proto.mode === 'scoreCollapseLevel') {
+                score += collapsePrev.shouldRecover ? 48 : 28;
+            }
+            if (collapsePrev.shouldRecover && awaySide && sx === awaySide) score += 28;
+            if (collapsePrev.shouldRecover && proto.branch === 'flip' && awaySide && sx === -awaySide) {
+                score -= 55;
+            }
             if (proto.branch === 'flip' && opts.deepEmbed && gapAsym.strength < 1) score += 8;
-            if (proto.branch === 'gapCut' && !ev.buildingHit) score += 20;
+            if (proto.branch === 'gapCut' && !ev.buildingHit) score += gapCutStrong ? 20 : 4;
             // Phase 2: climb into high forward roof loses; sky-open forward prefers climb/level.
             if (bakeCorr && bakeCorr.ok) {
                 if (bakeCorr.forwardClear && (proto.branch === 'climb' || proto.branch === 'level') && !facadeClosing) {
@@ -2030,9 +5840,30 @@ window.AirArenaAI = {
                 if (bakeCorr.corridorOpen && proto.branch === 'gapCut' && !ev.buildingHit) score += 14;
             }
             // Phase 3a: WP side/climb consistency + deeper facade+dive soft bias.
-            if (wpSide && sx) {
+            // P0: do not reward WP side when this bake cut already hits mesh.
+            if (wpSide && sx && !(this.isBakeRouteEscapeMode(proto.mode) && ev.buildingHit)) {
                 if (sx === wpSide) score += (Number(wpSteer.strength) || 1) >= 2 ? 42 : 26;
                 else if (sx === -wpSide) score -= (Number(wpSteer.strength) || 1) >= 2 ? 55 : 34;
+            }
+            // P1: soft bias toward active corridor homotopy (not a hard joyX lock).
+            if (htEsc && htEsc.active) {
+                if (htEscClimb) {
+                    if (proto.branch === 'climb' || proto.mode === 'scoreBakeWpClimb') score += 28;
+                    if ((proto.branch === 'gapCut' || proto.branch === 'side') && Math.abs(Number(proto.joyX) || 0) >= 0.5) {
+                        score -= 16;
+                    }
+                } else if (htEscSide && sx) {
+                    if (sx === htEscSide) score += 24;
+                    else if (sx === -htEscSide) score -= 20;
+                    if (
+                        htEsc.alt &&
+                        htEsc.alt.homotopyId !== 'C' &&
+                        sx === Math.sign(Number(htEsc.alt.side) || 0) &&
+                        Number(htEsc.active.pocketScore) >= 0.4
+                    ) {
+                        score += 10;
+                    }
+                }
             }
             const wpClimb = Number(wpSteer && wpSteer.climbBias) || (wpSteer && wpSteer.forwardClimb ? 0.4 : 0);
             if (wpClimb >= 0.35) {
@@ -2043,7 +5874,21 @@ window.AirArenaAI = {
                 if (proto.branch === 'level' && facadeClosing) score += 10;
             }
             if (proto.mode === 'scoreBakeWp' || proto.mode === 'scoreBakeWpClimb') {
-                score += wpSteer && wpSteer.source === 'path' ? 32 : 18;
+                if (!(ev.buildingHit)) score += wpSteer && wpSteer.source === 'path' ? 32 : 18;
+            }
+            // T129: steep dive into closing/undercroft — demote bake WP that still owns the cut.
+            if (
+                (proto.mode === 'scoreBakeWp' || proto.mode === 'scoreBakeWpClimb') &&
+                Number.isFinite(forwardY) &&
+                forwardY < -0.55 &&
+                (
+                    facadeClosing ||
+                    undercroftSkim ||
+                    (Number.isFinite(dist) && dist < 24)
+                )
+            ) {
+                score -= proto.mode === 'scoreBakeWpClimb' ? 110 : 70;
+                if (!proto.diveLevelPull) score -= 25;
             }
             if (facadeClosing && forwardY < -0.25) {
                 // Ban all climb-branch sticks into closing dive (not only scoreBakeWpClimb).
@@ -2052,6 +5897,47 @@ window.AirArenaAI = {
                 }
                 if ((proto.branch === 'gapCut' || proto.branch === 'side') && Math.abs(proto.joyX) >= 0.45) score += 22;
                 if (proto.joyY < -0.08) score -= 20;
+            }
+            // T150 undercroft: reward hard lateral skim; punish climb into slab.
+            // Alt sink: allow / reward higher skimY (dirt pull) — still ban climb-branch into mesh.
+            if (undercroftSkim) {
+                if (proto.branch === 'climb' && !(alt < 16 && Number(proto.joyY) <= 0.42)) score -= 120;
+                if (proto.branch === 'gapCut' || proto.branch === 'side' || proto.branch === 'flip') {
+                    score += 40;
+                    if (Math.abs(proto.joyX) >= 0.55) score += 24;
+                }
+                // Deep nest: opposite flip only when it banks away from mesh (B).
+                if (
+                    slabOverhead &&
+                    Number.isFinite(dist) &&
+                    dist < 2.5 &&
+                    proto.branch === 'flip' &&
+                    awaySide &&
+                    sx === awaySide
+                ) {
+                    score += 55;
+                }
+                if (
+                    slabOverhead &&
+                    Number.isFinite(dist) &&
+                    dist < 2.5 &&
+                    proto.branch === 'flip' &&
+                    awaySide &&
+                    sx &&
+                    sx !== awaySide
+                ) {
+                    score -= 60;
+                }
+                if (Number(proto.joyY) < 0.08) score -= 35;
+                // Dirt arrest needs joyY≈0.38 at alt 20–24 — do not treat as climb-into-slab.
+                if (alt >= 20 && Number(proto.joyY) > 0.28 && !slabDirtArrest) score -= 45;
+                if (slabDirtArrest && Number(proto.joyY) >= 0.32 && Number(proto.joyY) <= 0.78) score += 28;
+                if (alt < 18 && Number(proto.joyY) >= 0.22 && Number(proto.joyY) <= 0.48) score += 36;
+                if (alt < 14 && Number(proto.joyY) < 0.24) score -= 40;
+                // Bake WP that keeps sinking under table: deprioritize when alt collapsing.
+                if (alt < 18 && (proto.mode === 'scoreBakeWp' || proto.mode === 'scoreBakeWpClimb') && Number(proto.joyY) < 0.2) {
+                    score -= 50;
+                }
             }
             score = this.applyBakeRouteCombatScore(score, {
                 branch: proto.branch,
@@ -2078,56 +5964,852 @@ window.AirArenaAI = {
                 forwardY,
                 preferredSide: side
             });
+            const pickRow = {
+                mode: proto.mode,
+                joyX: candidate.joyX,
+                joyY: candidate.joyY,
+                throttle: candidate.throttle,
+                pitchScale: slabDirtArrest
+                    ? 0.58
+                    : (undercroftSkim ? 0.16 : (forwardY < -0.35 ? 0.48 : 0.28)),
+                rollAuth: Math.PI / 10,
+                diveLevelPull: !!candidate.diveLevelPull || slabDirtArrest,
+                dirtPullFloor: undercroftSkim || alt < 8,
+                statusText: `NPC: 評分脫離(${proto.branch}) ${opts.coverLabel || ''}`,
+                reason: `${proto.reason} score=${score.toFixed(1)} hit=${ev.buildingHit ? 1 : 0} nb=${ev.nearestBuilding}`,
+                score: Number(score.toFixed(1)),
+                branch: proto.branch,
+                buildingHit: !!ev.buildingHit
+            };
             if (score > bestScore) {
                 bestScore = score;
-                best = {
-                    mode: proto.mode,
-                    joyX: candidate.joyX,
-                    joyY: candidate.joyY,
-                    throttle: candidate.throttle,
-                    pitchScale: forwardY < -0.35 ? 0.48 : 0.28,
-                    rollAuth: Math.PI / 10,
-                    diveLevelPull: !!candidate.diveLevelPull,
-                    dirtPullFloor: alt < 5,
-                    statusText: `NPC: 評分脫離(${proto.branch}) ${opts.coverLabel || ''}`,
-                    reason: `${proto.reason} score=${score.toFixed(1)} hit=${ev.buildingHit ? 1 : 0} nb=${ev.nearestBuilding}`,
-                    score: Number(score.toFixed(1)),
-                    branch: proto.branch,
-                    buildingHit: !!ev.buildingHit
-                };
+                best = pickRow;
+            }
+            // P0: keep best non-dead bake alternative (side/flip/gap/level) for hard reject swap.
+            if (!this.isDeadBakeRouteCut(proto.mode, ev.buildingHit, score) && score > bestClearScore) {
+                bestClearScore = score;
+                bestClear = pickRow;
             }
         }
+        // P0: never finish on bake survival / bake-corridor hit=1 or collapsed cut.
+        if (best && this.isDeadBakeRouteCut(best.mode, best.buildingHit, bestScore)) {
+            const wasHit = !!best.buildingHit;
+            let rejectWhy = wasHit ? 'hit1' : 'scoreCollapse';
+            if (bestClear && bestClear !== best) {
+                best = bestClear;
+                bestScore = bestClearScore;
+                rejectWhy = wasHit ? 'hit1' : 'scoreCollapse';
+            } else {
+                const flip = -(Math.sign(Number(best.joyX) || side) || 1);
+                rejectWhy = wasHit ? 'hit1NoAlt' : 'scoreCollapseNoAlt';
+                best = {
+                    mode: 'scoreOpp',
+                    joyX: this.clamp(flip * sideAuth, -0.78, 0.78),
+                    joyY: skimY,
+                    throttle: thr,
+                    pitchScale: undercroftSkim ? 0.16 : (forwardY < -0.35 ? 0.48 : 0.28),
+                    rollAuth: Math.PI / 10,
+                    diveLevelPull: forwardY < -0.25 || slabDirtArrest,
+                    dirtPullFloor: undercroftSkim || alt < 8,
+                    statusText: `NPC: 評分脫離(flip) ${opts.coverLabel || ''}`,
+                    reason: `Scored escape: dead-route reject flip score=${Number(bestScore).toFixed(1)} hit=0`,
+                    score: Number(bestScore.toFixed(1)),
+                    branch: 'flip',
+                    buildingHit: false
+                };
+            }
+            this.breakSurvivalWpDeadCut(teamId, opts.turnNo, rejectWhy);
+            if (best.reason && !/pocketReject=/.test(String(best.reason))) {
+                best.reason = `${best.reason} | pocketReject=${rejectWhy} replan=deadWp`;
+            }
+            if (opts.debugTree && Array.isArray(opts.debugTree)) {
+                opts.debugTree.push(`survivalWp: replan=deadWp pocketReject=${rejectWhy}`);
+            }
+        }
+        // Knife 2: geometric gap is soft bias; commit only when open-side scored clear.
+        const gapCorrOpen = !!(
+            gapSide &&
+            (
+                (gapSide > 0 && (coverInfo.corridorRightClear || Number(coverInfo.corridorRight) > 8)) ||
+                (gapSide < 0 && (coverInfo.corridorLeftClear || Number(coverInfo.corridorLeft) > 8))
+            )
+        );
+        const gapOwnsSafe = !!(
+            gapCutStrong &&
+            gapSide &&
+            (
+                gapSideClearEvidence ||
+                (gapCorrOpen && gapAsym.strength >= 2 && !gapSideHitEvidence)
+            )
+        );
         if (best) {
             this.enforceFacadeLateralFloor(best, coverInfo, side);
+            if (bowlExit) {
+                if (best.reason && !/bowlExit/i.test(String(best.reason))) {
+                    best.reason = `${best.reason} | bowlExit=1`;
+                }
+                best.navMode = best.navMode || 'facadeBowlClimb';
+                // Soft bank while climbing out of the ring — do not re-amp to nest |joyX|.
+                if (Math.abs(Number(best.joyX) || 0) > 0.48) {
+                    const s = Math.sign(Number(best.joyX) || side) || 1;
+                    best.joyX = this.clamp(s * 0.42, -0.48, 0.48);
+                }
+                if (Number(best.joyY) < 0.42) {
+                    best.joyY = Math.max(Number(best.joyY) || 0, alt < 28 ? 0.52 : 0.42);
+                }
+                best.pitchScale = Math.max(Number(best.pitchScale) || 0, 0.42);
+            }
+            if (undercroftSkim) {
+                if (Math.abs(Number(best.joyX) || 0) < (slabOverhead ? 0.62 : 0.55)) {
+                    const cutSide = Math.sign(Number(best.joyX) || 0) || side;
+                    best.joyX = this.clamp(
+                        cutSide * (slabOverhead ? (alt < 16 ? 0.68 : 0.72) : (alt < 16 ? 0.55 : 0.64)),
+                        -0.78,
+                        0.78
+                    );
+                }
+                // Knife 2: skip provisional skim joyY caps when pitch owner already armed
+                // (dirtBleed lock / collapse recover / arrest) — owner writes pitch later.
+                const pitchArmed =
+                    this.hasEscapePitchOwner(best) ||
+                    !!slabDirtArrest ||
+                    !!(teamId && this.isDirtBleedLockActive(teamId, opts.turnNo)) ||
+                    !!(collapsePrev && collapsePrev.shouldRecover);
+                if (slabOverhead) {
+                    if (slabDirtArrest) {
+                        // T150 A blue2: skim caps caused ground smash under negative roof.
+                        // T150 23:37: open-sky wall-close → lateral arrest (ban joyY into wall).
+                        if (this.wantsEmbedDirtLateralArrest(coverInfo, {
+                            altitude: alt,
+                            forwardY,
+                            coverDistance: dist,
+                            headroom: opts.headroom != null ? opts.headroom : coverInfo.headroom,
+                            coverForwardDistance: fwdDist,
+                            aiMapClearAbove: opts.aiMapClearAbove,
+                            aiMapSkyOpen: opts.aiMapSkyOpen
+                        })) {
+                            this.applyEmbedDirtLateralArrestStick(best, {
+                                altitude: alt,
+                                forwardY,
+                                coverDistance: dist,
+                                heat,
+                                energyCritical: opts.energyCritical,
+                                lowEnergyEscape: opts.lowEnergyEscape,
+                                side: Math.sign(Number(best.joyX) || side || 1) || 1,
+                                teamId,
+                                turnNo: opts.turnNo,
+                                coverInfo,
+                                roofClearance: roof,
+                                awaySide,
+                                selfForward: opts.selfForward,
+                                aiMapClearAbove: opts.aiMapClearAbove,
+                                aiMapSkyOpen: opts.aiMapSkyOpen
+                            });
+                        } else {
+                            const arrestY = this.getSlabDirtArrestJoyY(alt, forwardY, {
+                                roofClearance: roof,
+                                coverInfo
+                            });
+                            best.joyY = Math.max(Number(best.joyY) || 0, arrestY);
+                            best.joyX = this.clamp(Number(best.joyX) || 0, -0.42, 0.42);
+                            best.throttle = this.shouldHoldSoftUrbanThrottle(best)
+                                ? Math.min(Number(best.throttle) || 3, 3)
+                                : Math.min(Math.max(Number(best.throttle) || 3, 3), 4);
+                            best.dirtPullFloor = true;
+                            best.diveLevelPull = true;
+                            best.pitchScale = Math.max(Number(best.pitchScale) || 0, 0.55);
+                            this.markEscapePitchOwner(best, 'arrest');
+                            best.reason = `${best.reason || 'Scored escape'} | slabDirtArrest joyY≥${arrestY.toFixed(2)}`;
+                        }
+                    } else if (!pitchArmed) {
+                        // Table / true negative roof: lateral + light skim only — ban climb-into-slab.
+                        // Ban nest unload (jy≤0 into underside) — level + soft bank (T150 blue2 building).
+                        if (Number.isFinite(forwardY) && forwardY > 0.25) {
+                            best.joyY = forwardY > 0.45 ? 0.04 : 0.1;
+                            best.throttle = Math.min(Number(best.throttle) || 3, 3);
+                            best.dirtPullFloor = true;
+                            best.diveLevelPull = false;
+                            best.reason = `${best.reason || 'Scored escape'} | undercroftNestLevel fy>0.25 banUnload=1`;
+                        } else {
+                            const maxSlabY = alt < 8 ? 0.24 : (alt < 14 ? 0.18 : 0.16);
+                            const minSlabY = alt < 10 ? 0.14 : 0.1;
+                            if (Number(best.joyY) > maxSlabY) best.joyY = maxSlabY;
+                            if (Number(best.joyY) < minSlabY) best.joyY = minSlabY;
+                            best.throttle = Math.min(Number(best.throttle) || 3, 3);
+                            best.dirtPullFloor = true;
+                            best.diveLevelPull = false;
+                            best.reason = `${best.reason || 'Scored escape'} | undercroftSlabSkim joyY≤${maxSlabY}`;
+                        }
+                    }
+                } else if (alt < 12) {
+                    // Open undercroft near dirt: dirt pull is safe (no slab overhead).
+                    best.joyY = Math.max(Number(best.joyY) || 0, 0.55);
+                    best.joyX = this.clamp(best.joyX, -0.48, 0.48);
+                    best.throttle = Math.min(Number(best.throttle) || 3, 3);
+                    best.dirtPullFloor = true;
+                    best.diveLevelPull = true;
+                    this.markEscapePitchOwner(best, 'arrest');
+                    best.reason = `${best.reason || 'Scored escape'} | undercroftAltSink joyY↑`;
+                } else if (alt < 16) {
+                    best.joyY = Math.max(Number(best.joyY) || 0, 0.32);
+                    best.joyX = this.clamp(best.joyX, -0.58, 0.58);
+                    best.dirtPullFloor = true;
+                    best.diveLevelPull = best.diveLevelPull || forwardY < -0.15;
+                } else if (alt < 20) {
+                    if (Number(best.joyY) < 0.18) best.joyY = 0.18;
+                    if (Number(best.joyY) > 0.36) best.joyY = 0.28;
+                    best.dirtPullFloor = true;
+                } else {
+                    if (Number(best.joyY) < 0.12) best.joyY = 0.12;
+                    if (Number(best.joyY) > 0.22) best.joyY = 0.18;
+                    best.dirtPullFloor = true;
+                }
+                best.navMode = best.mode || 'scoreUndercroft';
+            }
             // All short-horizon options smash: hard-stop lateral, no thr4 into mesh (P0/T150a/T102).
+            // T150 dumps: allHitHold same-side glue → cov→0 nest; flip when deep/noHint/stuck streak.
+            // A/B: also escalate when collapse streak or strongly negative nest score.
             const allHit = scoredCount > 0 && hitCount >= scoredCount;
-            const allHitHard = allHit || bestScore < -150;
-            if (allHitHard && (allHit || best.buildingHit)) {
-                const cutSide = (gapAsym.strength >= 1 && gapSide) ? gapSide : side;
-                best.joyX = this.clamp(cutSide * 0.58, -0.62, 0.62);
-                best.joyY = forwardY < -0.35
-                    ? Math.min(0.42, Math.max(0.18, Number(best.joyY) || 0.18))
-                    : Math.min(0.12, Math.max(0.04, Number(best.joyY) || 0.06));
-                best.throttle = opts.energyCritical || heat > 82 || opts.lowEnergyEscape ? 2 : 3;
-                best.diveLevelPull = best.diveLevelPull || forwardY < -0.25;
-                best.pitchScale = forwardY < -0.35 ? 0.36 : 0.12;
-                best.mode = 'scoreAllHitHold';
-                best.branch = 'allHitHold';
-                best.reason = `Scored escape: all-hit hard-stop lateral (no thr4 push) score=${bestScore.toFixed(1)}`;
+            const nestScoreFail =
+                undercroftSkim &&
+                Number.isFinite(dist) &&
+                dist < 10 &&
+                bestScore < -100;
+            const allHitHard =
+                allHit ||
+                bestScore < -150 ||
+                nestScoreFail ||
+                (collapsePrev.shouldRecover && (allHit || best.buildingHit || bestScore < -70));
+            if (allHitHard && (allHit || best.buildingHit || nestScoreFail || collapsePrev.shouldRecover)) {
+                let cutSide = (gapOwnsSafe && gapSide) ? gapSide : (awaySide || side);
+                let flipped = false;
+                let stuckMeta = { shouldFlip: false, streak: 0, thrash: 0, hitStreak: 0, hitFlip: false };
+                // tableGlue: track scrape bank by best.joyX (not sticky holdAway alone).
+                if (undercroftSkim && (slabOverhead || !!best.buildingHit)) {
+                    const deepGlue = Number.isFinite(dist) && dist < 2.5;
+                    const midGlue = Number.isFinite(dist) && dist < 6;
+                    const nearGlue = Number.isFinite(dist) && dist < 12;
+                    const stickyMem = teamId && this.tableStickAwayMemory[teamId];
+                    const stickySide =
+                        stickyMem && stickyMem.side &&
+                        Number(opts.turnNo || 1) <= Number(stickyMem.untilTurn || 0)
+                            ? Math.sign(stickyMem.side)
+                            : 0;
+                    const holdAway = stickySide || awaySide || 0;
+                    const scrapeSide =
+                        Math.sign(Number(best.joyX) || 0) ||
+                        Math.sign(cutSide || side || 1) ||
+                        1;
+                    const flipCommitPrev = teamId
+                        ? this.getTableGlueFlipCommit(teamId, opts.turnNo)
+                        : { active: false, side: 0 };
+                    // Multi-turn commit: keep forced bank even if this frame is not a new hitFlip.
+                    if (flipCommitPrev.active && flipCommitPrev.side) {
+                        cutSide = flipCommitPrev.side;
+                        flipped = true;
+                        stuckMeta.hitFlip = true;
+                        stuckMeta.shouldFlip = true;
+                    }
+                    if (holdAway && !best.buildingHit && !flipCommitPrev.active) cutSide = holdAway;
+                    stuckMeta = this.noteUndercroftAllHitStuck(teamId, {
+                        turnNo: opts.turnNo,
+                        side: scrapeSide,
+                        dist,
+                        score: bestScore,
+                        noHint: !lateralHint,
+                        awaySide: holdAway,
+                        buildingHit: !!best.buildingHit,
+                        collapseStreak: Number(collapsePrev.streak) || 0
+                    });
+                    // Keep multi-turn commit alive across note() overwrite.
+                    if (flipCommitPrev.active && flipCommitPrev.side) {
+                        cutSide = flipCommitPrev.side;
+                        flipped = true;
+                        stuckMeta.hitFlip = true;
+                        stuckMeta.shouldFlip = true;
+                    }
+                    // Prefer mesh-away / sticky bank; never thrash-flip into slab while glued —
+                    // except tableGlue hitFlip: scrape bank also raycasts into mesh.
+                    if (stuckMeta.shouldFlip && holdAway && !stuckMeta.hitFlip) {
+                        cutSide = holdAway;
+                        stuckMeta.shouldFlip = false;
+                    }
+                    if (stuckMeta.hitFlip) {
+                        // Flip opposite the scraping joyX, not sticky away (dump: away===scrape).
+                        cutSide = -scrapeSide;
+                        flipped = true;
+                        stuckMeta.shouldFlip = true;
+                        this.clearGlueEscapeLock(teamId);
+                        this.clearUndercroftAllHitStuck(teamId);
+                        // Force sticky + multi-turn hard bank (glued refuse was undoing flip).
+                        this.armTableGlueFlipCommit(teamId, cutSide, opts.turnNo, 3);
+                    }
+                    const gapOwns = gapOwnsSafe;
+                    const gluedNest = deepGlue || midGlue || nearGlue;
+                    const commit = this.resolveUndercroftCommitSide({
+                        candidateSide: cutSide,
+                        lockSide,
+                        awaySide: holdAway,
+                        gapSide,
+                        gapOwns,
+                        forwardDistance: fwdDist,
+                        // Sticky/glue: unlock for hitFlip / earlier stuck streak (tableGlue).
+                        allHitUnlock: !!(
+                            stuckMeta.hitFlip ||
+                            (!gluedNest &&
+                                (stuckMeta.shouldFlip ||
+                                    (deepGlue && (bestScore < -100 || !lateralHint)) ||
+                                    (midGlue && (bestScore < -120 || !lateralHint)) ||
+                                    (nearGlue && stuckMeta.thrash >= 2))) ||
+                            !!(gapOwns && holdAway && gapSide !== holdAway)
+                        )
+                    });
+                    if (!stuckMeta.hitFlip && (commit.unlocked || commit.side !== cutSide)) {
+                        cutSide = (gluedNest && holdAway) ? holdAway : commit.side;
+                        flipped = !!(commit.unlocked || (lockSide && commit.side !== lockSide)) &&
+                            !(gluedNest && holdAway);
+                        if (flipped) {
+                            this.clearGlueEscapeLock(teamId);
+                            this.clearUndercroftAllHitStuck(teamId);
+                        }
+                    } else if (!stuckMeta.hitFlip) {
+                        cutSide = (gluedNest && holdAway) ? holdAway : commit.side;
+                    }
+                    // Final guard: sticky/away owns bank under nest unless gap safety-cleared or hitFlip.
+                    if (
+                        !stuckMeta.hitFlip &&
+                        holdAway &&
+                        cutSide &&
+                        cutSide !== holdAway &&
+                        !(gapOwns && gapSide === cutSide)
+                    ) {
+                        cutSide = holdAway;
+                        flipped = false;
+                    }
+                    // Seed sticky early so next turn cannot AABB-flip (hitFlip seeds opposite).
+                    if (teamId && cutSide) {
+                        this.resolveTableStickAwaySide(teamId, cutSide, opts.turnNo, {
+                            coverDistance: dist,
+                            forceFlip: !!stuckMeta.hitFlip
+                        });
+                    }
+                } else if (Number.isFinite(dist) && dist >= 6) {
+                    this.clearUndercroftAllHitStuck(teamId);
+                }
+                best.joyX = this.clamp(
+                    cutSide * (stuckMeta.hitFlip ? 0.78 : (undercroftSkim ? 0.72 : 0.58)),
+                    -0.82,
+                    0.82
+                );
+                if (stuckMeta.hitFlip && best.reason && !/tableGlueFlip=/.test(String(best.reason))) {
+                    best.reason = `${best.reason} | tableGlueFlip=1 hitStreak=${stuckMeta.hitStreak || 1}`;
+                }
+                // Knife 2/4: consecutive all-hit / collapse / hit+neg score → fail recovery before nest scrape.
+                const forceCollapseHold =
+                    !!collapsePrev.shouldRecover ||
+                    (Number(stuckMeta.streak) >= 2 && Number.isFinite(dist) && dist < 16) ||
+                    (Number(stuckMeta.hitStreak) >= 2 && Number.isFinite(dist) && dist < 14) ||
+                    !!stuckMeta.hitFlip ||
+                    (allHit && Number.isFinite(dist) && dist < 14 && !gapOwnsSafe) ||
+                    (allHit && Number.isFinite(alt) && alt >= 42 && Number.isFinite(dist) && dist < 22 && undercroftSkim) ||
+                    (!!best.buildingHit && bestScore < 0 && !gapOwnsSafe && (undercroftSkim || facadeClosing)) ||
+                    (!!best.buildingHit && bestScore < -40 && !gapOwnsSafe);
+                if (forceCollapseHold) {
+                    this.applyScoredEscapeFailRecovery(best, {
+                        teamId,
+                        turnNo: opts.turnNo,
+                        coverDistance: dist,
+                        coverForwardDistance: fwdDist,
+                        coverInfo,
+                        roofClearance: roof,
+                        headroom: opts.headroom != null ? opts.headroom : coverInfo.headroom,
+                        altitude: alt,
+                        forwardY,
+                        awaySide: awaySide || cutSide,
+                        forcedExitSide: stuckMeta.hitFlip ? cutSide : 0,
+                        hardChokeKind: chokeKind,
+                        aiMapClearAbove: opts.aiMapClearAbove,
+                        aiMapSkyOpen: opts.aiMapSkyOpen,
+                        slabOverhead,
+                        tableClose:
+                            !!tableChoke ||
+                            (Number.isFinite(dist) && dist < 8 && Number.isFinite(roof) && roof < -0.8),
+                        sameSideHitStreak: Number(stuckMeta.hitStreak) || 0,
+                        tableGlueFlip: !!stuckMeta.hitFlip,
+                        collapseStreak: Math.max(
+                            Number(collapsePrev.streak) || 0,
+                            Number(stuckMeta.streak) || 0,
+                            Number(stuckMeta.hitStreak) || 0,
+                            2
+                        )
+                    });
+                    if (best.reason && !/gapClear=0|gapOwnsSafe/i.test(String(best.reason))) {
+                        best.reason = `${best.reason} | collapseEarly=1 gapOwnsSafe=${gapOwnsSafe ? 1 : 0}`;
+                    }
+                    if (stuckMeta.hitFlip && best.reason && !/tableGlueFlip=/.test(String(best.reason))) {
+                        best.reason = `${best.reason} | tableGlueFlip=1 hitStreak=${stuckMeta.hitStreak || 1}`;
+                    }
+                } else if (undercroftSkim && slabOverhead) {
+                    // Keep slab skim — do not re-inflate joyY into table (old altSink overwrite).
+                    // Exception: steep dirt dive under slab → arrest ground (T150 A blue2).
+                    const deepGlue = Number.isFinite(dist) && dist < 2.5;
+                    const midGlue = Number.isFinite(dist) && dist < 6;
+                    const nearTableGlue = Number.isFinite(dist) && dist < 10;
+                    const unload = (flipped && forwardY > 0.2) || forwardY > 0.35;
+                    if (slabDirtArrest && !unload) {
+                        const arrestY = this.getSlabDirtArrestJoyY(alt, forwardY, {
+                            roofClearance: roof,
+                            coverInfo
+                        });
+                        best.joyY = arrestY;
+                        best.joyX = this.clamp(cutSide * 0.38, -0.42, 0.42);
+                        best.diveLevelPull = true;
+                        best.dirtPullFloor = true;
+                        best.throttle = opts.energyCritical || heat > 82 || opts.lowEnergyEscape || this.shouldHoldSoftUrbanThrottle(best)
+                            ? 3
+                            : 4;
+                        best.pitchScale = 0.58;
+                        best.mode = flipped ? 'scoreAllHitFlip' : 'scoreAllHitHold';
+                        best.branch = flipped ? 'allHitFlip' : 'allHitHold';
+                        this.markEscapePitchOwner(best, 'arrest');
+                        best.reason = flipped
+                            ? `Scored escape: undercroft all-hit opposite flip + dirt arrest score=${bestScore.toFixed(1)}`
+                            : `Scored escape: undercroft all-hit dirt arrest score=${bestScore.toFixed(1)} altSink=1`;
+                    } else {
+                        // Soft nest exit — do not thr4+|jx|0.82 scrape into cov→0 (dump family).
+                        this.applyScoredAllHitNestExit(best, {
+                            teamId,
+                            turnNo: opts.turnNo,
+                            coverDistance: dist,
+                            coverInfo,
+                            roofClearance: roof,
+                            headroom: opts.headroom != null ? opts.headroom : coverInfo.headroom,
+                            altitude: alt,
+                            forwardY,
+                            awaySide: awaySide || cutSide,
+                            hardChokeKind: chokeKind,
+                            aiMapClearAbove: opts.aiMapClearAbove,
+                            aiMapSkyOpen: opts.aiMapSkyOpen,
+                            slabOverhead: true,
+                            tableClose:
+                                !!tableChoke ||
+                                (Number.isFinite(dist) && dist < 8 && Number.isFinite(roof) && roof < -0.8),
+                            energyCritical: opts.energyCritical,
+                            lowEnergyEscape: opts.lowEnergyEscape,
+                            collapseStreak: 'allHit'
+                        });
+                        best.reason = flipped
+                            ? `Scored escape: undercroft all-hit opposite flip score=${bestScore.toFixed(1)}${!lateralHint ? ' noHint=1' : ''}${deepGlue ? ' deepGlue=1' : ''}${stuckMeta.thrash ? ` thrash=${stuckMeta.thrash}` : ''} | nestExit=allHit`
+                            : `Scored escape: undercroft all-hit lateral hold score=${bestScore.toFixed(1)}${!lateralHint ? ' noHint=1' : ''}${alt < 16 ? ' altSink=1' : ''} | nestExit=allHit`;
+                    }
+                    // Soft nest exit / pitch owner already owns stick — skip deepNest |jx|≈0.82 re-amp.
+                    if (
+                        !best.nestExitSoft &&
+                        !this.shouldPreserveEscapePitch(best) &&
+                        !this.hasEscapePitchOwner(best) &&
+                        (deepGlue || midGlue || nearTableGlue)
+                    ) {
+                        this.applyDeepUndercroftNestStick(best, {
+                            teamId,
+                            turnNo: opts.turnNo,
+                            coverDistance: dist,
+                            forwardY,
+                            altitude: alt,
+                            heat,
+                            energyCritical: opts.energyCritical,
+                            lowEnergyEscape: opts.lowEnergyEscape,
+                            side: cutSide,
+                            awaySide,
+                            selfForward: opts.selfForward,
+                            coverInfo,
+                            roofClearance: roof,
+                            headroom: opts.headroom != null ? opts.headroom : coverInfo.headroom,
+                            forwardDistance: fwdDist,
+                            corridorClear: coverInfo.corridorClear,
+                            corridorGap: coverInfo.corridorGap,
+                            corridorLeftClear: coverInfo.corridorLeftClear,
+                            corridorRightClear: coverInfo.corridorRightClear,
+                            hardChokeKind: chokeKind,
+                            aiMapClearAbove: opts.aiMapClearAbove,
+                            aiMapSkyOpen: opts.aiMapSkyOpen,
+                            hardContact: opts.hardContact,
+                            deepEmbed: opts.deepEmbed
+                        });
+                    }
+                } else {
+                    // T145 all-hit hard-stop: neg roof + false hr — soft nest exit, not thr4 scrape.
+                    const falseOpenSlab =
+                        Number.isFinite(roof) &&
+                        roof < 0 &&
+                        Number.isFinite(dist) &&
+                        dist < 8;
+                    if (falseOpenSlab || undercroftSkim) {
+                        this.applyScoredAllHitNestExit(best, {
+                            teamId,
+                            turnNo: opts.turnNo,
+                            coverDistance: dist,
+                            coverInfo,
+                            roofClearance: roof,
+                            headroom: opts.headroom != null ? opts.headroom : coverInfo.headroom,
+                            altitude: alt,
+                            forwardY,
+                            awaySide: awaySide || cutSide,
+                            hardChokeKind: chokeKind,
+                            aiMapClearAbove: opts.aiMapClearAbove,
+                            aiMapSkyOpen: opts.aiMapSkyOpen,
+                            slabOverhead: !!slabOverhead || falseOpenSlab,
+                            tableClose: !!tableChoke || falseOpenSlab,
+                            energyCritical: opts.energyCritical,
+                            lowEnergyEscape: opts.lowEnergyEscape,
+                            collapseStreak: 'allHit'
+                        });
+                        best.reason = `Scored escape: undercroft all-hit lateral hold score=${bestScore.toFixed(1)}${lateralHint ? '' : ' noHint=1'}${alt < 16 ? ' altSink=1' : ''}${falseOpenSlab ? ' falseOpenSlab=1' : ''} | nestExit=allHit`;
+                    } else {
+                        best.joyX = this.clamp(cutSide * 0.5, -0.58, 0.58);
+                        best.joyY = forwardY < -0.35
+                            ? Math.min(0.42, Math.max(0.18, Number(best.joyY) || 0.18))
+                            : Math.min(0.16, Math.max(0.08, Number(best.joyY) || 0.1));
+                        best.throttle = opts.energyCritical || heat > 82 || opts.lowEnergyEscape ? 2 : 3;
+                        best.diveLevelPull = best.diveLevelPull || forwardY < -0.25;
+                        best.dirtPullFloor = best.dirtPullFloor;
+                        best.mode = 'scoreAllHitHold';
+                        best.pitchScale = forwardY < -0.35 ? 0.36 : 0.12;
+                        best.branch = 'allHitHold';
+                        best.reason = `Scored escape: all-hit hard-stop lateral (no thr4 push) score=${bestScore.toFixed(1)}`;
+                    }
+                }
             } else if (best.buildingHit && bestScore < 0 && facadeClosing) {
-                const cutSide = (gapAsym.strength >= 1 && gapSide) ? gapSide : side;
+                const cutSide = (gapOwnsSafe && gapSide) ? gapSide : side;
                 best.joyX = this.clamp(cutSide * 0.55, -0.58, 0.58);
                 best.joyY = Math.max(
                     Number(best.joyY) || 0,
                     Math.max(climbFloor, forwardY < -0.25 ? 0.52 : (fwdTight ? 0.42 : climbFloor))
                 );
                 best.diveLevelPull = best.diveLevelPull || forwardY < -0.2;
-                best.mode = (gapAsym.strength >= 1 && gapSide) ? 'scoreGapForce' : 'scoreSideForce';
-                best.branch = (gapAsym.strength >= 1 && gapSide) ? 'gapForce' : 'sideForce';
-                best.reason = `Scored escape: force lateral off closing facade score=${bestScore.toFixed(1)}`;
+                best.mode = (gapOwnsSafe && gapSide) ? 'scoreGapForce' : 'scoreSideForce';
+                best.branch = (gapOwnsSafe && gapSide) ? 'gapForce' : 'sideForce';
+                best.reason = `Scored escape: force lateral off closing facade score=${bestScore.toFixed(1)}${gapOwnsSafe ? '' : ' gapSoft=1'}`;
+            }
+        } else if (undercroftSkim) {
+            // P0: sim scored nothing — still emit memory/lock skim rather than defer to climb glue-break.
+            // Deep glue with no prototypes: opposite bank once (same nest as allHitHold).
+            const deepGlue = Number.isFinite(dist) && dist < 2.5;
+            let holdSide = side;
+            let flipped = false;
+            if (slabOverhead && deepGlue && !lateralHint) {
+                const stuck = this.noteUndercroftAllHitStuck(teamId, {
+                    turnNo: opts.turnNo,
+                    side: holdSide,
+                    dist,
+                    score: -200,
+                    noHint: true,
+                    awaySide
+                });
+                if (stuck.shouldFlip || stuck.streak >= 1) {
+                    if (awaySide) {
+                        flipped = Math.sign(holdSide || 0) !== awaySide;
+                        holdSide = awaySide;
+                    } else {
+                        holdSide = -(Math.sign(holdSide || 1) || 1);
+                        flipped = true;
+                    }
+                    this.clearGlueEscapeLock(teamId);
+                    this.clearUndercroftAllHitStuck(teamId);
+                } else if (awaySide) {
+                    holdSide = awaySide;
+                }
+            } else if (awaySide) {
+                holdSide = awaySide;
+            }
+            const holdY = slabOverhead
+                ? (forwardY > 0.35
+                    ? (forwardY > 0.45 ? -0.12 : 0.02)
+                    : (flipped && forwardY > 0.2 ? -0.1 : (alt < 8 ? 0.22 : 0.16)))
+                : (alt < 12 ? 0.55 : (alt < 16 ? 0.32 : 0.14));
+            best = {
+                mode: flipped ? 'scoreAllHitFlip' : 'scoreUndercroftHold',
+                joyX: this.clamp(holdSide * (alt < 16 ? 0.7 : 0.72), -0.78, 0.78),
+                joyY: holdY,
+                throttle: opts.energyCritical || heat > 82 || opts.lowEnergyEscape ? 3 : 4,
+                pitchScale: slabOverhead ? 0.16 : (alt < 14 ? 0.42 : 0.14),
+                rollAuth: Math.PI / 10,
+                diveLevelPull: !slabOverhead && (forwardY < -0.25 || alt < 16),
+                dirtPullFloor: true,
+                statusText: flipped
+                    ? `NPC: 評分脫離(allHitFlip) ${opts.coverLabel || ''}`
+                    : `NPC: 評分脫離(undercroftHold) ${opts.coverLabel || ''}`,
+                reason: flipped
+                    ? `Scored escape: undercroft hold opposite flip (noHint=1 deepGlue=1)`
+                    : `Scored escape: undercroft lock-side skim (noHint=${lateralHint ? 0 : 1})${alt < 16 ? ' altSink=1' : ''}`,
+                score: -50,
+                branch: flipped ? 'allHitFlip' : 'undercroftHold',
+                buildingHit: false,
+                navMode: flipped ? 'scoreAllHitFlip' : 'scoreUndercroftHold'
+            };
+            if (slabOverhead && (deepGlue || (Number.isFinite(dist) && dist < 6))) {
+                if (
+                    !best.nestExitSoft &&
+                    !this.shouldPreserveEscapePitch(best) &&
+                    !this.hasEscapePitchOwner(best)
+                ) {
+                    this.applyDeepUndercroftNestStick(best, {
+                    teamId,
+                    turnNo: opts.turnNo,
+                    coverDistance: dist,
+                    forwardY,
+                    altitude: alt,
+                    heat,
+                    energyCritical: opts.energyCritical,
+                    lowEnergyEscape: opts.lowEnergyEscape,
+                    side: holdSide,
+                    awaySide,
+                    selfForward: opts.selfForward,
+                    coverInfo,
+                    roofClearance: roof,
+                    headroom: opts.headroom != null ? opts.headroom : coverInfo.headroom,
+                    forwardDistance: fwdDist,
+                    corridorClear: coverInfo.corridorClear,
+                    corridorGap: coverInfo.corridorGap,
+                    corridorLeftClear: coverInfo.corridorLeftClear,
+                    corridorRightClear: coverInfo.corridorRightClear,
+                    hardChokeKind: chokeKind,
+                    aiMapClearAbove: opts.aiMapClearAbove,
+                    aiMapSkyOpen: opts.aiMapSkyOpen,
+                    hardContact: opts.hardContact,
+                    deepEmbed: opts.deepEmbed
+                });
+                }
             }
         }
-        return best;
+        // Any scored undercroft stick: commit away-from-mesh / hold lock (stop thrash, don't lock into mesh).
+        if (
+            best &&
+            undercroftSkim &&
+            slabOverhead
+        ) {
+            const flipOut =
+                best.branch === 'allHitFlip' ||
+                best.mode === 'scoreAllHitFlip';
+            const commit = this.resolveUndercroftCommitSide({
+                candidateSide: Math.sign(Number(best.joyX) || side || 1) || 1,
+                lockSide,
+                awaySide,
+                gapSide,
+                gapOwns: gapOwnsSafe,
+                forwardDistance: fwdDist,
+                allHitUnlock: flipOut
+            });
+            const arrestSoft =
+                this.wantsSlabDirtArrest(alt, forwardY) ||
+                /slabDirtArrest|dirt arrest/i.test(String(best.reason || '')) ||
+                best.navMode === 'slabDirtArrest';
+            // Soft nest / dirtBleed owns bank — sideLock must not reseal |jx|→0.78 (T150 death).
+            const softNestBank =
+                !arrestSoft &&
+                (this.isNestExitSoftStick(best) || this.shouldHoldSoftUrbanThrottle(best));
+            // Dirt arrest owns soft bank — do not re-amplify to nest 0.68+ (steals pitch).
+            const auth = arrestSoft
+                ? Math.min(0.42, Math.max(0.32, Math.abs(Number(best.joyX) || 0.38)))
+                : (softNestBank
+                    ? Math.min(0.58, Math.max(0.48, Math.abs(Number(best.joyX) || 0.52)))
+                    : Math.max(0.68, Math.abs(Number(best.joyX) || 0.7)));
+            const jxLo = arrestSoft ? -0.42 : (softNestBank ? -0.58 : -0.78);
+            const jxHi = arrestSoft ? 0.42 : (softNestBank ? 0.58 : 0.78);
+            if (commit.side && Math.sign(Number(best.joyX) || 0) !== commit.side) {
+                best.joyX = this.clamp(commit.side * auth, jxLo, jxHi);
+            } else if (arrestSoft && Math.abs(Number(best.joyX) || 0) > 0.42) {
+                const s = Math.sign(Number(best.joyX) || commit.side || 1) || 1;
+                best.joyX = this.clamp(s * auth, -0.42, 0.42);
+            } else if (softNestBank && Math.abs(Number(best.joyX) || 0) > 0.58) {
+                const s = Math.sign(Number(best.joyX) || commit.side || 1) || 1;
+                best.joyX = this.clamp(s * auth, -0.58, 0.58);
+            }
+            if (commit.source === 'lockHold' || commit.source === 'awayFromMesh') {
+                if (best.reason && !/undercroftSideLock/i.test(String(best.reason))) {
+                    best.reason = `${best.reason} | undercroftSideLock=1 src=${commit.source}`;
+                }
+            } else if (commit.unlocked) {
+                if (best.reason && !/undercroftSideUnlock/i.test(String(best.reason))) {
+                    best.reason = `${best.reason} | undercroftSideUnlock=1 src=${commit.source}`;
+                }
+            }
+            if (awaySide && commit.side === awaySide) {
+                if (best.reason && !/awayFromMesh/i.test(String(best.reason))) {
+                    best.reason = `${best.reason} | awayFromMesh=1`;
+                }
+            }
+            // Cap before nest so nest/arrest doctrine is not immediately undone.
+            const ohCap = this.classifyUrbanOverhead(coverInfo, {
+                altitude: alt,
+                forwardY,
+                coverDistance: dist,
+                roofClearance: roof,
+                hardChokeKind: chokeKind,
+                headroom: opts.headroom != null ? opts.headroom : coverInfo.headroom,
+                aiMapClearAbove: opts.aiMapClearAbove,
+                aiMapSkyOpen: opts.aiMapSkyOpen
+            });
+            this.applyFacadeBankCap(best, {
+                forwardDistance: fwdDist,
+                forwardY,
+                facadeClosing: this.isFacadeClosingScore(coverInfo),
+                overheadClass: ohCap.class,
+                undercroftSkim: !!undercroftSkim || ohCap.class === 'tableClose' || ohCap.class === 'tableWide',
+                slabOverhead: !!slabOverhead || ohCap.slabBlocked
+            });
+            if (Number.isFinite(dist) && (dist < 6 || (ohCap.class === 'tableClose' && dist < 10)) && !flipOut) {
+                if (
+                    !best.nestExitSoft &&
+                    !this.shouldPreserveEscapePitch(best) &&
+                    !this.hasEscapePitchOwner(best)
+                ) {
+                    this.applyDeepUndercroftNestStick(best, {
+                        teamId,
+                        turnNo: opts.turnNo,
+                        coverDistance: dist,
+                        forwardY,
+                        altitude: alt,
+                        heat,
+                        energyCritical: opts.energyCritical,
+                        lowEnergyEscape: opts.lowEnergyEscape,
+                        side: Math.sign(Number(best.joyX) || commit.side || side || 1) || 1,
+                        awaySide,
+                        selfForward: opts.selfForward,
+                        coverInfo,
+                        roofClearance: roof,
+                        headroom: opts.headroom != null ? opts.headroom : coverInfo.headroom,
+                        forwardDistance: fwdDist,
+                        corridorClear: coverInfo.corridorClear,
+                        corridorGap: coverInfo.corridorGap,
+                        corridorLeftClear: coverInfo.corridorLeftClear,
+                        corridorRightClear: coverInfo.corridorRightClear,
+                        hardChokeKind: chokeKind,
+                        aiMapClearAbove: opts.aiMapClearAbove,
+                        aiMapSkyOpen: opts.aiMapSkyOpen,
+                        hardContact: opts.hardContact,
+                        deepEmbed: opts.deepEmbed
+                    });
+                }
+                // Do not re-apply facadeBankCap after nest/arrest — that was undoing |joyX|≈0.72.
+            }
+        }
+        // A: cov-collapse while scored owns stick → recover (after nest/commit, before table owner).
+        let collapseMeta = collapsePrev;
+        if (best) {
+            const allHitNow = scoredCount > 0 && hitCount >= scoredCount;
+            collapseMeta = this.noteScoredEscapeCollapse(teamId, {
+                turnNo: opts.turnNo,
+                dist,
+                side: Math.sign(Number(best.joyX) || 0),
+                score: best.score != null ? best.score : bestScore,
+                branch: best.branch || best.mode,
+                allHit: allHitNow || !!(best.mode && /allHit/i.test(String(best.mode))),
+                altitude: alt,
+                undercroft: !!(undercroftSkim || slabOverhead || tableChoke)
+            });
+            if (
+                collapseMeta.shouldRecover ||
+                (collapseMeta.streak >= 2 && Number.isFinite(dist) && dist < 10)
+            ) {
+                this.applyScoredEscapeFailRecovery(best, {
+                    teamId,
+                    turnNo: opts.turnNo,
+                    coverDistance: dist,
+                    coverInfo,
+                    roofClearance: roof,
+                    headroom: opts.headroom != null ? opts.headroom : coverInfo.headroom,
+                    altitude: alt,
+                    forwardY,
+                    awaySide,
+                    hardChokeKind: chokeKind,
+                    aiMapClearAbove: opts.aiMapClearAbove,
+                    aiMapSkyOpen: opts.aiMapSkyOpen,
+                    slabOverhead,
+                    tableClose:
+                        !!tableChoke ||
+                        (Number.isFinite(dist) && dist < 8 && Number.isFinite(roof) && roof < -0.8),
+                    collapseStreak: collapseMeta.streak
+                });
+            } else if (Number.isFinite(dist) && dist >= 16 && collapseMeta.streak === 0) {
+                this.clearScoredEscapeCollapse(teamId);
+            }
+        }
+        // Mark soft / collapse intent first — table owner is the final stick writer.
+        let out = best;
+        if (
+            out &&
+            (collapseMeta.shouldRecover ||
+                (collapseMeta.streak >= 2 && Number.isFinite(dist) && dist < 14) ||
+                (collapseMeta.shouldRecover && Number.isFinite(dist) && dist < 14))
+        ) {
+            out = this.applyScoredEscapeFailRecovery(out, {
+                teamId,
+                turnNo: opts.turnNo,
+                coverDistance: dist,
+                coverInfo,
+                roofClearance: roof,
+                headroom: opts.headroom != null ? opts.headroom : coverInfo.headroom,
+                altitude: alt,
+                forwardY,
+                awaySide: awaySide || this.getAwayFromMeshSide(coverInfo, opts.selfForward),
+                hardChokeKind: chokeKind,
+                aiMapClearAbove: opts.aiMapClearAbove,
+                aiMapSkyOpen: opts.aiMapSkyOpen,
+                slabOverhead,
+                tableClose:
+                    !!tableChoke ||
+                    (Number.isFinite(dist) && dist < 8 && Number.isFinite(roof) && roof < -0.8),
+                collapseStreak: collapseMeta.streak
+            });
+        }
+        const allHitNowFinal =
+            (scoredCount > 0 && hitCount >= scoredCount) ||
+            bestScore < -150 ||
+            (undercroftSkim && Number.isFinite(dist) && dist < 10 && bestScore < -100) ||
+            !!(out && (out.nestExitSoft || /allHit|nestExit/i.test(String(out.mode || out.branch || ''))));
+        if (
+            out &&
+            allHitNowFinal &&
+            Number.isFinite(dist) &&
+            dist < 14 &&
+            (undercroftSkim || slabOverhead || !!tableChoke)
+        ) {
+            // Tag nest soft only — do not leave nest as last writer over owner.
+            out.nestExitSoft = 1;
+            out.mode = out.mode || 'scoreAllHitNestExit';
+            out.branch = out.branch || 'allHitNestExit';
+            if (out.reason && !/nestExit=allHit/i.test(String(out.reason))) {
+                out.reason = `${out.reason} | nestExit=allHit softBank thr≤3`;
+            }
+        }
+        out = this.applyTableEscapeStickOwner(out || best, {
+            teamId,
+            turnNo: opts.turnNo,
+            coverInfo,
+            coverDistance: dist,
+            roofClearance: roof,
+            headroom: opts.headroom != null ? opts.headroom : coverInfo.headroom,
+            forwardDistance: fwdDist,
+            hardChokeKind: chokeKind,
+            altitude: alt,
+            forwardY,
+            heat,
+            energyCritical: opts.energyCritical,
+            lowEnergyEscape: opts.lowEnergyEscape,
+            side: Math.sign(Number(((out || best) && (out || best).joyX) || side || 1)) || 1,
+            awaySide: awaySide || this.getAwayFromMeshSide(coverInfo, opts.selfForward),
+            selfForward: opts.selfForward,
+            aiMapClearAbove: opts.aiMapClearAbove,
+            aiMapSkyOpen: opts.aiMapSkyOpen,
+            hardContact: opts.hardContact,
+            deepEmbed: opts.deepEmbed,
+            underRoof: opts.underRoof || opts.trueUnderRoof
+        });
+        this.stripProvisionalUndercroftSkimTag(out);
+        if (out && htEsc && htEsc.active && out.reason && !/homotopy=/.test(String(out.reason))) {
+            out.reason = `${out.reason} | homotopy=${htEsc.active.homotopyId} pocket=${Number(htEsc.active.pocketScore).toFixed(2)}`;
+        }
+        return this.clampSoftUrbanStick(out);
     },
 
     /** @deprecated use isHardEnergyExemptState / isSoftObstacleEscapeState */
@@ -2252,7 +6934,7 @@ window.AirArenaAI = {
 
     /**
      * Knife-range midair threat — eligibility only (no new force-command stack).
-     * Soft band out to ~20m so groundAvoid / urban side thrash do not eat the merge.
+     * Soft band out to ~24m so groundAvoid / urban / gun thrash do not eat the merge (T150 midair ~4m).
      */
     isCloseMidairThreat(ctx = {}) {
         const distance = Number(ctx.distance);
@@ -2260,20 +6942,20 @@ window.AirArenaAI = {
         const headOn = Number(ctx.headOnFactor);
         const closure = Number(ctx.closureSpeed);
         const localZ = ctx.localToEnemy ? Number(ctx.localToEnemy.z) : null;
-        if (!(Number.isFinite(distance) && distance > 0 && distance <= 20)) return false;
+        if (!(Number.isFinite(distance) && distance > 0 && distance <= 24)) return false;
         // Knife glue: always break.
-        if (distance <= 10) return true;
-        // 10–20m: need closing / head-on — beam chase must not spam mergeBreak serpentine.
+        if (distance <= 12) return true;
+        // 12–24m: need closing / head-on — beam chase must not spam mergeBreak serpentine.
         const closingGeom =
-            (Number.isFinite(headOn) && headOn >= 0.35) ||
-            (Number.isFinite(closure) && closure > 0.1) ||
-            (Number.isFinite(localZ) && localZ > 0.4) ||
-            (Number.isFinite(predSep) && predSep <= distance * 0.85);
+            (Number.isFinite(headOn) && headOn >= 0.32) ||
+            (Number.isFinite(closure) && closure > 0.08) ||
+            (Number.isFinite(localZ) && localZ > 0.35) ||
+            (Number.isFinite(predSep) && predSep <= distance * 0.88);
         if (!closingGeom) return false;
-        if (Number.isFinite(predSep) && predSep <= 14) return true;
-        if (Number.isFinite(headOn) && headOn >= 0.4 && distance <= 18) return true;
-        if (Number.isFinite(closure) && closure > 0.1 && distance <= 18) return true;
-        if (Number.isFinite(localZ) && localZ > 0.55 && distance <= 16) return true;
+        if (Number.isFinite(predSep) && predSep <= 16) return true;
+        if (Number.isFinite(headOn) && headOn >= 0.35 && distance <= 22) return true;
+        if (Number.isFinite(closure) && closure > 0.08 && distance <= 22) return true;
+        if (Number.isFinite(localZ) && localZ > 0.5 && distance <= 20) return true;
         return false;
     },
 
@@ -2347,6 +7029,124 @@ window.AirArenaAI = {
             fwd > 0 &&
             fwd < 8 &&
             coverInfo.collisionRisk !== 'low'
+        ) {
+            return true;
+        }
+        return false;
+    },
+
+    /**
+     * C: soft urban planner (ClimbOut / weave / energyCruise) must not steal sticks
+     * once cover is already nesting — scored / table owner owns the exit.
+     * Also: mid-cov weave/preempt while bleeding alt (T83 dirt after weave @cov≈20–27).
+     */
+    wantsHardEscapeOverSoftUrbanRoute(coverInfo = {}, opts = {}) {
+        const dist = Number(
+            coverInfo.distance != null ? coverInfo.distance : opts.coverDistance
+        );
+        const fwd = Number(
+            coverInfo.forwardDistance != null ? coverInfo.forwardDistance : opts.forwardDistance
+        );
+        const roof = Number(
+            coverInfo.roofClearance != null ? coverInfo.roofClearance : opts.roofClearance
+        );
+        const fy = Number(opts.forwardY);
+        const alt = Number(opts.altitude);
+        // Peek Δalt only (gate may run many times/turn — do not write sink memory here).
+        let dAlt = Number(opts.altDelta);
+        if (!Number.isFinite(dAlt) && opts.teamId && this.tableAltSinkMemory) {
+            const prev = this.tableAltSinkMemory[opts.teamId];
+            if (prev && Number.isFinite(prev.alt) && Number.isFinite(alt)) {
+                dAlt = alt - Number(prev.alt);
+            }
+        }
+        const sinkingNose = Number.isFinite(fy) && fy < -0.12;
+        const sinkingAlt =
+            (Number.isFinite(dAlt) && dAlt < -1.0) ||
+            (Number.isFinite(dAlt) && dAlt < -0.5 && Number.isFinite(fy) && fy < 0.08);
+        // Flat / soft-nose at low band also counts — T83 weave bled alt with jy≈0.1 thr4.
+        const lowFlatBleed =
+            Number.isFinite(dist) &&
+            dist < 28 &&
+            Number.isFinite(alt) &&
+            alt < 28 &&
+            !(Number.isFinite(fy) && fy > 0.18);
+        const midCovSinkSteal =
+            Number.isFinite(dist) &&
+            dist < 32 &&
+            Number.isFinite(alt) &&
+            alt < 30 &&
+            (sinkingNose || sinkingAlt || lowFlatBleed);
+        if (!(Number.isFinite(dist) && dist < 18) && !midCovSinkSteal) return false;
+        if (opts.teamId) {
+            const col = this.getScoredEscapeCollapse(opts.teamId, opts.turnNo);
+            if (col.shouldRecover || col.collapsing) return true;
+        }
+        if (
+            typeof this.wantsTableEscapeStickOwner === 'function' &&
+            this.wantsTableEscapeStickOwner(coverInfo, opts)
+        ) {
+            return true;
+        }
+        if (Number.isFinite(dist) && dist < 10) return true;
+        if (
+            Number.isFinite(fwd) &&
+            fwd > 0 &&
+            fwd < 10 &&
+            coverInfo.collisionRisk !== 'low'
+        ) {
+            return true;
+        }
+        if (Number.isFinite(roof) && roof < 0 && dist < 14) return true;
+        if (this.isFacadeClosingScore(coverInfo) && dist < 16) return true;
+        if (Number.isFinite(fy) && fy < -0.55 && dist < 16) return true;
+        if (coverInfo.collisionRisk === 'high' && dist < 14) return true;
+        if (
+            (coverInfo.hardChokeKind === 'tableUndercroft' ||
+                coverInfo.hardChokeKind === 'tightUndercroft') &&
+            dist < 16
+        ) {
+            return true;
+        }
+        // Mid-cov soft weave while alt bleeding: scored/table owns (T83).
+        if (midCovSinkSteal) return true;
+        return false;
+    },
+
+    /** Soft planner states that climb/weave into a closing nest (T52 ClimbOut steal). */
+    isSoftUrbanRouteClimbSteal(action = {}) {
+        if (!action) return false;
+        const st = String(action.state || '');
+        const src = String(
+            (action.urbanRoute && (action.urbanRoute.source || action.urbanRoute.pick)) ||
+            action.navMode ||
+            ''
+        );
+        if (
+            st === 'urbanRouteClimbOut' ||
+            st === 'urbanClimbingTurn' ||
+            st === 'urbanBuildingWeave' ||
+            st === 'urbanEnergyCruise' ||
+            st === 'urbanEnergyCruiseCut' ||
+            st === 'urbanRoofClimb' ||
+            st === 'urbanPreemptiveAvoid' ||
+            st === 'urbanPreemptiveRoute' ||
+            st === 'postGroundClimbOut' ||
+            st === 'obstacleEnergyClimb' ||
+            st === 'obstacleEnergyClimbRoute'
+        ) {
+            return true;
+        }
+        if (
+            /RouteClimbOut|ClimbOut|BuildingWeave|EnergyCruise|climbingTurn|RoofClimb|Preemptive|EnergyClimb/i.test(
+                src
+            )
+        ) {
+            return true;
+        }
+        if (
+            (st === 'urbanRouteEscape' || st === 'urbanRouteSide' || st === 'defensiveFlare') &&
+            /ClimbOut|Weave|EnergyCruise|climbingTurn|RoofClimb|Preemptive|EnergyClimb/i.test(src)
         ) {
             return true;
         }
@@ -2479,6 +7279,13 @@ window.AirArenaAI = {
         const fy = Number(opts.forwardY);
         const roof = Number(coverInfo.roofClearance);
         const dist = Number(coverInfo.distance);
+        // Soft rebalance: bare roof&lt;-2 at range is beside-tall — do not hard-block before handoff.
+        // Closing dive / true undercroft still banned via isNegativeRoofCruiseBan.
+        const roofCruiseBan = this.isNegativeRoofCruiseBan(coverInfo, opts);
+        if (roofCruiseBan) return roofCruiseBan;
+        // Table yield beats engage handoff — align into nest was tableGlue (cov 40→17).
+        const tableDeferEarly = this.shouldDeferEngageForTableEscape(coverInfo, opts);
+        if (tableDeferEarly) return tableDeferEarly;
         // Even when escape→engage handoff is true: do not open nose into negative roof while diving.
         const aabbRoofDive =
             Number.isFinite(roof) &&
@@ -2488,23 +7295,33 @@ window.AirArenaAI = {
             Number.isFinite(fy) &&
             fy < -0.2;
         if (aabbRoofDive) return 'aabbRoofProximity';
-        if (this.shouldHandoffEscapeToEngage(coverInfo, opts)) return null;
+        if (this.resolveEngageHandoffDefer(coverInfo, opts).ok) return null;
         if (this.isObstacleEmergencyHardLock(coverInfo, opts)) return 'obstacleHardLock';
         const fwd = Number(coverInfo.forwardDistance);
         const risk = coverInfo.collisionRisk;
-        const aiClear = !!(opts.aiMapClearAbove || opts.aiMapSkyOpen);
+        const aiClear = !!(opts.aiMapClearAbove || opts.aiMapSkyOpen) &&
+            !this.isSlabClimbBlocked({ ...opts, coverInfo, roofClearance: roof, coverDistance: dist });
         if (opts.hardContact) return 'hardContact';
-        // T23/T150: soft beside-tall clearAbove must NOT waive real AABB roof proximity —
-        // alignFirst/missilePrep were flying into negative roof and diving into facade.
-        if (Number.isFinite(roof) && roof < -2 && Number.isFinite(dist) && dist < 40) {
+        // Closing into negative roof — keep; bare beside-tall with combat contact may fight.
+        const roofClosing =
+            (Number.isFinite(fy) && fy < -0.15) ||
+            (Number.isFinite(fwd) && fwd > 0 && fwd < 20) ||
+            risk === 'high';
+        if (
+            Number.isFinite(roof) &&
+            roof < -2 &&
+            Number.isFinite(dist) &&
+            dist < 32 &&
+            (roofClosing || !opts.combatContact)
+        ) {
             return 'aabbRoofProximity';
         }
         if (
             Number.isFinite(roof) &&
             roof < 0 &&
             Number.isFinite(dist) &&
-            dist < 28 &&
-            (risk === 'medium' || risk === 'high' || (Number.isFinite(fwd) && fwd > 0 && fwd < 22))
+            dist < 22 &&
+            (risk === 'medium' || risk === 'high' || (Number.isFinite(fwd) && fwd > 0 && fwd < 18))
         ) {
             return 'aabbRoofClose';
         }
@@ -2527,16 +7344,15 @@ window.AirArenaAI = {
                 return 'altitudeLaneEmbed';
             }
         }
-        // Negative roof alone: only while still near the building (bare tall AABB at range → fight).
-        // Soft: aiMap clearAbove means the negative roof is beside-tall clutter, not an overhead slab.
+        // Negative roof alone: near + pressure only (was also any medium at long beside-tall).
         if (
             Number.isFinite(roof) &&
             roof < 0 &&
             !aiClear &&
             (
-                (Number.isFinite(dist) && dist < 24) ||
-                risk === 'medium' ||
-                risk === 'high'
+                (Number.isFinite(dist) && dist < 16) ||
+                risk === 'high' ||
+                (risk === 'medium' && Number.isFinite(dist) && dist < 20)
             )
         ) {
             return 'roofNegative';
@@ -2603,7 +7419,7 @@ window.AirArenaAI = {
         const distance = Number(ctx.distance) || 0;
         const altitude = Number(ctx.altitude) || 40;
         const hard = distance <= 12;
-        const side = this.getMidairDivergeSide(ctx);
+        let side = this.getMidairDivergeSide(ctx);
         const heat = (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(ctx.heat) : (Number(ctx.heat) || 0));
         const noseDown = Number(ctx.forwardY);
         const divingHard = Number.isFinite(noseDown) && noseDown < -0.35;
@@ -2623,31 +7439,90 @@ window.AirArenaAI = {
             joyY = altitude < 18 ? 0.72 : (altitude < 26 ? 0.62 : 0.55);
             diveLevelPull = true;
         }
-        const joyX = this.clamp(side * auth, -1, 1);
+        // T150 00:47 blue2: merge-break dive into closing facade — prefer away-from-mesh + hard level.
+        // T34 red: merge+facadeDive with cov→4 raised joyY≈0.7 into nest glue — lateral exit when tight.
+        const cover = ctx.coverInfo || {};
+        const cov = Number(cover.distance != null ? cover.distance : cover.coverDistance);
+        const roof = Number(cover.roofClearance);
+        const fwd = Number(cover.forwardDistance);
+        const intoBldg =
+            divePullPriority &&
+            (
+                (Number.isFinite(cov) && cov < 18) ||
+                (Number.isFinite(fwd) && fwd > 0 && fwd < 14) ||
+                (
+                    Number.isFinite(roof) &&
+                    roof < 8 &&
+                    Number.isFinite(cov) &&
+                    cov < 28
+                )
+            );
+        let reasonExtra = '';
+        if (intoBldg) {
+            const away = this.getAwayFromMeshSide(cover, ctx.selfForward || null);
+            if (away) side = away;
+            const tightFacade =
+                (Number.isFinite(cov) && cov < 10) ||
+                (Number.isFinite(fwd) && fwd > 0 && fwd < 8);
+            if (tightFacade) {
+                // Ban climb-into-facade/nest — max lateral + capped level (spawn/merge-dirt queue).
+                auth = Math.max(altitude < 16 ? 0.62 : 0.68, Math.min(auth, 0.78));
+                joyY = Math.min(joyY, altitude < 18 ? 0.28 : (altitude < 26 ? 0.2 : 0.14));
+                diveLevelPull = true;
+                reasonExtra = ' | facadeDive=1 tightLateral=1';
+            } else {
+                auth = Math.min(auth, altitude < 16 ? 0.48 : 0.55);
+                joyY = Math.max(joyY, altitude < 22 ? 0.72 : 0.58);
+                diveLevelPull = true;
+                reasonExtra = ' | facadeDive=1';
+            }
+        }
+        let joyX = this.clamp(side * auth, -1, 1);
+        let joyYOut = joyY;
         const thr = this.pickThrottleForTurn(heat > 76 ? 3 : 4, joyX, {
             heat,
             ap: ctx.ap,
             lowAp: ctx.lowAp
         });
-        return {
+        let action = {
             state: hard ? 'mandatoryMergeBreak' : 'mergeBreak',
             statusText: `NPC: 近距避撞 ${Math.floor(distance)}m`,
             throttle: thr,
             joyX,
-            joyY,
+            joyY: joyYOut,
             roll: this.clamp(side * (divePullPriority ? Math.PI / 7 : (hard ? Math.PI / 4 : Math.PI / 5)), -Math.PI / 4, Math.PI / 4),
             weapon: 'gun',
             queueAction: 'none',
             ready: true,
             diveLevelPull,
-            reason: divePullPriority
+            reason: (divePullPriority
                 ? (hard
                     ? 'Close midair while diving: level-out first, soft diverge'
                     : 'Near midair while diving: level-out first, soft diverge')
                 : (hard
                     ? 'Close midair: mandatory diverge before opening/press/groundAvoid'
-                    : 'Near midair (~20m): diverge before merge collision')
+                    : 'Near midair (~20m): diverge before merge collision')) + reasonExtra
         };
+        if (intoBldg && Number.isFinite(cov) && cov < 14) {
+            action = this.applyTableEscapeStickOwner(action, {
+                teamId: ctx.teamId,
+                turnNo: ctx.turnNo,
+                coverInfo: cover,
+                coverDistance: cov,
+                roofClearance: roof,
+                headroom: cover.headroom,
+                forwardDistance: fwd,
+                hardChokeKind: cover.hardChokeKind,
+                altitude,
+                forwardY: noseDown,
+                heat: ctx.heat,
+                side,
+                awaySide: this.getAwayFromMeshSide(cover, ctx.selfForward || null),
+                selfForward: ctx.selfForward,
+                underRoof: Number.isFinite(roof) && roof < 2
+            }) || action;
+        }
+        return action;
     },
 
     /** Shared midair ctx for decide gates. */
@@ -2662,15 +7537,22 @@ window.AirArenaAI = {
             localToEnemy: parts.localToEnemy,
             breakSide: parts.breakSide,
             teamId: parts.teamId,
+            turnNo: parts.turnNo,
             heat: parts.heat || 0,
             ap: parts.ap,
             lowAp: parts.lowAp,
-            faction: parts.faction
+            faction: parts.faction,
+            coverInfo: parts.coverInfo || null,
+            selfForward: parts.selfForward || null
         };
     },
 
     tryCloseMidairBreak(parts = {}, coverInfo = {}, tree = null, tag = 'midair') {
-        const midairCtx = this.buildMidairThreatCtx(parts);
+        const midairCtx = this.buildMidairThreatCtx({
+            ...parts,
+            coverInfo: parts.coverInfo || coverInfo,
+            selfForward: parts.selfForward || null
+        });
         if (!this.isCloseMidairThreat(midairCtx)) return null;
         if (!this.canYieldToMidairBreak(coverInfo, Number(parts.altitude) || 40, Number(parts.forwardY) || 0)) {
             if (Array.isArray(tree)) {
@@ -2711,17 +7593,173 @@ window.AirArenaAI = {
             const locked = GameContext.getTargetId(teamId);
             if (locked) {
                 const ht = GameContext.getTeam ? GameContext.getTeam(locked) : null;
-                if (ht && !ht.isDestroyed) return locked;
+                if (ht && !ht.isDestroyed && !(typeof ht.hp === 'number' && ht.hp <= 0)) return locked;
             }
         }
         if (typeof GameContext !== 'undefined' && GameContext.getNearestHostileId) {
             const nearest = GameContext.getNearestHostileId(teamId);
             if (nearest) {
                 const ht = GameContext.getTeam ? GameContext.getTeam(nearest) : null;
-                if (ht && !ht.isDestroyed) return nearest;
+                if (ht && !ht.isDestroyed && !(typeof ht.hp === 'number' && ht.hp <= 0)) return nearest;
             }
         }
+        // Fallback: scan living opposite-faction seats (post-kill retarget when lock/nearest lag).
+        if (typeof GameContext !== 'undefined' && GameContext.getFaction && GameContext.getLivingTeamIds) {
+            const myFac = GameContext.getFaction(teamId);
+            const living = GameContext.getLivingTeamIds() || [];
+            let bestId = null;
+            let bestD = Infinity;
+            const self = GameContext.getTeam(teamId);
+            const selfPos = self && self.wrapper ? self.wrapper.position : null;
+            for (let i = 0; i < living.length; i++) {
+                const id = living[i];
+                if (id === teamId) continue;
+                if (GameContext.getFaction(id) === myFac) continue;
+                const ht = GameContext.getTeam(id);
+                if (!ht || ht.isDestroyed || (typeof ht.hp === 'number' && ht.hp <= 0)) continue;
+                if (!selfPos || !ht.wrapper) {
+                    if (!bestId) bestId = id;
+                    continue;
+                }
+                const d = selfPos.distanceTo(ht.wrapper.position);
+                if (d < bestD) {
+                    bestD = d;
+                    bestId = id;
+                }
+            }
+            if (bestId) return bestId;
+        }
         return null;
+    },
+
+    /**
+     * Radial airspace bleed: high rFrac + outbound even while enemy is close (T100/T76).
+     * Returns null when not bleeding.
+     */
+    sampleRadialBleed(selfPos, selfForward, opts = {}) {
+        if (typeof getAirspacePressure !== 'function' || !selfPos) return null;
+        const pressure = getAirspacePressure(selfPos);
+        if (!pressure || !pressure.airspace || !pressure.airspace.enabled) return null;
+        const rim = this.sampleAirspaceRimGeometry(selfPos, selfForward, pressure);
+        const hardR = Number(pressure.airspace.radius);
+        const radial = Number(pressure.radial);
+        if (!Number.isFinite(hardR) || hardR < 1 || !Number.isFinite(radial)) return null;
+        const tuning = opts.tuning || this.getTuning();
+        const fracOn = Number(tuning.radialBleedFrac);
+        const deepFrac = Number(tuning.radialBleedDeepFrac);
+        const outOn = Number(tuning.radialBleedOutDot);
+        const fracGate = Number.isFinite(fracOn) ? fracOn : 0.52;
+        const deepGate = Number.isFinite(deepFrac) ? deepFrac : 0.72;
+        const outGate = Number.isFinite(outOn) ? outOn : 0.42;
+        const radialFrac = radial / hardR;
+        const outDot = Number(rim.outboundDot) || 0;
+        const bandHot = pressure.band === 'soft' || pressure.band === 'warn' || pressure.band === 'outside';
+        const active =
+            outDot >= outGate &&
+            (radialFrac >= fracGate || bandHot);
+        if (!active) {
+            return {
+                active: false,
+                deep: false,
+                radialFrac,
+                outDot,
+                band: pressure.band,
+                hardClearance: rim.hardClearance,
+                inwardSide: 0,
+                pressure,
+                rim
+            };
+        }
+        const deep = outDot >= outGate && (radialFrac >= deepGate || pressure.band === 'warn' || pressure.band === 'outside');
+        const teamId = opts.teamId || '';
+        const turnNo = Number(opts.turnNo) || 0;
+        const inwardSide = this.resolveAirspaceInwardSide(teamId, rim.crossY, turnNo, 12, {
+            outboundDot: outDot
+        });
+        return {
+            active: true,
+            deep,
+            radialFrac,
+            outDot,
+            band: pressure.band,
+            hardClearance: rim.hardClearance,
+            inwardSide,
+            pressure,
+            rim
+        };
+    },
+
+    /**
+     * Soft score: mid/far disengage OR radial bleed → prefer closing intercept over cruise/corridor weave
+     * (T79/T73: survivors at 300–400m on corridorCut with 0 fire).
+     * T150: non-shallow corridor still got "close" bonus while missiles unused — never treat weave as shot path when hungry.
+     */
+    applyFarReengageTacticalScore(score, candidate = {}, ctx = {}) {
+        let s = Number(score) || 0;
+        const tuning = ctx.tuning || this.getTuning();
+        const dist = Number(ctx.distance);
+        const far = Number(tuning.farReengageDist);
+        const veryFar = Number(tuning.farReengageVeryDist);
+        const farD = Number.isFinite(far) ? far : 150;
+        const veryD = Number.isFinite(veryFar) ? veryFar : 250;
+        const mslMax = Number(tuning.missileMaxRange) || 120;
+        const farFight = Number.isFinite(dist) && dist >= farD;
+        // Just outside FOX envelope but not yet "far": still prefer lead over corridor (T150 120–150 dead band).
+        const midClose =
+            !!ctx.hasAnyMissile &&
+            Number.isFinite(dist) &&
+            dist >= mslMax * 0.85 &&
+            dist < farD;
+        const bleed = ctx.radialBleed && ctx.radialBleed.active;
+        if (!farFight && !bleed && !midClose) return s;
+
+        const st = String(candidate.state || '');
+        const cruise =
+            st === 'tacticalEnergyCruise' ||
+            st === 'tacticalEnergyCruiseCut' ||
+            st === 'tacticalHighPerch' ||
+            st === 'tacticalSearchCruise';
+        const weave =
+            st === 'tacticalCorridorCut' ||
+            st === 'tacticalBeamReposition';
+        const closeHard =
+            st === 'tacticalLeadIntercept' ||
+            st === 'tacticalLagPursuit';
+        const missileHungry = !!ctx.hasAnyMissile;
+        const deep = (farFight && dist >= veryD) || !!(bleed && bleed.deep) || (midClose && dist >= mslMax);
+        const jx = Math.abs(Number(candidate.joyX) || 0);
+        const shallowWeave = weave && jx < 0.38;
+        // With missiles left, corridor/beam is never a kill path at mid/far — only lead/lag close.
+        const weaveAsClose = weave && !shallowWeave && !missileHungry;
+        if (cruise || shallowWeave || (weave && missileHungry)) {
+            s -= deep ? 62 : 40;
+            if (shallowWeave || (weave && missileHungry)) s -= deep ? 28 : 18;
+            if (missileHungry && weave) s -= deep ? 22 : 14;
+            if (ctx.airspaceOutbound || bleed) s -= bleed && bleed.deep ? 48 : 42;
+            if (ctx.airspaceWarn || (bleed && (bleed.band === 'warn' || bleed.band === 'outside'))) s -= 18;
+            if (jx < 0.18) s -= deep ? 22 : 12;
+            if (bleed && bleed.inwardSide && Number.isFinite(Number(candidate.joyX))) {
+                if (Math.sign(candidate.joyX) === -Math.sign(bleed.inwardSide) && jx > 0.12) {
+                    s -= deep ? 28 : 16;
+                }
+            }
+        }
+        if (closeHard || weaveAsClose) {
+            s += deep ? 52 : 34;
+            if (jx >= 0.4) s += 12;
+            if (st === 'tacticalLeadIntercept') s += deep ? 16 : 10;
+            if (missileHungry && closeHard) s += deep ? 18 : 12;
+            if (bleed && bleed.inwardSide && Math.sign(Number(candidate.joyX) || 0) === Math.sign(bleed.inwardSide)) {
+                s += deep ? 14 : 8;
+            }
+        }
+        if (ctx._farReengageNote == null) {
+            const rf = bleed && Number.isFinite(bleed.radialFrac) ? bleed.radialFrac.toFixed(2) : 'n/a';
+            const od = bleed && Number.isFinite(bleed.outDot) ? bleed.outDot.toFixed(2) : (ctx.airspaceOutbound ? '1' : '0');
+            ctx._farReengageNote =
+                `farReengage: dist=${Number.isFinite(dist) ? dist.toFixed(0) : 'n/a'} deep=${deep ? 1 : 0} out=${ctx.airspaceOutbound ? 1 : 0} warn=${ctx.airspaceWarn ? 1 : 0} bleed=${bleed ? 1 : 0} rFrac=${rf} od=${od} shallow=${shallowWeave ? 1 : 0} msl=${missileHungry ? 1 : 0} mid=${midClose ? 1 : 0}`;
+        }
+        return s;
     },
 
     isLivingEnemy(enemyId, battleState) {
@@ -3197,6 +8235,12 @@ window.AirArenaAI = {
                 levelOutPitch = Math.max(levelOutPitch, 0.36);
             }
         }
+        // T112 blue2: band level-out kept joyY=-0.2 while already fy≈-0.95 → city dive.
+        if (needsLevelOut && Number.isFinite(fwdY) && fwdY < -0.45) {
+            levelOutJoyY = fwdY < -0.7 ? 0.55 : 0.42;
+            levelOutPitch = -0.32;
+            levelOutThrottle = 3;
+        }
         return {
             bandMin,
             bandMax,
@@ -3256,32 +8300,57 @@ window.AirArenaAI = {
         const underRoof = !bakeClear && this.isTrueUnderRoof(coverInfo, {
             hardContact: this.isHardBuildingContact(coverInfo)
         });
+        const bowlExit = this.isFacadeBowlOpen(coverInfo, {
+            altitude: alt,
+            forwardY: opts.forwardY,
+            coverDistance: dist,
+            roofClearance: roofClear,
+            headroom,
+            aiMapClearAbove: opts.aiMapClearAbove,
+            aiMapSkyOpen: opts.aiMapSkyOpen,
+            hardContact: this.isHardBuildingContact(coverInfo)
+        });
         // Soften slab gate: only tight overhead blocks climb bias (was headroom<12).
-        const underSlab = (Number.isFinite(headroom) && headroom < 8) || underRoof;
+        const underSlab = !bowlExit && ((Number.isFinite(headroom) && headroom < 8) || underRoof);
         const embedded =
             this.isHardBuildingContact(coverInfo) &&
             ((Number.isFinite(dist) && dist < 3) || (Number.isFinite(roofClear) && roofClear < 0 && Number.isFinite(dist) && dist < 6));
         // Phase 1: bake skyOpen is spatial authority; AABB headroom only when bake absent.
         const skyOpen = bakeClear
+            || bowlExit
             || (!underRoof && (!Number.isFinite(headroom) || headroom >= 10));
+        const slabClimbBlocked = this.isSlabClimbBlocked({
+            coverInfo,
+            altitude: alt,
+            forwardY: opts.forwardY,
+            roofClearance: roofClear,
+            coverDistance: dist,
+            headroom,
+            underRoof,
+            aiMapClearAbove: opts.aiMapClearAbove,
+            aiMapSkyOpen: opts.aiMapSkyOpen
+        });
         // T35: do not require skyOpen/headroom — canyon streets rarely pass that gate below 20m.
+        // T150 red: never arm mandatoryClimb while slab silhouette still overhead.
         const mandatoryClimb =
             energyOk &&
             !underRoof &&
+            !slabClimbBlocked &&
             alt < climbFloor;
         // Prefer banking height when sky is open and still below rooftop band.
         let preferStraightClimb =
             energyOk &&
             skyOpen &&
             !underSlab &&
-            (!embedded || mandatoryClimb) &&
+            (!embedded || mandatoryClimb || bowlExit) &&
             alt >= 8 &&
             alt < roofEscape - 6;
-        if (mandatoryClimb) preferStraightClimb = true;
+        if (mandatoryClimb || bowlExit) preferStraightClimb = energyOk && alt >= 8 && alt < roofEscape - 6;
         const preferRoofExit =
             preferStraightClimb &&
             (
                 mandatoryClimb ||
+                bowlExit ||
                 buildingPressure ||
                 lane === 'canyon' ||
                 lane === 'dirt' ||
@@ -3302,13 +8371,14 @@ window.AirArenaAI = {
             underRoof,
             embedded,
             skyOpen,
+            bowlExit: !!bowlExit,
             climbJoyY: preferRoofExit || preferStraightClimb
                 ? (mandatoryClimb
                     ? this.getMandatoryClimbJoyY(alt)
                     : (alt < 28 ? 0.58 : (alt < 42 ? 0.46 : 0.36)))
                 : null,
             climbJoyXScale: preferRoofExit || preferStraightClimb
-                ? (mandatoryClimb ? 0.36 : 0.48)
+                ? (mandatoryClimb ? 0.36 : (bowlExit ? 0.42 : 0.48))
                 : 1
         };
     },
@@ -3381,7 +8451,13 @@ window.AirArenaAI = {
         if (energyRecoverStates.has(action.state) || energyBad) {
             if (divingIntoDirt) {
                 if (action.joyY < 0.32) action.joyY = 0.32;
-                if (typeof action.throttle === 'number' && action.throttle < 4) action.throttle = 4;
+                if (
+                    typeof action.throttle === 'number' &&
+                    action.throttle < 4 &&
+                    !this.shouldHoldSoftUrbanThrottle(action)
+                ) {
+                    action.throttle = 4;
+                }
             } else if (noseHigh && coverInfo.collisionRisk !== 'high' && !this.isHardBuildingContact(coverInfo)) {
                 if (action.joyY > 0.08) action.joyY = 0.08;
                 if (typeof action.throttle === 'number' && action.throttle > 3) action.throttle = 3;
@@ -3407,7 +8483,14 @@ window.AirArenaAI = {
         const headroom = Number(coverInfo.headroom);
         // Undercroft ceiling: never force pull-up into slab (overrides low-alt climb boost).
         if (Number.isFinite(headroom) && headroom < 10) {
-            this.applyHeadroomClimbLimit(action, headroom);
+            this.applyHeadroomClimbLimit(action, headroom, {
+                altitude,
+                forwardY: fwdY,
+                coverInfo,
+                roofClearance: coverInfo.roofClearance,
+                coverDistance: coverInfo.distance,
+                hardChokeKind: coverInfo.hardChokeKind
+            });
             return action;
         }
         const veryLowAlt = altitude < 26;
@@ -3417,7 +8500,12 @@ window.AirArenaAI = {
         if ((veryLowAlt || divingFast || sinkingLow) && !urbanLateral) {
             const minJoyY = veryLowAlt ? (altitude < 22 ? 0.72 : 0.55) : (divingFast ? 0.55 : 0.35);
             if (action.joyY < minJoyY) action.joyY = minJoyY;
-            if (veryLowAlt && typeof action.throttle === 'number' && action.throttle < 4) {
+            if (
+                veryLowAlt &&
+                typeof action.throttle === 'number' &&
+                action.throttle < 4 &&
+                !this.shouldHoldSoftUrbanThrottle(action)
+            ) {
                 action.throttle = 4;
             }
             if (action.fire !== 'none' && altitude < 30) action.fire = 'none';
@@ -3583,10 +8671,26 @@ window.AirArenaAI = {
         const t = Math.max(1, Number(turnNo) || 1);
         const prev = this.glueEscapeMemory[teamId];
         const until = t + Math.max(2, Math.min(8, Number(holdTurns) || 5));
+        const newSide = Math.sign(side || 0);
+        const prevSide = prev ? Math.sign(prev.side || 0) : 0;
+        const prevSrc = String((prev && prev.source) || '');
+        const newSrc = String(source || '');
+        // P0/T150: score/undercroft lock side must not flip to opposite t38-diveGlue in one beat.
+        const holdPrevSide =
+            prevSide &&
+            newSide &&
+            prevSide !== newSide &&
+            /score-|undercroft|scoreUndercroft/i.test(prevSrc) &&
+            /t38-diveGlue|t38-diveFacade|aabb/i.test(newSrc) &&
+            prev && t <= Number(prev.untilTurn || -1);
         this.glueEscapeMemory[teamId] = {
             untilTurn: prev && Number(prev.untilTurn) > until ? Number(prev.untilTurn) : until,
-            side: Math.sign(side || 0) || (prev && Math.sign(prev.side || 0)) || 0,
-            source: source || (prev && prev.source) || 't38'
+            side: holdPrevSide
+                ? prevSide
+                : (newSide || prevSide || 0),
+            source: holdPrevSide
+                ? (prevSrc || newSrc || 't38')
+                : (newSrc || prevSrc || 't38')
         };
         return this.glueEscapeMemory[teamId];
     },
@@ -3609,6 +8713,529 @@ window.AirArenaAI = {
 
     clearGlueEscapeLock(teamId) {
         if (this.glueEscapeMemory[teamId]) delete this.glueEscapeMemory[teamId];
+    },
+
+    /**
+     * Track consecutive undercroft all-hit holds on the same bank.
+     * Deep glue / noHint / terrible score → recommend opposite flip.
+     */
+    noteUndercroftAllHitStuck(teamId, {
+        turnNo = 1,
+        side = 0,
+        dist = null,
+        score = 0,
+        noHint = false,
+        awaySide = 0,
+        buildingHit = false,
+        collapseStreak = 0
+    } = {}) {
+        if (!teamId) {
+            return { shouldFlip: false, streak: 0, thrash: 0, hitStreak: 0, hitFlip: false };
+        }
+        const t = Math.max(1, Number(turnNo) || 1);
+        const s = Math.sign(side || 0);
+        const away = Math.sign(Number(awaySide) || 0);
+        const prev = this.undercroftAllHitStuckMemory[teamId];
+        const deep = Number.isFinite(Number(dist)) && Number(dist) < 2.5;
+        const mid = Number.isFinite(Number(dist)) && Number(dist) < 6;
+        const near = Number.isFinite(Number(dist)) && Number(dist) < 14;
+        const bad = Number(score) < -120 || !!noHint;
+        let streak = 1;
+        let thrash = 0;
+        let hitStreak = 0;
+        // Wider +2 window so hit streak survives a non-hit interstitial turn.
+        if (prev && s && prev.side && prev.side !== s && t <= Number(prev.untilTurn || -1) + 2) {
+            thrash = (Number(prev.thrash) || 0) + 1;
+            streak = 1;
+            hitStreak = buildingHit ? 1 : 0;
+        } else if (prev && s && prev.side === s && t <= Number(prev.untilTurn || -1) + 2) {
+            streak = (Number(prev.streak) || 0) + 1;
+            thrash = Number(prev.thrash) || 0;
+            // Keep prior hitStreak across a non-hit interstitial so catastrophic follow-up chains.
+            hitStreak = buildingHit
+                ? (Number(prev.hitStreak) || 0) + 1
+                : (Number(prev.hitStreak) || 0);
+        } else if (buildingHit) {
+            hitStreak = 1;
+        }
+        this.undercroftAllHitStuckMemory[teamId] = {
+            side: s || (prev && prev.side) || 0,
+            streak,
+            thrash,
+            hitStreak,
+            untilTurn: t + 3,
+            lastDist: Number.isFinite(Number(dist)) ? Number(dist) : null,
+            lastScore: Number(score) || 0
+        };
+        // Single catastrophic undercroft hit (dump family: one turn score≪0 → cov→0).
+        const catastrophicHit =
+            !!buildingHit &&
+            Number(score) < -180 &&
+            Number.isFinite(Number(dist)) &&
+            Number(dist) < 14;
+        const collapseHit =
+            !!buildingHit &&
+            Number(score) < -150 &&
+            Number(collapseStreak) >= 2 &&
+            Number.isFinite(Number(dist)) &&
+            Number(dist) < 14;
+        const hitFlip =
+            catastrophicHit ||
+            collapseHit ||
+            (!!buildingHit &&
+                hitStreak >= 2 &&
+                (mid || near || deep) &&
+                Number(score) < -80);
+        // Already banking away from mesh: hold — unless hitFlip (away-side also scrapes mesh).
+        if (away && s && away === s && !hitFlip) {
+            return { shouldFlip: false, streak, thrash, hitStreak, hitFlip: false };
+        }
+        const shouldFlip =
+            hitFlip ||
+            (deep && bad) ||
+            (deep && streak >= 2) ||
+            (mid && streak >= 2 && Number(score) < -100) ||
+            (mid && Number(score) < -160) ||
+            (near && thrash >= 2) ||
+            (near && streak >= 2 && Number(score) < -150) ||
+            (streak >= 3 && Number(score) < -120);
+        return { shouldFlip, streak, thrash, hitStreak, hitFlip };
+    },
+
+    clearUndercroftAllHitStuck(teamId) {
+        if (this.undercroftAllHitStuckMemory[teamId]) delete this.undercroftAllHitStuckMemory[teamId];
+    },
+
+    getScoredEscapeCollapse(teamId, turnNo = 1) {
+        const mem = teamId ? this.scoredEscapeCollapseMemory[teamId] : null;
+        if (!mem) {
+            return { streak: 0, collapsing: false, shouldRecover: false, side: 0, lastDist: null };
+        }
+        const t = Math.max(1, Number(turnNo) || 1);
+        if (t > Number(mem.untilTurn || -1) + 1) {
+            return { streak: 0, collapsing: false, shouldRecover: false, side: 0, lastDist: null };
+        }
+        const streak = Number(mem.streak) || 0;
+        const lastDist = Number.isFinite(Number(mem.lastDist)) ? Number(mem.lastDist) : null;
+        const lastAllHit = !!mem.lastAllHit;
+        const highUndercroft = !!mem.highUndercroft;
+        return {
+            streak,
+            collapsing: streak >= 2,
+            // Earlier than cov<12: dumps died while recover waited until cov≈0 / high undercroft scrape.
+            shouldRecover:
+                (streak >= 2 && lastDist != null && lastDist < 16) ||
+                (lastAllHit && streak >= 1 && lastDist != null && lastDist < 16) ||
+                (highUndercroft && streak >= 2 && lastDist != null && lastDist < 22) ||
+                (highUndercroft && lastAllHit && streak >= 1 && lastDist != null && lastDist < 20),
+            side: Math.sign(mem.side || 0),
+            lastDist,
+            highUndercroft
+        };
+    },
+
+    /**
+     * Track scored-escape turns where cover stays tight / worsens on a committed bank.
+     * Recovery owns stick when streak≥2 and cov still nesting.
+     */
+    noteScoredEscapeCollapse(teamId, {
+        turnNo = 1,
+        dist = null,
+        side = 0,
+        score = 0,
+        branch = null,
+        allHit = false,
+        altitude = null,
+        undercroft = false
+    } = {}) {
+        if (!teamId) {
+            return { streak: 0, collapsing: false, shouldRecover: false, side: 0, lastDist: null };
+        }
+        const t = Math.max(1, Number(turnNo) || 1);
+        const d = Number(dist);
+        const s = Math.sign(side || 0);
+        const alt = Number(altitude);
+        const highUndercroft = !!undercroft && Number.isFinite(alt) && alt >= 42;
+        const prev = this.scoredEscapeCollapseMemory[teamId];
+        const tight = Number.isFinite(d) && d < (highUndercroft ? 24 : 18);
+        const branchStr = String(branch || '');
+        const bad =
+            !!allHit ||
+            Number(score) < -70 ||
+            /allHit|all-hit|flip|gapCut/i.test(branchStr);
+        let streak = 0;
+        if (
+            Number.isFinite(d) &&
+            prev &&
+            Number.isFinite(Number(prev.lastDist)) &&
+            d > Number(prev.lastDist) + 2.5 &&
+            d >= 10
+        ) {
+            delete this.scoredEscapeCollapseMemory[teamId];
+            return { streak: 0, collapsing: false, shouldRecover: false, side: s, lastDist: d };
+        }
+        if (tight && prev && t <= Number(prev.untilTurn || -1) + 1) {
+            const worsened = !Number.isFinite(Number(prev.lastDist)) || d <= Number(prev.lastDist) + 0.8;
+            const sameSide = !s || !prev.side || s === prev.side;
+            if (worsened && sameSide && (bad || d < 12 || highUndercroft)) {
+                streak = (Number(prev.streak) || 0) + 1;
+            } else if (worsened && tight) {
+                streak = Math.max(1, Number(prev.streak) || 0);
+            } else if (tight && bad) {
+                streak = Math.max(1, Number(prev.streak) || 0);
+            }
+        } else if (tight && (bad || d < 12 || highUndercroft)) {
+            streak = 1;
+        }
+        // First all-hit inside nest: arm recover immediately (do not wait streak=2 at cov≈0).
+        if (allHit && Number.isFinite(d) && d < 18) {
+            streak = Math.max(streak, 2);
+        }
+        if (allHit && highUndercroft && Number.isFinite(d) && d < 28) {
+            streak = Math.max(streak, 2);
+        }
+        if (streak <= 0) {
+            if (this.scoredEscapeCollapseMemory[teamId]) delete this.scoredEscapeCollapseMemory[teamId];
+            return {
+                streak: 0,
+                collapsing: false,
+                shouldRecover: false,
+                side: s,
+                lastDist: Number.isFinite(d) ? d : null
+            };
+        }
+        this.scoredEscapeCollapseMemory[teamId] = {
+            streak,
+            side: s || (prev && prev.side) || 0,
+            lastDist: Number.isFinite(d) ? d : (prev && prev.lastDist) || null,
+            untilTurn: t + 2,
+            lastScore: Number(score) || 0,
+            lastAllHit: !!allHit || !!(prev && prev.lastAllHit),
+            highUndercroft: highUndercroft || !!(prev && prev.highUndercroft)
+        };
+        const lastDist = Number.isFinite(d) ? d : null;
+        const high = !!(this.scoredEscapeCollapseMemory[teamId].highUndercroft);
+        return {
+            streak,
+            collapsing: streak >= 2,
+            shouldRecover:
+                (streak >= 2 && lastDist != null && lastDist < 16) ||
+                (!!allHit && streak >= 1 && lastDist != null && lastDist < 16) ||
+                (high && streak >= 2 && lastDist != null && lastDist < 22) ||
+                (high && !!allHit && streak >= 1 && lastDist != null && lastDist < 20),
+            side: s || (prev && prev.side) || 0,
+            lastDist,
+            highUndercroft: high
+        };
+    },
+
+    clearScoredEscapeCollapse(teamId) {
+        if (teamId && this.scoredEscapeCollapseMemory[teamId]) delete this.scoredEscapeCollapseMemory[teamId];
+    },
+
+    /**
+     * All-hit / nest scrape exit: mark soft intent, then table owner emits final stick.
+     * Replaces thr4+|joyX|≈0.82 lateral hold that dumps showed dying into cov→0.
+     */
+    applyScoredAllHitNestExit(stick, opts = {}) {
+        if (!stick) return stick;
+        const dist = Number(opts.coverDistance);
+        const alt = Number(opts.altitude);
+        const fy = Number(opts.forwardY);
+        const away = Math.sign(Number(opts.awaySide) || 0);
+        const cur = Math.sign(Number(stick.joyX) || 0) || 1;
+        const coverInfo = opts.coverInfo || {};
+        const high =
+            Number.isFinite(alt) &&
+            alt >= 48 &&
+            this.wantsHighFacadeEscape(alt, coverInfo, {
+                coverDistance: dist,
+                roofClearance: opts.roofClearance,
+                forwardY: fy,
+                hardChokeKind: opts.hardChokeKind,
+                headroom: opts.headroom,
+                aiMapClearAbove: opts.aiMapClearAbove,
+                aiMapSkyOpen: opts.aiMapSkyOpen
+            });
+        // Knife 2/7: mid/high undercroft all-hit — collapse before gapCut skim scrape (T59/T150 ~alt39–50).
+        const midHighNest =
+            Number.isFinite(alt) &&
+            alt >= 28 &&
+            !!(opts.tableClose || opts.slabOverhead) &&
+            (
+                opts.forceCollapse ||
+                opts.collapseStreak === 'allHit' ||
+                Number(opts.collapseStreak) >= 2
+            );
+        if (high || midHighNest) {
+            return this.applyScoredEscapeFailRecovery(stick, {
+                ...opts,
+                collapseStreak: opts.collapseStreak || 'allHit'
+            });
+        }
+        const side = away || cur;
+        if (opts.teamId && away) {
+            this.resolveTableStickAwaySide(opts.teamId, away, opts.turnNo, { coverDistance: dist });
+            this.clearUndercroftAllHitStuck(opts.teamId);
+        }
+        stick.nestExitSoft = 1;
+        stick.mode = 'scoreAllHitNestExit';
+        stick.branch = 'allHitNestExit';
+        stick.navMode = 'scoreAllHitNestExit';
+        stick.dirtPullFloor = true;
+        if (stick.reason && !/nestExit=allHit/i.test(String(stick.reason))) {
+            stick.reason = `${stick.reason || 'Scored escape'} | nestExit=allHit softBank thr≤3`;
+        } else if (!stick.reason) {
+            stick.reason = 'Scored escape | nestExit=allHit softBank thr≤3';
+        }
+        // Provisional soft bank if owner declines; owner is preferred final writer.
+        const bank = Number.isFinite(dist) && dist < 4 ? 0.58 : 0.5;
+        stick.joyX = this.clamp(side * bank, -0.58, 0.58);
+        if (fy < -0.55) {
+            stick.joyY = alt < 28 ? 0.42 : 0.32;
+            stick.diveLevelPull = true;
+        } else if (fy < -0.25) {
+            stick.joyY = 0.24;
+            stick.diveLevelPull = true;
+        } else if (fy > 0.25 && (opts.slabOverhead || opts.tableClose)) {
+            stick.joyY = fy > 0.45 ? -0.1 : 0.04;
+            stick.diveLevelPull = false;
+        } else {
+            stick.joyY = opts.slabOverhead || opts.tableClose ? 0.16 : 0.22;
+        }
+        stick.throttle = Math.min(3, Math.max(2, Number(stick.throttle) || 3));
+        stick.pitchScale = fy < -0.45 ? 0.42 : 0.22;
+        const ownerOpts = {
+            ...opts,
+            coverInfo,
+            coverDistance: dist,
+            altitude: alt,
+            forwardY: fy,
+            side,
+            awaySide: away || opts.awaySide
+        };
+        if (this.wantsTableEscapeStickOwner(coverInfo, ownerOpts)) {
+            return this.applyTableEscapeStickOwner(stick, ownerOpts);
+        }
+        return stick;
+    },
+
+    /**
+     * After scored escape fails to open cover: stop repeating hard gapCut/flip scrape.
+     * Priority: high facade (besideTall) → away∩clear commit → level + moderate bank.
+     */
+    applyScoredEscapeFailRecovery(stick, opts = {}) {
+        if (!stick) return stick;
+        const dist = Number(opts.coverDistance);
+        const alt = Number(opts.altitude);
+        const fy = Number(opts.forwardY);
+        const away = Math.sign(Number(opts.awaySide) || 0);
+        const cur = Math.sign(Number(stick.joyX) || 0) || 1;
+        const coverInfo = opts.coverInfo || {};
+        const streak = Math.max(1, Number(opts.collapseStreak) || 1);
+        const high =
+            Number.isFinite(alt) &&
+            alt >= 48 &&
+            this.wantsHighFacadeEscape(alt, coverInfo, {
+                coverDistance: dist,
+                roofClearance: opts.roofClearance,
+                forwardY: fy,
+                hardChokeKind: opts.hardChokeKind,
+                headroom: opts.headroom,
+                aiMapClearAbove: opts.aiMapClearAbove,
+                aiMapSkyOpen: opts.aiMapSkyOpen
+            });
+        if (high) {
+            const side = this.resolveCollapseExitSide(coverInfo, away, cur) || away || cur;
+            stick.joyX = this.clamp(side * (streak >= 3 ? 0.52 : 0.42), -0.58, 0.58);
+            stick.joyY = Math.max(Number(stick.joyY) || 0, fy < -0.35 ? 0.48 : 0.36);
+            stick.throttle = Math.min(3, Math.max(2, Number(stick.throttle) || 3));
+            stick.diveLevelPull = fy < -0.4 || !!stick.diveLevelPull;
+            stick.collapseExit = 1;
+            stick.nestExitSoft = 1;
+            stick.branch = 'collapseHighEscape';
+            stick.mode = 'scoreCollapseHighEscape';
+            stick.navMode = 'highFacadeEscape';
+            stick.statusText = `NPC: 評分脫離(collapseHigh)${opts.coverLabel ? ` ${opts.coverLabel}` : ''}`;
+            stick.reason = `${stick.reason || 'Scored escape'} | collapseRecover=highFacade streak=${opts.collapseStreak || '?'} collapseExit=1`;
+            this.markEscapePitchOwner(stick, 'collapse');
+            if (opts.teamId) this.noteCollapseExitLock(opts.teamId, side, opts.turnNo, streak);
+            return this.stripProvisionalUndercroftSkimTag(stick);
+        }
+        const leftClear = !!(
+            coverInfo.corridorLeftClear ||
+            (Number.isFinite(Number(coverInfo.corridorLeft)) && Number(coverInfo.corridorLeft) > 8)
+        );
+        const rightClear = !!(
+            coverInfo.corridorRightClear ||
+            (Number.isFinite(Number(coverInfo.corridorRight)) && Number(coverInfo.corridorRight) > 8)
+        );
+        const noCorridor = !leftClear && !rightClear;
+        const fwdDead = (() => {
+            const fwd = Number(
+                opts.coverForwardDistance != null ? opts.coverForwardDistance : coverInfo.forwardDistance
+            );
+            return Number.isFinite(fwd) && fwd >= 0 && fwd < 1.5;
+        })();
+        let exitSide = this.resolveCollapseExitSide(coverInfo, away, cur) || away || cur;
+        let flipped = !!(away && exitSide && away === exitSide && cur && cur !== exitSide);
+        // tableGlue knife: force opposite of scrape — honor forcedExitSide / multi-turn commit.
+        const hitStreak = Number(opts.sameSideHitStreak) || 0;
+        const flipCommit = opts.teamId
+            ? this.getTableGlueFlipCommit(opts.teamId, opts.turnNo)
+            : { active: false, side: 0, bank: 0 };
+        const tableGlueFlip = !!(opts.tableGlueFlip || flipCommit.active || hitStreak >= 2);
+        if (tableGlueFlip && Number.isFinite(dist) && dist < 16) {
+            const forced =
+                Math.sign(Number(opts.forcedExitSide) || 0) ||
+                (flipCommit.active && flipCommit.side) ||
+                0;
+            exitSide = forced || -cur || away || 1;
+            flipped = true;
+            if (opts.teamId && exitSide) {
+                this.armTableGlueFlipCommit(opts.teamId, exitSide, opts.turnNo, 3);
+            }
+        }
+        // Knife 4: glued nest with no open corridor — hold current bank (ban awayFlip thrash).
+        // Skip when tableGlueFlip / hit streak demands opposite.
+        if (flipped && noCorridor && Number.isFinite(dist) && dist < 8 && !tableGlueFlip) {
+            exitSide = cur;
+            flipped = false;
+        }
+        // Knife 5: active glue lock owns bank under nest (ban AABB away thrash vs lock).
+        // tableGlueFlip / hit streak may override glue lock once.
+        const glueHold = opts.teamId ? this.getGlueEscapeLock(opts.teamId, opts.turnNo) : { active: false };
+        if (
+            glueHold.active &&
+            glueHold.side &&
+            (opts.slabOverhead || opts.tableClose || noCorridor) &&
+            !tableGlueFlip
+        ) {
+            if (exitSide !== glueHold.side) {
+                exitSide = glueHold.side;
+                flipped = !!(cur && cur !== exitSide);
+            }
+        }
+        if (opts.teamId && exitSide) {
+            this.resolveTableStickAwaySide(opts.teamId, exitSide, opts.turnNo, {
+                coverDistance: dist,
+                forceFlip: tableGlueFlip
+            });
+            this.clearUndercroftAllHitStuck(opts.teamId);
+            this.noteCollapseExitLock(opts.teamId, exitSide, opts.turnNo, streak);
+        }
+        // Escalate bank with streak — flip commit uses hard lateral (dump: soft 0.58 cov→0).
+        const flipBank = tableGlueFlip
+            ? (Number(flipCommit.bank) || 0.78)
+            : 0;
+        const bank = flipBank
+            ? flipBank
+            : ((noCorridor || fwdDead) && Number.isFinite(dist) && dist < 6
+                ? 0.48
+                : (streak >= 4 || (Number.isFinite(dist) && dist < 4)
+                    ? 0.62
+                    : (streak >= 2 || (Number.isFinite(dist) && dist < 8) ? 0.58 : 0.5)));
+        stick.joyX = this.clamp(exitSide * bank, flipBank ? -0.82 : -0.62, flipBank ? 0.82 : 0.62);
+        const levelY = fy < -0.55
+            ? (alt < 28 ? 0.48 : 0.36)
+            : (fy < -0.25 ? 0.28 : 0.22);
+        if (opts.slabOverhead || opts.tableClose) {
+            // Knife 5 / doctrine P1: near dirt under table → arrest beats skim cap (T150 collapse skim→ground).
+            const dirtUnderTable =
+                Number.isFinite(alt) &&
+                alt < 16 &&
+                (fy < -0.08 || alt < 14 || !!stick.dirtPullFloor || !!opts.dirtBleed);
+            if (dirtUnderTable) {
+                const arrestY = alt < 12 ? 0.42 : (fy < -0.25 ? 0.36 : 0.3);
+                stick.joyY = Math.max(Number(stick.joyY) || 0, arrestY);
+                stick.diveLevelPull = true;
+                stick.dirtPullFloor = true;
+                stick.pitchScale = Math.max(Number(stick.pitchScale) || 0, 0.48);
+                this.markEscapePitchOwner(stick, 'arrest');
+            } else if (
+                // tableGlueFlip mid-alt: flat nose + hard bank (ban midAltLevel soft skim scrape).
+                tableGlueFlip &&
+                Number.isFinite(alt) &&
+                alt >= 24 &&
+                alt < 52
+            ) {
+                stick.joyY = this.clamp(
+                    fy > 0.28 ? Math.min(Number(stick.joyY) || 0, 0.06) : Math.max(Number(stick.joyY) || 0, 0.12),
+                    -0.06,
+                    0.14
+                );
+                stick.diveLevelPull = fy < -0.15;
+                stick.pitchScale = Math.max(Number(stick.pitchScale) || 0, 0.28);
+                this.markEscapePitchOwner(stick, 'collapse');
+            } else if (
+                // Knife 7: mid-alt undercroft collapse — level out (ban skim 0.14 scrape).
+                Number.isFinite(alt) &&
+                alt >= 24 &&
+                alt < 52 &&
+                (fy < 0.22 || !!stick.buildingHit || Number(opts.collapseStreak) >= 2)
+            ) {
+                if (fy > 0.28) {
+                    // Ban climb-into-slab while still under roof.
+                    stick.joyY = this.clamp(Math.min(Number(stick.joyY) || 0, 0.08), -0.1, 0.1);
+                    stick.diveLevelPull = false;
+                } else {
+                    const levelFloor = fy < -0.45 ? 0.42 : (fy < -0.15 ? 0.34 : 0.28);
+                    const levelCap = fy < -0.45 ? 0.48 : 0.42;
+                    stick.joyY = this.clamp(
+                        Math.max(Number(stick.joyY) || 0, levelFloor),
+                        levelFloor,
+                        levelCap
+                    );
+                    stick.diveLevelPull = fy < -0.12 || !!stick.diveLevelPull;
+                }
+                stick.pitchScale = Math.max(Number(stick.pitchScale) || 0, 0.32);
+                this.markEscapePitchOwner(stick, 'collapse');
+            } else if (this.shouldPreserveEscapePitch(stick)) {
+                // Knife 2: keep prior owned pitch — ban fail-recovery soft skim flatten.
+            } else {
+                // Lateral exit under slab — keep nose flat; do not soft-skim scrape forever.
+                const skimFloor = fy < -0.55 ? Math.min(0.22, levelY) : 0.14;
+                stick.joyY = this.clamp(Math.max(Number(stick.joyY) || 0, skimFloor), 0.08, fy < -0.55 ? 0.28 : 0.18);
+                stick.diveLevelPull = fy < -0.45;
+            }
+        } else {
+            stick.joyY = Math.max(Number(stick.joyY) || 0, levelY);
+            stick.diveLevelPull = fy < -0.35 || !!stick.diveLevelPull;
+            this.markEscapePitchOwner(stick, 'collapse');
+        }
+        stick.dirtPullFloor = true;
+        stick.throttle = Math.min(3, Number(stick.throttle) || 3);
+        stick.nestExitSoft = 1;
+        stick.collapseExit = 1;
+        stick.branch = flipped ? 'collapseAwayFlip' : 'collapseLevel';
+        stick.mode = flipped ? 'scoreCollapseAwayFlip' : 'scoreCollapseLevel';
+        stick.navMode = flipped ? 'scoreCollapseAwayFlip' : 'scoreCollapseLevel';
+        if (!this.shouldPreserveEscapePitch(stick)) {
+            this.markEscapePitchOwner(stick, 'collapse');
+        }
+        stick.statusText = flipped
+            ? `NPC: 評分脫離(collapseAway)${opts.coverLabel ? ` ${opts.coverLabel}` : ''}`
+            : `NPC: 評分脫離(collapseLevel)${opts.coverLabel ? ` ${opts.coverLabel}` : ''}`;
+        const dirtTag = (opts.slabOverhead || opts.tableClose) && Number.isFinite(alt) && alt < 16 && stick.diveLevelPull
+            ? ' dirtUnderTable=1'
+            : '';
+        const midTag =
+            (opts.slabOverhead || opts.tableClose) &&
+            Number.isFinite(alt) &&
+            alt >= 24 &&
+            alt < 52 &&
+            !dirtTag &&
+            !tableGlueFlip
+            ? ' midAltLevel=1'
+            : '';
+        const flipCommitTag = tableGlueFlip ? ' tableGlueCommit=1' : '';
+        if (tableGlueFlip) stick.tableGlueFlipCommit = 1;
+        stick.reason = `${stick.reason || 'Scored escape'} | collapseRecover=${flipped ? 'awayFlip' : 'levelBank'} streak=${opts.collapseStreak || '?'} collapseExit=1 away=${exitSide}${dirtTag}${midTag}${flipCommitTag}`;
+        if (tableGlueFlip && !/tableGlueFlip=/.test(String(stick.reason))) {
+            stick.reason = `${stick.reason} | tableGlueFlip=1 hitStreak=${Math.max(hitStreak, 1)}`;
+            if (opts.teamId) this.clearGlueEscapeLock(opts.teamId);
+        }
+        return this.stripProvisionalUndercroftSkimTag(stick);
     },
 
     armFox1BakeYieldLock(teamId, {
@@ -3696,9 +9323,10 @@ window.AirArenaAI = {
      * 5) mandatory/canyon climb (not under slab, not dive+closing)
      * 6) engageHandoff / combatContact reclaim
      * 7) fox2 / align / missile / gun
-     * Shared proximity: EARLY_UNDERCROFT_COV (=10) for release + scored-null + T38 early.
+     * Shared proximity: EARLY_UNDERCROFT_COV for release + scored-null + T38 early.
+     * T80: 10 was late — widen so lateral owns before cov≈0 embed.
      */
-    EARLY_UNDERCROFT_COV: 10,
+    EARLY_UNDERCROFT_COV: 14,
 
     /**
      * P0-2: stop diveClosing hard-cut thrash — hand to T38/undercroft/scored escape.
@@ -3713,7 +9341,7 @@ window.AirArenaAI = {
         const roof = Number(
             opts.roofClearance != null ? opts.roofClearance : coverInfo.roofClearance
         );
-        const earlyCov = Number(this.EARLY_UNDERCROFT_COV) || 10;
+        const earlyCov = Number(this.EARLY_UNDERCROFT_COV) || 14;
         // Leveled / climbing nose — hard-cut bank no longer owns the stick.
         if (Number.isFinite(forwardY) && forwardY > -0.2) return true;
         // Align with early undercroft / scored-null (was cov<8 — fought cov<10 T38 gate).
@@ -3793,7 +9421,15 @@ window.AirArenaAI = {
             if (stillThreat) return true;
         }
 
-        const diving = Number.isFinite(forwardY) && forwardY < -0.28;
+        // T145: mild nose-down @cov<16 still yield climb-out (was only fy<-0.28).
+        const diving =
+            (Number.isFinite(forwardY) && forwardY < -0.28) ||
+            (
+                Number.isFinite(forwardY) &&
+                forwardY < -0.22 &&
+                Number.isFinite(dist) &&
+                dist < 16
+            );
         if (!diving) return false;
         const facadeClosing =
             !!opts.facadeClosing ||
@@ -3904,12 +9540,18 @@ window.AirArenaAI = {
     resolveAirspaceInwardSide(teamId, crossY, turnNo = 1, commitTurns = 12, opts = {}) {
         const instant = crossY >= 0 ? -1 : 1;
         const t = Math.max(1, Number(turnNo) || 1);
-        const hold = Math.max(4, Math.min(20, Number(commitTurns) || 12));
+        const hold = Math.max(4, Math.min(24, Number(commitTurns) || 12));
         const outboundDot = Number(opts.outboundDot);
+        const freezeOutside = !!opts.freezeOutside;
         const mem = this.airspaceAvoidMemory[teamId];
 
+        // Outside / negative clearance: keep committed side — flip thrash grew radial (T150 red).
+        if (freezeOutside && mem && mem.side && t <= Number(mem.commitUntil || 0) + 8) {
+            return Math.sign(mem.side) || instant;
+        }
+
         // Nose nearly radial-in or already inward: expire commit and recompute from crossY.
-        if (Number.isFinite(outboundDot) && outboundDot < 0.1) {
+        if (!freezeOutside && Number.isFinite(outboundDot) && outboundDot < 0.1) {
             this.airspaceAvoidMemory[teamId] = {
                 side: instant,
                 commitUntil: t + 4
@@ -3921,6 +9563,7 @@ window.AirArenaAI = {
             const committed = Math.sign(mem.side) || instant;
             // Mid-turn: crossed the radial (instant flipped, outDot falling) — short recommit.
             if (
+                !freezeOutside &&
                 Number.isFinite(outboundDot) &&
                 outboundDot < 0.4 &&
                 instant !== committed
@@ -3989,12 +9632,20 @@ window.AirArenaAI = {
         const risk = String(opts.collisionRisk || '');
         if (risk === 'high') return null;
         if (Number.isFinite(coverDist) && coverDist < 22) return null;
-        if (Number.isFinite(roof) && roof < 4) return null;
+        // T128 blue: distant AABB roof≈−1…−3 @ cov≈70–80 blocked defer → urban stole punch-in (jx flip).
+        // Only refuse on near mesh / true table air — not far silhouette roofs.
+        const nearMeshRoof =
+            Number.isFinite(roof) &&
+            roof < 4 &&
+            Number.isFinite(coverDist) &&
+            coverDist < 36;
+        if (nearMeshRoof) return null;
         const pressure = getAirspacePressure(selfPos);
         if (!pressure || !pressure.airspace || !pressure.airspace.enabled) return null;
         if (!pressure.band || pressure.band === 'clear' || pressure.band === 'soft') return null;
         const rim = this.sampleAirspaceRimGeometry(selfPos, selfForward, pressure);
         // Only near hard kill — soft/mid-warn urban must keep obstacle ownership (T103).
+        // Outside always defers soft urban when cover is open (T128 radial bleed + urban flip).
         const critical =
             pressure.band === 'outside' ||
             (rim.hardClearance < 70 && rim.outboundDot > 0.55) ||
@@ -4007,7 +9658,6 @@ window.AirArenaAI = {
     hasBuildingPressureForAirspaceYield(coverInfo = {}, opts = {}) {
         if (opts.hardContact || opts.deepEmbed) return true;
         const risk = String((coverInfo && coverInfo.collisionRisk) || opts.collisionRisk || '');
-        if (risk === 'high') return true;
         const coverDist = Number(
             coverInfo && Number.isFinite(Number(coverInfo.distance))
                 ? coverInfo.distance
@@ -4019,8 +9669,29 @@ window.AirArenaAI = {
                 : opts.roofClearance
         );
         const fwd = Number(coverInfo && coverInfo.forwardDistance);
+        const clear = Number(opts.hardClearance);
+        const nearRim =
+            !!opts.nearHardRim ||
+            opts.pressureBand === 'outside' ||
+            (Number.isFinite(clear) && clear < 80);
+
+        // T78: at hard tape, distant AABB (cov=111 roof=-16 medium) must NOT steal rim steer.
+        if (nearRim) {
+            if (risk === 'high' && Number.isFinite(coverDist) && coverDist < 32) return true;
+            if (Number.isFinite(coverDist) && coverDist < 18) return true;
+            if (Number.isFinite(roof) && roof < 2 && Number.isFinite(coverDist) && coverDist < 28) return true;
+            if (Number.isFinite(fwd) && fwd > 0 && fwd < 12 && (!Number.isFinite(coverDist) || coverDist < 30)) {
+                return true;
+            }
+            return false;
+        }
+
+        if (risk === 'high') return true;
         if (Number.isFinite(coverDist) && coverDist < 20) return true;
-        if (Number.isFinite(roof) && roof < 3) return true;
+        // Roof alone only when building is nearby (T103 cov≈15; not T78 cov≈111).
+        if (Number.isFinite(roof) && roof < 3) {
+            if (!Number.isFinite(coverDist) || coverDist < 36) return true;
+        }
         if (Number.isFinite(fwd) && fwd > 0 && fwd < 14) return true;
         return false;
     },
@@ -4157,6 +9828,26 @@ window.AirArenaAI = {
             };
         }
 
+        // Table / nest owns escape — clear climbOut so skim/nest is not overwritten.
+        if (this.shouldYieldClimbOutToTableEscape(coverInfo || {}, {
+            altitude,
+            forwardY,
+            aiMapClearAbove: !!aiMapClearAbove,
+            aiMapSkyOpen: !!aiMapSkyOpen,
+            underRoof: !!(altitudeLane && altitudeLane.underRoof),
+            deepEmbed: !!(altitudeLane && altitudeLane.embedded)
+        })) {
+            this.clearNavIntent(teamId);
+            return {
+                active: false,
+                untilTurn: -1,
+                targetAlt: desiredTarget,
+                side: intent.side || 0,
+                source: 'yieldTable',
+                clearanceOk: false
+            };
+        }
+
         // Raise while trapped; lower back to bandMin once out of canyon/roof (do not ratchet forever to 72).
         const roofNow = Number(coverInfo && coverInfo.roofClearance);
         const laneNow = altitudeLane && altitudeLane.lane;
@@ -4228,7 +9919,11 @@ window.AirArenaAI = {
         targetAlt = 35,
         maxPitchCmd = 1,
         source = 'climbOut',
-        coverInfo = null
+        coverInfo = null,
+        aiMapClearAbove = false,
+        aiMapSkyOpen = false,
+        teamId = null,
+        turnNo = 1
     } = {}) {
         const tuning = this.getTuning();
         const bandMin = Number(tuning.combatBandMin) || 35;
@@ -4238,22 +9933,168 @@ window.AirArenaAI = {
             : (Number(targetAlt) || bandMin);
         const bandRemaining = Math.max(0, climbGoal - altitude);
         const steepDive = forwardY < -0.35;
+        const sideSign = Math.sign(side || 0);
+        const cover = coverInfo || {};
+        const facadeUnsafe = this.isNavClimbOutFacadeUnsafe(cover, {
+            altitude,
+            forwardY,
+            aiMapClearAbove,
+            aiMapSkyOpen
+        });
+        // T150 A: after slab skim, roof flipped +3 / cov≈13 → joyY=0.72 into building.
+        // facadeBowl / open-sky: never fall back to weak skim that nest unload then steals (T123).
+        if (facadeUnsafe) {
+            const covNow = Number(cover.distance);
+            const roofNow = Number(cover.roofClearance);
+            const coverOpts = {
+                hardChokeKind: cover.hardChokeKind,
+                roofClearance: roofNow,
+                coverDistance: covNow,
+                headroom: cover.headroom,
+                coverInfo: cover,
+                altitude,
+                forwardY,
+                aiMapClearAbove,
+                aiMapSkyOpen
+            };
+            const oh = this.classifyUrbanOverhead(cover, coverOpts);
+            const bowlOpen = oh.bowlOpen;
+            const slabSilhouette = oh.slabBlocked;
+            const trueTableClose = oh.class === 'tableClose';
+            const deepSlab = oh.class === 'tableWide' || oh.class === 'tableClose';
+            const yieldTable = this.shouldYieldClimbOutToTableEscape(cover, coverOpts);
+            const highEscape = !yieldTable && this.wantsHighFacadeEscape(altitude, cover, coverOpts);
+            // Priority 3: high silhouette may soft-climb; priority 2 close table never openSky.
+            const openSky =
+                !trueTableClose &&
+                !yieldTable &&
+                (
+                    (bowlOpen && !slabSilhouette && !(deepSlab && altitude < 48)) ||
+                    (highEscape && !steepDive) ||
+                    (oh.class === 'openBowl' && !deepSlab)
+                );
+            const diveIntoFace =
+                steepDive &&
+                Number.isFinite(covNow) &&
+                covNow < 18;
+            // C: neg roof / fwd collapse / mid-recover cov — never openSky climb into nest (postGroundClimbOut).
+            const nestTightClimb =
+                Number.isFinite(covNow) &&
+                covNow < 20 &&
+                (
+                    trueTableClose ||
+                    slabSilhouette ||
+                    deepSlab ||
+                    oh.class === 'facadeClose' ||
+                    oh.class === 'besideTall' ||
+                    (Number.isFinite(Number(cover.roofClearance)) && Number(cover.roofClearance) < 0) ||
+                    (Number.isFinite(Number(cover.forwardDistance)) &&
+                        Number(cover.forwardDistance) > 0 &&
+                        Number(cover.forwardDistance) < 10)
+                );
+            if (openSky && !diveIntoFace && !nestTightClimb) {
+                const sideX = sideSign || 1;
+                return {
+                    state: 'postGroundClimbOut',
+                    statusText: highEscape
+                        ? `NPC: 高空立面脫出 ${altitude.toFixed(1)}m`
+                        : `NPC: 開空立面軟爬 ${altitude.toFixed(1)}m`,
+                    throttle: heat > 82 ? 3 : 4,
+                    joyX: this.clamp(sideX * (highEscape ? 0.55 : 0.42), -0.62, 0.62),
+                    joyY: Math.max(
+                        steepDive ? 0.48 : (highEscape ? 0.32 : 0.48),
+                        altitude < 40 ? 0.52 : (highEscape ? 0.28 : 0.42)
+                    ),
+                    pitchCmd: -maxPitchCmd * (highEscape ? 0.32 : 0.42),
+                    roll: this.clamp(sideX * 0.42 * Math.PI / 12, -Math.PI / 12, Math.PI / 12),
+                    weapon: 'gun',
+                    queueAction: 'none',
+                    ready: true,
+                    navMode: highEscape ? 'highFacadeEscape' : 'openSkyFacadeExit',
+                    dirtPullFloor: true,
+                    diveLevelPull: true,
+                    pitchScale: highEscape ? 0.42 : 0.5,
+                    reason: highEscape
+                        ? `Nav climb-out high escape (${source}): thr4 bank + soft climb (ban weak skim)`
+                        : `Nav climb-out open-sky facade (${source}): soft bank + climb (ban nest unload)`
+                };
+            }
+            // Priority 1 on skim path: steep dive gets real level, not joyY=0.16 (T120).
+            const skimY = steepDive
+                ? (altitude < 10
+                    ? 0.52
+                    : (altitude < 28
+                        ? 0.42
+                        : (altitude < 48 ? 0.36 : 0.32)))
+                : (highEscape
+                    ? 0.28
+                    : (altitude < 10 ? 0.24 : 0.16));
+            const skimX = sideSign
+                ? this.clamp(
+                    sideSign * (highEscape || trueTableClose ? 0.68 : (altitude < 16 ? 0.62 : 0.55)),
+                    -0.78,
+                    0.78
+                )
+                : 0;
+            return this.applyTableEscapeStickOwner({
+                state: 'postGroundClimbOut',
+                statusText: highEscape
+                    ? `NPC: 高空側推脫出 ${altitude.toFixed(1)}m`
+                    : `NPC: 近樓側推再爬 ${altitude.toFixed(1)}m`,
+                throttle: heat > 82 ? 3 : (highEscape || steepDive ? 4 : 3),
+                joyX: skimX,
+                joyY: skimY,
+                pitchCmd: -maxPitchCmd * (steepDive ? 0.42 : (highEscape ? 0.28 : 0.2)),
+                roll: this.clamp(skimX * Math.PI / 10, -Math.PI / 10, Math.PI / 10),
+                weapon: 'gun',
+                queueAction: 'none',
+                ready: true,
+                navMode: highEscape ? 'highFacadeEscape' : 'climbOutSkim',
+                dirtPullFloor: true,
+                diveLevelPull: !!steepDive || !!highEscape,
+                reason: diveIntoFace
+                    ? `Nav climb-out deferred dive-into-face (${source}): lateral + level (ban joyY=0.95)`
+                    : (trueTableClose
+                        ? `Nav climb-out deferred true-table (${source}): lateral skim (ban climb-into-slab) oh=${oh.class}`
+                        : (highEscape
+                            ? `Nav climb-out high escape skim (${source}): thr4 bank + level (ban weak skim) oh=${oh.class}`
+                            : (deepSlab || slabSilhouette
+                                ? `Nav climb-out deferred slab-silhouette (${source}): lateral + level oh=${oh.class}`
+                                : `Nav climb-out deferred near facade (${source}): lateral skim (ban climb-into-building) oh=${oh.class}`)))
+            }, {
+                teamId,
+                turnNo,
+                coverInfo: cover,
+                coverDistance: covNow,
+                roofClearance: roofNow,
+                headroom: cover.headroom,
+                hardChokeKind: cover.hardChokeKind,
+                altitude,
+                forwardY,
+                heat,
+                side: sideSign || 1,
+                awaySide: this.getAwayFromMeshSide(cover, null),
+                aiMapClearAbove,
+                aiMapSkyOpen
+            });
+        }
         const recoveryThrottle = steepDive
             ? this.getEmergencyRecoveryThrottle(altitude, forwardY, heat)
             : (heat > 78 ? 4 : 5);
-        const sideSign = Math.sign(side || 0);
         // Mild committed bank only — hard reacquire joyX is what dumps altitude after climb.
         const joyX = sideSign
             ? this.clamp(sideSign * (altitude < 18 ? 0.22 : 0.28), -0.32, 0.32)
             : 0;
-        const roof = Number(coverInfo && coverInfo.roofClearance);
+        const roof = Number(cover.roofClearance);
         const roofPressure = Number.isFinite(roof) && roof < 4;
         const sinking = forwardY < -0.05;
-        // T150 blue2: alt≥bandMin used joyY≈0.22 beside tall AABB (roof<0) while “open” fwd —
-        // soft climb → nose drop → dive into next facade in visually open lane.
+        const covSafe = Number(cover.distance);
+        // T145: steepDive joyY=0.95 with cov≈12 flew into facade — cap when cover close.
         let joyY;
-        if (steepDive) {
-            joyY = 0.95;
+        if (steepDive && Number.isFinite(covSafe) && covSafe < 20) {
+            joyY = altitude < 28 ? 0.48 : 0.36;
+        } else if (steepDive) {
+            joyY = 0.72;
         } else if (roofPressure || sinking) {
             joyY = altitude < 28 ? 0.72 : (altitude < 42 ? 0.58 : 0.48);
             if (Number.isFinite(roof) && roof < 0) joyY = Math.max(joyY, 0.52);
@@ -4544,6 +10385,9 @@ window.AirArenaAI = {
         tree.push(`urbanRouteGate: selected=${urbanRoute.urbanRoute.source} score=${urbanRoute.urbanRoute.score} nb=${urbanRoute.urbanRoute.nearestBuilding}`);
         const ur = urbanRoute.urbanRoute || {};
         tree.push(
+            `routePocket: pocketRisk=${ur.pocketRisk != null ? Number(ur.pocketRisk).toFixed(2) : '0'} wpFunnel=${ur.wpFunnel || 0} breakFunnelHold=${ur.breakFunnelHold || 0} gapHold=${ur.gapHold || 0} ht=${ur.homotopyId || '-'} htWhy=${ur.homotopyWhy || '-'}`
+        );
+        tree.push(
             `routeEnergy: ap0=${ur.startAP != null ? ur.startAP : 'n/a'} apN=${ur.finalAP != null ? ur.finalAP : 'n/a'} drop=${ur.apDrop != null ? ur.apDrop : 'n/a'} sink=${ur.sink != null ? ur.sink : 'n/a'} joyX=${ur.joyX != null ? ur.joyX : 'n/a'} thr=${ur.thr != null ? ur.thr : 'n/a'} bad=${ur.energyBad || 0} pick=${ur.source || urbanMode}`
         );
         tree.push(`routeBeam: horizon=${this.getRoutePlanHorizon()} beam=${this.getRouteBeamWidth()} gated=${this.shouldUseRouteBeam(ctx.coverInfo || {}, { tuning: this.getTuning() }) ? 1 : 0}`);
@@ -4580,6 +10424,32 @@ window.AirArenaAI = {
             'urbanRoofClimb'
         ]);
         const climbSource = (urbanRoute.urbanRoute && urbanRoute.urbanRoute.source) || urbanMode;
+        // C: nest / facade-tight — do not return ClimbOut/weave that steals scored/table.
+        const hardOverSoft = this.wantsHardEscapeOverSoftUrbanRoute(ctx.coverInfo || {}, {
+            altitude: Number(ctx.altitude),
+            forwardY: Number(ctx.forwardY),
+            coverDistance: ctx.coverInfo && ctx.coverInfo.distance,
+            forwardDistance: ctx.coverInfo && ctx.coverInfo.forwardDistance,
+            roofClearance: ctx.coverInfo && ctx.coverInfo.roofClearance,
+            hardContact: !!ctx.hardBuildingContact || !!ctx.hardContact,
+            deepEmbed: !!ctx.deepEmbed,
+            underRoof: !!ctx.underRoof,
+            teamId,
+            turnNo: Number(ctx.turnNo || 1),
+            aiMapClearAbove: !!ctx.aiMapClearAbove,
+            aiMapSkyOpen: !!ctx.aiMapSkyOpen,
+            hardChokeKind: ctx.coverInfo && ctx.coverInfo.hardChokeKind
+        });
+        if (hardOverSoft && this.isSoftUrbanRouteClimbSteal({ ...urbanRoute, state: urbanMode })) {
+            tree.push(
+                `urbanRouteGate: null=hardEscapeOverSoftClimb cov=${
+                    ctx.coverInfo && Number.isFinite(Number(ctx.coverInfo.distance))
+                        ? Number(ctx.coverInfo.distance).toFixed(1)
+                        : 'n/a'
+                } src=${climbSource || urbanMode}`
+            );
+            return null;
+        }
         if (
             climbOutStates.has(urbanMode) ||
             climbOutStates.has(climbSource) ||
@@ -4598,16 +10468,10 @@ window.AirArenaAI = {
                 source: climbSource || 'urbanRoute'
             });
         }
-        // Building escape must not drop IR defense: flare on the same stick inputs when FOX-2 is inbound.
-        const flareWhileEscape =
-            !!ctx.actualMissileThreat &&
-            !!ctx.canUseFlare &&
-            !!ctx.flareCooldownReady &&
-            !ctx.shouldSaveFlare &&
-            !ctx.lineOfSightBlocked &&
-            Number(ctx.altitude) >= 14;
-        if (flareWhileEscape) {
-            tree.push('urbanRouteGate: flareWhileEscape=1');
+        // Building escape must not drop typed CM: chaff on FOX-1/paint, flare on IR inbound.
+        const escapeCm = this.resolveEscapeCountermeasure(ctx);
+        if (escapeCm) {
+            tree.push(`urbanRouteGate: ${escapeCm.tag}=1`);
         }
         this.enforceFacadeLateralFloor(
             urbanRoute,
@@ -4616,17 +10480,17 @@ window.AirArenaAI = {
         );
         return this.withDebug({
             ...urbanRoute,
-            state: flareWhileEscape ? 'defensiveFlare' : urbanMode,
-            statusText: flareWhileEscape
-                ? `NPC: 避撞熱焰 ${Math.floor(Number(debugBase.coverDistance) || Number(ctx.coverInfo && ctx.coverInfo.distance) || 0)}m`
+            state: escapeCm ? escapeCm.state : urbanMode,
+            statusText: escapeCm
+                ? `NPC: ${escapeCm.statusPrefix} ${Math.floor(Number(debugBase.coverDistance) || Number(ctx.coverInfo && ctx.coverInfo.distance) || 0)}m`
                 : urbanRoute.statusText,
             weapon: 'gun',
-            queueAction: flareWhileEscape ? 'flare' : 'none',
+            queueAction: escapeCm ? escapeCm.queueAction : 'none',
             ready: true,
-            reason: flareWhileEscape
-                ? `${urbanRoute.reason || 'Urban escape'} | flare while building-escaping`
+            reason: escapeCm
+                ? `${urbanRoute.reason || 'Urban escape'} | ${escapeCm.reasonSuffix}`
                 : (urbanRoute.reason || 'WEGO urban route planner selected a safe multi-step route')
-        }, debugBase, [...tree, `selected: ${flareWhileEscape ? 'defensiveFlare-urbanEscape' : `${urbanMode}(${urbanRoute.urbanRoute.source})`}`], flareWhileEscape ? 'defensiveFlare' : urbanMode);
+        }, debugBase, [...tree, `selected: ${escapeCm ? `${escapeCm.state}-urbanEscape` : `${urbanMode}(${urbanRoute.urbanRoute.source})`}`], escapeCm ? escapeCm.state : urbanMode);
     },
 
     /**
@@ -4739,11 +10603,15 @@ window.AirArenaAI = {
         // Phase B thin: predicted enemy bearing soft-bias (never overrides survival).
         score = this.applyEnemyPredictCombatScore(score, candidate, ctx);
 
+        // Far disengage / rim-outbound: prefer intercept over cruise/perch (T83/T76 airspace).
+        if (!ctx.tuning) ctx.tuning = tuning;
+        score = this.applyFarReengageTacticalScore(score, candidate, ctx);
+
         // High perch near hard ceiling / rim loses (T102 airspace).
         if (st === 'tacticalHighPerch') {
             const bandHard = Number(tuning.combatBandHardMax) || 108;
-            const bandMax = Number(tuning.combatBandMax) || 92;
-            if (Number.isFinite(altitude) && altitude >= bandMax - 6) score -= 28;
+            const bandMaxLocal = Number(tuning.combatBandMax) || 92;
+            if (Number.isFinite(altitude) && altitude >= bandMaxLocal - 6) score -= 28;
             if (Number.isFinite(altitude) && altitude >= bandHard - 14) score -= 55;
             if (Number.isFinite(minAlt) && minAlt > bandHard - 8) score -= 40;
         }
@@ -4824,7 +10692,15 @@ window.AirArenaAI = {
         if (st === 'tacticalLagPursuit' && alignPred > 0.15 && alignPred < 0.75) s += 10;
         if (st === 'tacticalBeamReposition' && Math.abs(joyX) >= 0.35 && alignPred > 0) s += 8;
         if (st === 'tacticalHighPerch' && joyY > 0.2 && alignPred < 0.35) s -= 16;
-        if (st === 'tacticalEnergyCruise' && alignPred < 0.1 && Math.abs(joyX) < 0.15) s -= 8;
+        // T21: energy cruise with nose away while still in FOX envelope → dead air.
+        if (
+            (st === 'tacticalEnergyCruise' || st === 'tacticalEnergyCruiseCut') &&
+            alignPred < 0.25
+        ) {
+            s -= Math.abs(joyX) < 0.22 ? 22 : 12;
+        } else if (st === 'tacticalEnergyCruise' && alignPred < 0.1 && Math.abs(joyX) < 0.15) {
+            s -= 8;
+        }
 
         // Stash for winner needle only (avoid N-candidate tree spam).
         ctx._phaseBNote = `phaseB: predictAlign=${alignPred.toFixed(2)} lead=${leadTurns.toFixed(2)} state=${st || 'n/a'}`;
@@ -4909,6 +10785,10 @@ window.AirArenaAI = {
         if (ctx.mandatoryMergeBreak || ctx.knifeMidair) return null;
         if (ctx.collisionRisk === 'high') return null;
         if (ctx.reliableShootWindow) return null;
+        // T133: steep mid-alt dive must not lag-pursue with nose-down joyY (engagement steal).
+        const fyTap = Number(ctx.forwardY);
+        const altTap = Number(ctx.altitude || 0);
+        if (Number.isFinite(fyTap) && fyTap < -0.55 && altTap < 72) return null;
 
         const tuning = this.getTuning();
         const altitude = Number(ctx.altitude || 0);
@@ -4925,46 +10805,108 @@ window.AirArenaAI = {
         const horizon = this.getRoutePlanHorizon();
 
         const candidates = [];
+        const farD = Number(tuning.farReengageDist) || 150;
+        const veryFarD = Number(tuning.farReengageVeryDist) || 250;
+        const mslMax = Number(tuning.missileMaxRange) || 120;
+        const distNow = Number(ctx.distance);
+        const farFight = Number.isFinite(distNow) && distNow >= farD;
+        const deepFar = Number.isFinite(distNow) && distNow >= veryFarD;
+        const missileHungry = !!ctx.hasAnyMissile;
+        // T150: missiles left + mid/far → skip corridor/beam catalog; lead/lag only.
+        const midClose =
+            missileHungry &&
+            Number.isFinite(distNow) &&
+            distNow >= mslMax * 0.85 &&
+            distNow < farD;
+        const closeHungry = missileHungry && (farFight || midClose || deepFar);
+        const bleed = ctx.radialBleed && ctx.radialBleed.active ? ctx.radialBleed : null;
+        const bleedIn = bleed && bleed.inwardSide ? bleed.inwardSide : 0;
+        // Far OR radial bleed: cruise must bank — tiny joyX caused airspace runaways (T83/T100).
+        let cruiseHx = farFight
+            ? this.clamp(hx * (deepFar ? 0.72 : 0.55) + side * 0.06, -0.55, 0.55)
+            : this.clamp(side * 0.08, -0.14, 0.14);
+        let cruiseCutHx = farFight
+            ? this.clamp(hx * (deepFar ? 0.8 : 0.62) + side * 0.12, -0.62, 0.62)
+            : this.clamp(side * 0.28, -0.36, 0.36);
+        if (bleed && bleedIn) {
+            const punch = bleed.deep ? 0.52 : 0.38;
+            cruiseHx = this.clamp(cruiseHx * 0.35 + bleedIn * punch, -0.62, 0.62);
+            cruiseCutHx = this.clamp(cruiseCutHx * 0.3 + bleedIn * (punch + 0.08), -0.68, 0.68);
+        }
         candidates.push({
             ...base,
             state: 'tacticalEnergyCruise',
             statusText: 'NPC: 戰術接近-補能直飛',
             throttle: cruiseThr,
-            joyX: this.clamp(side * 0.08, -0.14, 0.14),
-            joyY: altitude < bandMin ? 0.22 : (altitude < bandMin + 20 ? 0.1 : 0.02),
-            roll: this.clamp(side * Math.PI / 18, -Math.PI / 16, Math.PI / 16),
-            reason: 'Tactical approach: energy cruise toward band'
+            joyX: cruiseHx,
+            joyY: altitude < bandMin ? 0.22 : (altitude < bandMin + 20 ? 0.1 : (farFight ? -0.04 : 0.02)),
+            roll: this.clamp(cruiseHx * Math.PI / 14, -Math.PI / 12, Math.PI / 12),
+            reason: farFight
+                ? 'Tactical approach: energy cruise while closing (far re-engage)'
+                : 'Tactical approach: energy cruise toward band'
         });
         candidates.push({
             ...base,
             state: 'tacticalEnergyCruiseCut',
             statusText: 'NPC: 戰術接近-補能淺切',
             throttle: cruiseThr,
-            joyX: this.clamp(side * 0.28, -0.36, 0.36),
-            joyY: altitude < bandMin ? 0.18 : 0.08,
-            roll: this.clamp(side * Math.PI / 12, -Math.PI / 12, Math.PI / 12),
-            reason: 'Tactical approach: shallow energy cut'
+            joyX: cruiseCutHx,
+            joyY: altitude < bandMin ? 0.18 : (farFight ? 0.02 : 0.08),
+            roll: this.clamp(cruiseCutHx * Math.PI / 11, -Math.PI / 10, Math.PI / 10),
+            reason: farFight
+                ? 'Tactical approach: shallow cut closing (far re-engage)'
+                : 'Tactical approach: shallow energy cut'
         });
-        if (urban) {
+        if (urban && !closeHungry) {
+            // T79: far corridor with |joyX|~0.3 sideways never closes — bank toward enemy when far.
+            let corridorHx = farFight
+                ? this.clamp(hx * (deepFar ? 0.82 : 0.68) + side * 0.14, -0.68, 0.68)
+                : this.clamp(side * (coverInfo.corridorClear ? 0.32 : 0.4), -0.48, 0.48);
+            if (bleed && bleedIn) {
+                // T78: corridorCut joy≈0.1 outbound for 30+ turns → airspace; bias inward while cutting.
+                corridorHx = this.clamp(
+                    corridorHx * 0.35 + bleedIn * (bleed.deep ? 0.55 : 0.42) + hx * 0.15,
+                    -0.68,
+                    0.68
+                );
+            }
             candidates.push({
                 ...base,
                 state: 'tacticalCorridorCut',
                 statusText: 'NPC: 戰術接近-縫道淺切',
                 throttle: heat > 82 ? 3 : 4,
-                joyX: this.clamp(side * (coverInfo.corridorClear ? 0.32 : 0.4), -0.48, 0.48),
-                joyY: altitude < bandMin ? 0.2 : 0.06,
-                roll: this.clamp(side * Math.PI / 10, -Math.PI / 9, Math.PI / 9),
-                reason: 'Tactical approach: corridor-friendly shallow cut'
+                joyX: corridorHx,
+                joyY: altitude < bandMin ? 0.2 : ((farFight || bleed) ? -0.04 : 0.06),
+                roll: this.clamp(corridorHx * Math.PI / 10, -Math.PI / 9, Math.PI / 9),
+                reason: farFight
+                    ? 'Tactical approach: corridor cut closing (far re-engage)'
+                    : (bleed
+                        ? 'Tactical approach: corridor cut with inward bank (radial bleed)'
+                        : 'Tactical approach: corridor-friendly shallow cut')
             });
+        }
+        let lagHx = this.clamp(
+            hx * (farFight || closeHungry ? (deepFar ? 0.88 : 0.8) : 0.55) + side * 0.12,
+            -0.7,
+            0.7
+        );
+        let leadHx = this.clamp(
+            hx * (farFight || closeHungry ? (deepFar ? 1.0 : 0.95) : 0.85),
+            -0.85,
+            0.85
+        );
+        if (bleed && bleedIn) {
+            lagHx = this.clamp(lagHx * 0.4 + bleedIn * (bleed.deep ? 0.5 : 0.38) + hx * 0.25, -0.7, 0.7);
+            leadHx = this.clamp(leadHx * 0.45 + bleedIn * (bleed.deep ? 0.48 : 0.36) + hx * 0.3, -0.78, 0.78);
         }
         candidates.push({
             ...base,
             state: 'tacticalLagPursuit',
             statusText: 'NPC: 戰術接近-落後追擊',
             throttle: heat > 75 ? 3 : 4,
-            joyX: this.clamp(hx * 0.55 + side * 0.12, -0.55, 0.55),
-            joyY: this.clamp(vy * 0.35 + (altitude < bandMin ? 0.12 : 0), -0.2, 0.32),
-            roll: this.clamp((hx * 0.55) * Math.PI / 7, -Math.PI / 7, Math.PI / 7),
+            joyX: lagHx,
+            joyY: this.clamp(vy * 0.35 + (altitude < bandMin ? 0.12 : 0) + ((farFight || bleed) && altitude > (Number(tuning.combatBandMax) || 92) ? -0.08 : 0), -0.28, 0.32),
+            roll: this.clamp(lagHx * Math.PI / 7, -Math.PI / 7, Math.PI / 7),
             reason: 'Tactical approach: lag pursuit (avoid head-on thrash)'
         });
         candidates.push({
@@ -4972,36 +10914,59 @@ window.AirArenaAI = {
             state: 'tacticalHighPerch',
             statusText: 'NPC: 戰術接近-高度優勢',
             throttle: cruiseThr,
-            joyX: this.clamp(hx * 0.35, -0.4, 0.4),
+            joyX: this.clamp(
+                (bleed && bleedIn ? hx * 0.25 + bleedIn * (bleed.deep ? 0.48 : 0.36) : hx * (farFight ? 0.55 : 0.35)),
+                -0.55,
+                0.55
+            ),
             // T102: do not climb into hard band / airspace — soft descend near ceiling.
             joyY: altitude >= (Number(tuning.combatBandHardMax) || 108) - 14
                 ? -0.18
                 : (altitude >= (Number(tuning.combatBandMax) || 92) - 8
                     ? -0.08
                     : (altitude < bandMin + 10 ? 0.34 : (altitude < bandMin + 28 ? 0.16 : -0.06))),
-            roll: this.clamp(hx * Math.PI / 9, -Math.PI / 8, Math.PI / 8),
-            reason: 'Tactical approach: climb/hold combat perch'
+            roll: this.clamp((bleed && bleedIn ? bleedIn * 0.4 : hx) * Math.PI / 9, -Math.PI / 8, Math.PI / 8),
+            reason: bleed
+                ? 'Tactical approach: perch with inward bank (radial bleed)'
+                : 'Tactical approach: climb/hold combat perch'
         });
-        candidates.push({
-            ...base,
-            state: 'tacticalBeamReposition',
-            statusText: 'NPC: 戰術接近-側向占位',
-            throttle: heat > 78 ? 3 : 4,
-            joyX: this.clamp(side * 0.48, -0.58, 0.58),
-            joyY: altitude < bandMin ? 0.16 : 0.04,
-            roll: this.clamp(side * Math.PI / 8, -Math.PI / 7, Math.PI / 7),
-            reason: 'Tactical approach: beam reposition for better aspect'
-        });
-        if (!urban || coverInfo.collisionRisk === 'low') {
+        if (!closeHungry) {
+            candidates.push({
+                ...base,
+                state: 'tacticalBeamReposition',
+                statusText: 'NPC: 戰術接近-側向占位',
+                throttle: heat > 78 ? 3 : 4,
+                joyX: this.clamp(
+                    bleed && bleedIn
+                        ? side * 0.22 + bleedIn * (bleed.deep ? 0.48 : 0.36)
+                        : (farFight
+                            ? hx * (deepFar ? 0.72 : 0.58) + side * 0.28
+                            : side * 0.48),
+                    -0.62,
+                    0.62
+                ),
+                joyY: altitude < bandMin ? 0.16 : (farFight ? 0.02 : 0.04),
+                roll: this.clamp((bleed && bleedIn ? bleedIn : (farFight ? hx : side)) * Math.PI / 8, -Math.PI / 7, Math.PI / 7),
+                reason: farFight
+                    ? 'Tactical approach: beam close toward contact (far re-engage)'
+                    : 'Tactical approach: beam reposition for better aspect'
+            });
+        }
+        // Lead intercept: open sky OR far re-engage even in urban medium (T83/T76).
+        if (!urban || coverInfo.collisionRisk === 'low' || farFight || bleed || closeHungry) {
             candidates.push({
                 ...base,
                 state: 'tacticalLeadIntercept',
                 statusText: 'NPC: 戰術接近-前置攔截',
-                throttle: heat > 72 ? 3 : 4,
-                joyX: this.clamp(hx * 0.85, -0.7, 0.7),
-                joyY: this.clamp(vy * 0.45, -0.22, 0.28),
-                roll: this.clamp(hx * Math.PI / 5.5, -Math.PI / 5, Math.PI / 5),
-                reason: 'Tactical approach: lead intercept (open/low building risk)'
+                throttle: heat > 72 ? 3 : (farFight || bleed ? cruiseThr : 4),
+                joyX: leadHx,
+                joyY: this.clamp(vy * 0.45 + ((farFight || bleed) && altitude > (Number(tuning.combatBandMax) || 92) - 4 ? -0.12 : 0), -0.28, 0.28),
+                roll: this.clamp(leadHx * Math.PI / 5.5, -Math.PI / 5, Math.PI / 5),
+                reason: farFight
+                    ? 'Tactical approach: lead intercept (far re-engage)'
+                    : (bleed
+                        ? 'Tactical approach: lead intercept (radial bleed)'
+                        : 'Tactical approach: lead intercept (open/low building risk)')
             });
         }
         if (ctx.passiveSearch || (!ctx.sensorContact && ctx.sensorMemory)) {
@@ -5010,8 +10975,8 @@ window.AirArenaAI = {
                 state: 'tacticalSearchCruise',
                 statusText: 'NPC: 戰術接近-搜索補能',
                 throttle: cruiseThr,
-                joyX: this.clamp((hx || side * 0.2) * 0.4, -0.42, 0.42),
-                joyY: altitude < bandMin ? 0.18 : 0.06,
+                joyX: this.clamp((hx || side * 0.2) * (farFight ? 0.65 : 0.4), -0.5, 0.5),
+                joyY: altitude < bandMin ? 0.18 : (farFight ? -0.04 : 0.06),
                 roll: this.clamp(side * Math.PI / 14, -Math.PI / 12, Math.PI / 12),
                 reason: 'Tactical approach: search cruise instead of zero-stick searchIntercept'
             });
@@ -5084,7 +11049,8 @@ window.AirArenaAI = {
                 finalAngleDeg: bestEval.finalAngleDeg,
                 minAltitude: bestEval.minAltitude,
                 ...(bestPhaseB ? { phaseB: bestPhaseB } : {}),
-                ...(rngTieNote ? { rngTie: rngTieNote } : {})
+                ...(rngTieNote ? { rngTie: rngTieNote } : {}),
+                ...(ctx._farReengageNote ? { farReengage: ctx._farReengageNote } : {})
             }
         };
     },
@@ -5102,6 +11068,7 @@ window.AirArenaAI = {
             );
             if (meta.phaseB) tree.push(meta.phaseB);
             if (meta.rngTie) tree.push(meta.rngTie);
+            if (meta.farReengage) tree.push(meta.farReengage);
         }
         return this.withDebug({
             ...planned,
@@ -5329,6 +11296,7 @@ window.AirArenaAI = {
         }
         let survivalWaypoints = null;
         let survivalPath = null;
+        let dualHomotopyCorridors = null;
         if (
             fwd &&
             typeof AirArenaAiMap !== 'undefined'
@@ -5366,6 +11334,64 @@ window.AirArenaAI = {
                         }
                     );
                 }
+                // Wave 2 seed: if A* path weak, try flyable corridor graph toward forward goal.
+                if (
+                    (!survivalPath || !survivalPath.ok) &&
+                    AirArenaAiMap.buildFlyableCorridorGraph &&
+                    AirArenaAiMap.findCorridorGraphPath
+                ) {
+                    if (!mapWp._corridorGraph || mapWp._corridorGraph.refAlt !== Math.round(alt || 55)) {
+                        mapWp._corridorGraph = AirArenaAiMap.buildFlyableCorridorGraph(mapWp, {
+                            refAlt: Number.isFinite(alt) ? alt : 55,
+                            margin: 8
+                        });
+                    }
+                    if (mapWp._corridorGraph && mapWp._corridorGraph.ok) {
+                        const goalDist = Number(opts.pathGoalDist) || (Number(mapWp.cellSize) || 10) * 10;
+                        const gx = selfPos.x + (Number(fwd.x) || 0) * goalDist;
+                        const gz = selfPos.z + (Number(fwd.z) || 0) * goalDist;
+                        const gPath = AirArenaAiMap.findCorridorGraphPath(
+                            mapWp._corridorGraph,
+                            selfPos.x,
+                            selfPos.z,
+                            gx,
+                            gz,
+                            { maxExpand: opts.pathMaxExpand || 220 }
+                        );
+                        if (gPath && gPath.ok && (gPath.waypoints || []).length >= 2) {
+                            survivalPath = Object.assign({}, gPath, {
+                                ok: true,
+                                preferredSide: 0,
+                                strength: 1,
+                                firstClear: !!(gPath.waypoints[0] && gPath.waypoints[0].clear),
+                                climbBias: 0,
+                                targetAlt: null
+                            });
+                            const w0 = gPath.waypoints[0];
+                            const crossY = (Number(fwd.x) || 0) * (w0.z - selfPos.z)
+                                - (Number(fwd.z) || 0) * (w0.x - selfPos.x);
+                            if (Math.abs(crossY) > 4) {
+                                survivalPath.preferredSide = crossY > 0 ? -1 : 1;
+                            }
+                        }
+                    }
+                }
+                if (AirArenaAiMap.sampleDualHomotopyCorridors) {
+                    dualHomotopyCorridors = AirArenaAiMap.sampleDualHomotopyCorridors(
+                        mapWp,
+                        selfPos.x,
+                        selfPos.z,
+                        Number(fwd.x) || 0,
+                        Number(fwd.z) || 0,
+                        alt,
+                        {
+                            steps: opts.dualSteps || 5,
+                            stepDist: opts.dualStepDist,
+                            lateral: opts.dualLateral,
+                            margin: 8
+                        }
+                    );
+                }
             }
         }
         return {
@@ -5380,7 +11406,8 @@ window.AirArenaAI = {
             lane: mapLane,
             corridor,
             survivalWaypoints,
-            survivalPath
+            survivalPath,
+            dualHomotopyCorridors
         };
     },
 
@@ -5417,7 +11444,8 @@ window.AirArenaAI = {
         const turnNo = Math.max(1, Number(opts.turnNo) || 1);
         const mem = this.survivalWaypointMemory[teamId];
         const selfPos = opts.selfPos;
-        const commitNew = (src) => {
+        let lastReplanWhy = '';
+        const commitNew = (src, why = '') => {
             const side = Math.sign(src.preferredSide || 0);
             const climbBias = Number(src.climbBias) || 0;
             const forwardClimb = !side && !!(src.firstClear || src.strength >= 1 || climbBias >= 0.35);
@@ -5431,11 +11459,19 @@ window.AirArenaAI = {
                 climbBias: Math.max(climbBias, (mem && Number(mem.climbBias)) || 0),
                 targetAlt: src.targetAlt != null ? src.targetAlt : (mem && mem.targetAlt),
                 source: src.source || 'greedy',
-                cursor: 0
+                cursor: 0,
+                pocketRisk: Number(src.pocketRisk) || 0,
+                isFunnel: !!src.isFunnel,
+                funnelScore: Number(src.funnelScore) || 0,
+                openScore: Number(src.openScore) || 0,
+                // One-shot for same-turn homotopy: force L/R after funnel replan.
+                lastReplanWhy: why || ''
             };
+            lastReplanWhy = why || '';
         };
         if (pick) {
             let shouldReplan = !mem || turnNo > Number(mem.untilTurn || -1);
+            let replanWhy = shouldReplan ? (mem ? 'expired' : 'init') : '';
             if (!shouldReplan && mem && selfPos && Array.isArray(mem.waypoints) && mem.waypoints.length) {
                 const cur = mem.waypoints[Math.min(mem.cursor || 0, mem.waypoints.length - 1)];
                 const distWp = Math.hypot(
@@ -5447,18 +11483,122 @@ window.AirArenaAI = {
                     mem.untilTurn = turnNo + 6;
                 } else if (distWp > 90) {
                     shouldReplan = true;
+                    replanWhy = 'far';
                 }
             }
             if (!shouldReplan && mem && pick.source === 'path' && mem.source !== 'path') {
                 shouldReplan = true;
+                replanWhy = 'pathUpgrade';
             }
             if (!shouldReplan && mem && (Number(pick.strength) || 0) >= (Number(mem.strength) || 0) + 2) {
                 shouldReplan = true;
+                replanWhy = 'stronger';
             }
-            if (shouldReplan) commitNew(pick);
-            else if (mem && pick.climbBias > (Number(mem.climbBias) || 0) + 0.15) {
+            // Near-term pocket aversion: break sticky WP when locked side is funnel and
+            // opposite mesh gap / pick side is open (少強制 — replan, not stick ban).
+            // Thresholds lowered 2026-08-13: dumps showed 0× funnelGapFlip (gate too strict + mem wash).
+            if (!shouldReplan && mem) {
+                const memRisk = Number(mem.pocketRisk);
+                const liveRisk = Number.isFinite(memRisk)
+                    ? memRisk
+                    : (this.scoreSurvivalWaypointPocket(mem.waypoints).pocketRisk);
+                const pickRisk = Number(pick.pocketRisk) || 0;
+                const memFunnel = !!mem.isFunnel || liveRisk >= 0.28;
+                const pickFunnel = !!pick.isFunnel || pickRisk >= 0.28;
+                const gapAsym = this.getCorridorGapAsymmetry(coverInfo);
+                const gapSide = Math.sign(gapAsym.side || 0);
+                const memSide = Math.sign(mem.side || 0);
+                const pickSide = Math.sign(pick.preferredSide || 0);
+                const oppositeGapOpen =
+                    gapSide &&
+                    memSide &&
+                    gapSide !== memSide &&
+                    (Number(gapAsym.strength) || 0) >= 0.75;
+                const oppositeGapSoft =
+                    gapSide &&
+                    memSide &&
+                    gapSide !== memSide &&
+                    this.isFlyableCorridorGap(coverInfo);
+                if (memFunnel && (oppositeGapOpen || (oppositeGapSoft && liveRisk >= 0.32))) {
+                    shouldReplan = true;
+                    replanWhy = 'funnelGapFlip';
+                } else if (
+                    memFunnel &&
+                    pickSide &&
+                    memSide &&
+                    pickSide !== memSide &&
+                    pickRisk + 0.08 < liveRisk
+                ) {
+                    shouldReplan = true;
+                    replanWhy = 'funnelAltPick';
+                } else if (
+                    !pickFunnel &&
+                    pickRisk + 0.12 < liveRisk &&
+                    liveRisk >= 0.32 &&
+                    pickSide &&
+                    memSide &&
+                    pickSide !== memSide
+                ) {
+                    shouldReplan = true;
+                    replanWhy = 'lowerPocket';
+                } else if (
+                    // Sticky same-side funnel while pick itself is open corridor — break hold.
+                    memFunnel &&
+                    liveRisk >= 0.4 &&
+                    !pickFunnel &&
+                    pickRisk + 0.15 < liveRisk
+                ) {
+                    shouldReplan = true;
+                    replanWhy = 'lowerPocket';
+                }
+            }
+            if (shouldReplan) {
+                let src = pick;
+                if (replanWhy === 'funnelGapFlip' || replanWhy === 'funnelAltPick' || replanWhy === 'lowerPocket') {
+                    const gapAsym = this.getCorridorGapAsymmetry(coverInfo);
+                    const flipSide =
+                        (gapAsym.side && Math.sign(gapAsym.side) !== Math.sign(mem && mem.side || 0)
+                            ? Math.sign(gapAsym.side)
+                            : 0) ||
+                        (Math.sign(pick.preferredSide || 0) !== Math.sign(mem && mem.side || 0)
+                            ? Math.sign(pick.preferredSide || 0)
+                            : 0) ||
+                        -(Math.sign(mem && mem.side || 0) || 0);
+                    if (flipSide) {
+                        src = Object.assign({}, pick, {
+                            preferredSide: flipSide,
+                            // Treat flipped exit as lower pocket for sticky scoring.
+                            pocketRisk: Math.min(Number(pick.pocketRisk) || 0.5, 0.28),
+                            isFunnel: false
+                        });
+                    }
+                    // Drop sticky gapHold so preferredSide stack can follow open gap.
+                    const avoid = this.getUrbanAvoidMemory(teamId);
+                    if (avoid && Number(avoid.gapHoldUntil) >= turnNo) {
+                        avoid.gapHoldUntil = turnNo - 1;
+                        avoid.gapHoldSource = `pocketBreak:${replanWhy}`;
+                    }
+                }
+                commitNew(src, replanWhy);
+                if (replanWhy && opts.debugTree && Array.isArray(opts.debugTree)) {
+                    opts.debugTree.push(
+                        `survivalWp: replan=${replanWhy} pocket=${Number((src && src.pocketRisk) || pick.pocketRisk || 0).toFixed(2)} funnel=${src && src.isFunnel ? 1 : 0} pocketRisk=${Number((src && src.pocketRisk) != null ? src.pocketRisk : pick.pocketRisk || 0).toFixed(2)}`
+                    );
+                }
+            } else if (mem && pick.climbBias > (Number(mem.climbBias) || 0) + 0.15) {
                 mem.climbBias = Number(pick.climbBias);
                 if (pick.targetAlt != null) mem.targetAlt = pick.targetAlt;
+            }
+            // Do NOT wash sticky funnel with a calmer pick — keep max risk until replan.
+            if (mem && !shouldReplan) {
+                const pickRisk = Number(pick.pocketRisk);
+                if (Number.isFinite(pickRisk)) {
+                    mem.pocketRisk = Math.max(Number(mem.pocketRisk) || 0, pickRisk);
+                }
+                mem.isFunnel = !!(mem.isFunnel || pick.isFunnel || (Number(mem.pocketRisk) || 0) >= 0.28);
+                mem.funnelScore = Math.max(Number(mem.funnelScore) || 0, Number(pick.funnelScore) || 0);
+                mem.openScore = Number(pick.openScore) || Number(mem.openScore) || 0;
+                mem.lastReplanWhy = '';
             }
         }
         const live = this.survivalWaypointMemory[teamId];
@@ -5469,6 +11609,9 @@ window.AirArenaAI = {
         if (!live.side && !(live.waypoints && live.waypoints.length) && !live.forwardClimb && !(live.climbBias > 0)) {
             return null;
         }
+        const replanWhyOut = lastReplanWhy || live.lastReplanWhy || '';
+        // Consume one-shot replan tag so homotopy only flips the turn WP replan fires.
+        if (live.lastReplanWhy) live.lastReplanWhy = '';
         return {
             ok: true,
             preferredSide: Math.sign(live.side || 0),
@@ -5479,8 +11622,52 @@ window.AirArenaAI = {
             climbBias: Number(live.climbBias) || 0,
             targetAlt: live.targetAlt != null ? live.targetAlt : null,
             source: live.source || 'bakeSurvivalWp',
-            cursor: Number(live.cursor) || 0
+            cursor: Number(live.cursor) || 0,
+            pocketRisk: Number(live.pocketRisk) || 0,
+            isFunnel: !!live.isFunnel,
+            funnelScore: Number(live.funnelScore) || 0,
+            openScore: Number(live.openScore) || 0,
+            replanWhy: replanWhyOut
         };
+    },
+
+    /** Soft pocket metrics for sticky WP memory (mirrors ai-map scoreWaypointChainPocket). */
+    scoreSurvivalWaypointPocket(waypoints) {
+        if (
+            typeof AirArenaAiMap !== 'undefined' &&
+            AirArenaAiMap &&
+            typeof AirArenaAiMap.scoreWaypointChainPocket === 'function'
+        ) {
+            return AirArenaAiMap.scoreWaypointChainPocket(waypoints);
+        }
+        try {
+            // Node / smoke: optional require path not available in browser — inline light fallback.
+            if (!waypoints || waypoints.length < 2) {
+                return { pocketRisk: 0, funnelScore: 0, openScore: 0, isFunnel: false };
+            }
+            let funnel = 0;
+            let open = 0;
+            for (let i = 1; i < waypoints.length; i++) {
+                const prev = waypoints[i - 1];
+                const cur = waypoints[i];
+                const dRoof = (Number(cur.roofMax) || 0) - (Number(prev.roofMax) || 0);
+                if (dRoof > 4) funnel += 10;
+                else if (dRoof < -4) open += 8;
+                if (prev.clear && !cur.clear) funnel += 14;
+                if (cur.skyOpen) open += 6;
+                if (!cur.clear) funnel += 8;
+                else open += 4;
+            }
+            const pocketRisk = Math.max(0, Math.min(1, (funnel - open) / 70));
+            return {
+                pocketRisk,
+                funnelScore: funnel,
+                openScore: open,
+                isFunnel: pocketRisk >= 0.28
+            };
+        } catch (_) {
+            return { pocketRisk: 0, funnelScore: 0, openScore: 0, isFunnel: false };
+        }
     },
 
     /**
@@ -5490,6 +11677,21 @@ window.AirArenaAI = {
     isBakeSpatialClear(aiMapCtx, opts = {}) {
         if (!aiMapCtx || !aiMapCtx.available) return false;
         if (opts.hardContact) return false;
+        // P0/T150: skyOpen above slab must not count as clear while trapped under table.
+        if (this.isSlabClimbBlocked({
+            coverInfo: opts.coverInfo,
+            roofClearance: opts.roofClearance != null
+                ? opts.roofClearance
+                : (opts.coverInfo && opts.coverInfo.roofClearance),
+            coverDistance: opts.coverDistance != null
+                ? opts.coverDistance
+                : (opts.coverInfo && opts.coverInfo.distance),
+            hardChokeKind: opts.hardChokeKind || (opts.coverInfo && opts.coverInfo.hardChokeKind),
+            underRoof: opts.underRoof,
+            deepEmbed: opts.deepEmbed
+        })) {
+            return false;
+        }
         if (aiMapCtx.clearAbove) return true;
         return !!(aiMapCtx.skyOpen && Number.isFinite(Number(aiMapCtx.margin)) && Number(aiMapCtx.margin) >= 8);
     },
@@ -5914,6 +12116,31 @@ window.AirArenaAI = {
                 };
             });
         }
+        // T145 blue: safetyShallowClimb joyX=0 into facade (cov≈10 fy=-0.43) → all-hit.
+        candidates = candidates.map((c) => {
+            if (c.state !== 'safetyShallowClimb') return c;
+            const cov = Number(coverInfo.distance);
+            const needLat =
+                obstaclePressure ||
+                hardContact ||
+                (Number.isFinite(cov) && cov < 14) ||
+                (teamForwardY < -0.25 && Number.isFinite(cov) && cov < 28);
+            if (!needLat) return c;
+            const sideSign =
+                Math.sign(Number(action.joyX) || 0) ||
+                this.getAwayFromMeshSide(coverInfo, selfForward) ||
+                1;
+            const pull = teamForwardY < -0.35
+                ? (altNow < 40 ? 0.42 : 0.28)
+                : Math.max(Number(c.joyY) || 0.18, altNow < 36 ? 0.28 : 0.18);
+            return {
+                ...c,
+                joyX: this.clamp(sideSign * 0.48, -0.58, 0.58),
+                joyY: pull,
+                roll: this.clamp(sideSign * Math.PI / 10, -Math.PI / 10, Math.PI / 10),
+                reason: 'Safety fallback shallow climb + lateral (ban joyX=0 into facade)'
+            };
+        });
         // T150/T100: rim safety with joyX=0 flies outbound into hard kill.
         // T103: ONLY near hard + open cover — never overwrite building lateral in soft/warn mid-band.
         if (typeof getAirspacePressure === 'function' && selfPos && selfForward && !embedMeshCrisis && !hardContact) {
@@ -6150,8 +12377,12 @@ window.AirArenaAI = {
                 action.navMode === 'diveClosingYield' ||
                 glueLock.source === 'diveClosingYield';
             const absX = Math.abs(Number(action.joyX) || 0);
+            const arrestSoftGlue =
+                /slabDirtArrest|dirt arrest/i.test(String(action.reason || '')) ||
+                action.navMode === 'slabDirtArrest';
             // Dive+dirt soft-bank (≤0.48) must not be re-amplified to 0.58 by glue (T63 red2).
-            if (!diveClosingYield && absX < 0.42) {
+            // Dirt arrest soft bank must stay soft so pitch can level off ground.
+            if (!diveClosingYield && absX < 0.42 && !arrestSoftGlue) {
                 action.joyX = this.clamp(side * 0.5, -0.58, 0.58);
             } else if (diveClosingYield && absX < 0.32) {
                 action.joyX = this.clamp(side * 0.55, -0.62, 0.62);
@@ -6159,18 +12390,40 @@ window.AirArenaAI = {
             if (Number(action.joyY) < 0.12) {
                 // Undercroft / slab: do not re-inflate pitch into mesh (fights T38 flatten).
                 // P1: near-dirt undercroft still needs a skim floor so glue lock does not freeze joyY≈0.06.
-                const undercroftGlue =
-                    /t38-|embed|undercroft|score-scoreAllHitHold/i.test(String(glueLock.source || '')) ||
-                    action.navMode === 'embedPush' ||
-                    action.navMode === 'noseUnload';
-                if (!undercroftGlue) {
-                    action.joyY = altNow < 28 ? 0.18 : 0.12;
-                } else if (altNow < 16 && Number(action.joyY) < 0.12) {
-                    action.joyY = 0.12;
+                // T34: deepNestUnload / allHitFlip must KEEP nose unload — glue was raising joyY to 0.12
+                // and cancelling cov≈0 exit (blue2 one-frame building death).
+                const deepNestUnload =
+                    !/openSkyFacadeExit|banNest=1/i.test(String(action.reason || '')) &&
+                    action.navMode !== 'openSkyFacadeExit' &&
+                    (
+                        /deepNestUnload|allHitFlip|opposite flip|scoreAllHitFlip/i.test(
+                            String(action.reason || '')
+                        ) ||
+                        action.navMode === 'scoreAllHitFlip' ||
+                        action.navMode === 'noseUnload' ||
+                        /score-scoreAllHitFlip|undercroftDeepFlip|deepNest/i.test(
+                            String(glueLock.source || '')
+                        )
+                    );
+                if (!deepNestUnload) {
+                    const undercroftGlue =
+                        /t38-|embed|undercroft|score-scoreAllHitHold|score-scoreAllHitFlip/i.test(
+                            String(glueLock.source || '')
+                        ) ||
+                        action.navMode === 'embedPush' ||
+                        action.navMode === 'noseUnload' ||
+                        /undercroft|tableUndercroft|slabSkim/i.test(String(action.reason || ''));
+                    if (!undercroftGlue) {
+                        action.joyY = altNow < 28 ? 0.18 : 0.12;
+                    } else {
+                        // T80: undercroft glue must not freeze/sink (preDeath joyY=-0.12).
+                        const floorY = altNow < 22 ? 0.14 : 0.1;
+                        if (Number(action.joyY) < floorY) action.joyY = floorY;
+                    }
                 }
             }
-            // Never thr4-bump diveClosingYield — that undid P0-1 hard-cut (T63/T25 dump thr=4).
-            if (diveClosingYield) {
+            // Never thr4-bump diveClosingYield / soft urban escape — undid P0-1 and dirtBleed (T60 thr=4).
+            if (diveClosingYield || this.shouldHoldSoftUrbanThrottle(action)) {
                 if (typeof action.throttle !== 'number' || action.throttle > 3) action.throttle = 3;
                 if (action.throttle < 2) action.throttle = 2;
             } else if (typeof action.throttle === 'number' && action.throttle < 4) {
@@ -6321,9 +12574,10 @@ window.AirArenaAI = {
                         ? 0.82
                         : 0.62;
                     if (typeof action.joyY === 'number' && action.joyY < minPull) action.joyY = minPull;
-                    // Preserve diveClosingYield thr≤3 (do not thr4-bump P0-1 hard-cut).
+                    // Preserve diveClosingYield / soft urban thr≤3 (do not thr4-bump P0-1 / dirtBleed).
                     if (
                         action.navMode !== 'diveClosingYield' &&
+                        !this.shouldHoldSoftUrbanThrottle(action) &&
                         typeof action.throttle === 'number' &&
                         action.throttle < 4 &&
                         !(team.stalled && teamForwardY > 0.35)
@@ -7037,6 +13291,24 @@ window.AirArenaAI = {
             if (bakeCorr.forwardClear && (climbish || branch === 'level') && !facadeClosing) s += 12;
             if (bakeCorr.corridorOpen && lateralish && !meta.buildingHit) s += 10;
         }
+        // Soft pocket aversion (route layer) — demote funnel-aligned lateral / climb.
+        // Weights raised 2026-08-13 so pocketRisk actually moves route pick vs combat weave.
+        const pocketRisk = Number(wp && wp.pocketRisk) || 0;
+        if (pocketRisk >= 0.22 || (wp && wp.isFunnel)) {
+            const openBake =
+                bakeCorr && bakeCorr.preferredSide
+                    ? Math.sign(bakeCorr.preferredSide)
+                    : 0;
+            if (wpSide && sx === wpSide && !(openBake && sx === openBake && bakeCorr.corridorOpen)) {
+                s -= Math.round(28 + pocketRisk * 48);
+            }
+            if (openBake && sx === openBake && bakeCorr.corridorOpen) {
+                s += Math.round(18 + pocketRisk * 28);
+            }
+            if (climbish && Math.abs(sx) < 0.5 && pocketRisk >= 0.32) {
+                s -= Math.round(20 + pocketRisk * 28);
+            }
+        }
         // Venue envelope (radial + altitude) — map-owned; soft only.
         s = this.applyArenaEnvelopeScore(s, meta, ctx);
         return s;
@@ -7103,6 +13375,8 @@ window.AirArenaAI = {
     /**
      * Soft-yield align / shallowDive / FOX-1 / cruise when bake route or urban sink risk wins.
      * Score-like gate — falls through decide; does not hard-block combat forever.
+     * Weapon-window knife: when shoot/illuminate geometry is open, only yield on real steep
+     * facade dive or hard mesh — bakeYieldLock alone must not cancel missiles.
      */
     shouldSoftYieldCombatForBakeRoute(coverInfo = {}, opts = {}) {
         // Combat reclaim: open cov + weapon contact → do not soft-yield shoot/align to bake weave.
@@ -7120,14 +13394,54 @@ window.AirArenaAI = {
         ) {
             return false;
         }
-        // P1: active bake-yield lock keeps climb-extend until clear.
-        if (opts.bakeYieldLock || opts.forceBakeYield) return true;
-        const facade =
+        const forwardYEarly = Number(opts.forwardY);
+        const facadeClosingNow =
             !!opts.facadeClosing ||
             this.isFacadeClosingScore(coverInfo) ||
             this.isSteepDiveIntoFacade(coverInfo, opts.forwardY, opts.altitude);
+        // Real mesh threat — still allow yield even in weapon window.
+        const hardMesh =
+            !!opts.hardContact ||
+            (
+                Number.isFinite(Number(coverInfo.distance)) &&
+                Number(coverInfo.distance) < 6 &&
+                Number.isFinite(Number(coverInfo.roofClearance)) &&
+                Number(coverInfo.roofClearance) < 0
+            );
+        // Steeper than legacy -0.22 so mild sink in gun/missile band keeps shooting.
+        const steepFacadeDive =
+            facadeClosingNow &&
+            Number.isFinite(forwardYEarly) &&
+            forwardYEarly < -0.28;
+        let weaponWin = !!opts.weaponWindowOpen;
+        if (
+            !weaponWin &&
+            (opts.fox1Combat || opts.fox1Sequel || opts.missilePrep || opts.inferWeaponWindow)
+        ) {
+            const d = Number(
+                opts.enemyDistance != null
+                    ? opts.enemyDistance
+                    : (opts.distance != null ? opts.distance : NaN)
+            );
+            if (Number.isFinite(d) && d > 0) {
+                weaponWin = this.isWeaponWindowOpen({
+                    distance: d,
+                    angleDeg: opts.angleDeg,
+                    localZ: opts.localZ
+                }, opts.tuning || this.getTuning());
+            }
+        }
+        // Weapon window open → suppress bake soft-yield unless steep facade dive / hard mesh.
+        if (weaponWin && !steepFacadeDive && !hardMesh) {
+            return false;
+        }
+        // Bake-yield lock: still only forces yield outside weapon window (or with steep/hard).
+        if (opts.bakeYieldLock || opts.forceBakeYield) {
+            return true;
+        }
+        const facade = facadeClosingNow;
         const forwardY = Number(opts.forwardY);
-        // P1: earlier mild-sink threshold (was -0.14).
+        // Mild-sink threshold for non-weapon soft yield (was -0.14 historically).
         const diving = Number.isFinite(forwardY) && forwardY < -0.08;
         const roof = Number(coverInfo.roofClearance);
         const dist = Number(coverInfo.distance);
@@ -7142,7 +13456,6 @@ window.AirArenaAI = {
         const urbanRoof =
             (Number.isFinite(roof) && roof < 0 && Number.isFinite(dist) && dist < 150) ||
             (Number.isFinite(roof) && roof < -6);
-        // T109/P1: raise sink band so FOX-1/cruise yield before canyon floor.
         const sinking =
             Number.isFinite(alt) &&
             alt < 64 &&
@@ -7151,7 +13464,6 @@ window.AirArenaAI = {
 
         if (facade && diving) return true;
         if (sinking && (routeHint || facade || (Number.isFinite(roof) && roof < -4))) return true;
-        // T109/P1: illuminate / prep / energy cruise diving beside roofs (pre-canyon).
         if (
             (opts.fox1Combat || opts.fox1Sequel || opts.missilePrep || opts.energyCruise) &&
             diving &&
@@ -7161,7 +13473,6 @@ window.AirArenaAI = {
         ) {
             return true;
         }
-        // T97: FOX-1 sequel dumping altitude beside tall AABB (even flat-ish).
         if (
             (opts.fox1Sequel || opts.fox1Combat) &&
             Number.isFinite(alt) &&
@@ -7192,6 +13503,7 @@ window.AirArenaAI = {
     /**
      * T97: emergencyPullUp must not clamp joyY≈0 while steep-diving beside tall roofs.
      * True mesh glue (dist&lt;3) still unloads; climbBias/path raise the pitch floor.
+     * Deep negative roof / table undercroft: never raise floor into slab (T113 pull-up climb).
      */
     applyEmergencyPullUpClimbFloor(joyY, opts = {}) {
         let y = Number(joyY) || 0;
@@ -7206,6 +13518,48 @@ window.AirArenaAI = {
         const diving = Number.isFinite(forwardY) && forwardY < -0.18;
         const besideTall = Number.isFinite(opts.roofClearance) && opts.roofClearance < 0;
         const trueGlue = Number.isFinite(dist) && dist < 3;
+        const slabBlocked = !!opts.slabBlocked || this.isSlabClimbBlocked({
+            roofClearance: opts.roofClearance,
+            coverDistance: opts.coverDistance,
+            headroom: opts.headroom,
+            hardChokeKind: opts.hardChokeKind,
+            coverInfo: opts.coverInfo,
+            underRoof: !!opts.underRoof
+        });
+        if (slabBlocked) {
+            // T150 B red2: emergencyPullUp slab skim capped joyY=0.2 while still diving → ground.
+            // T150 00:09: must pass cover opts or mid-alt table ban is skipped and joyY re-inflates to 0.48.
+            // Knife 6: alt<8 under slab → always dirt arrest floor (mild fy still ground-smashes).
+            if (
+                (Number.isFinite(alt) && alt < 8 && (diving || steep || alt < 5)) ||
+                this.wantsSlabDirtArrest(alt, forwardY, {
+                    hardChokeKind: opts.hardChokeKind,
+                    roofClearance: opts.roofClearance,
+                    coverDistance: opts.coverDistance,
+                    coverInfo: opts.coverInfo,
+                    underRoof: opts.underRoof
+                })
+            ) {
+                return Math.max(y, this.getSlabDirtArrestJoyY(alt, forwardY, opts));
+            }
+            // Priority 3: high silhouette — do not hard-cap to 0.2 forever (T120).
+            if (
+                this.wantsHighFacadeEscape(alt, opts.coverInfo || {}, {
+                    hardChokeKind: opts.hardChokeKind,
+                    roofClearance: opts.roofClearance,
+                    coverDistance: opts.coverDistance
+                })
+            ) {
+                const maxHigh = steep ? 0.42 : 0.28;
+                return Math.min(Math.max(y, steep ? 0.28 : y), maxHigh);
+            }
+            const maxY = Number.isFinite(alt) && alt < 8 ? 0.28 : 0.2;
+            // Steep into dirt under slab: keep a light level, never climb-into-mesh floor.
+            if (steep && Number.isFinite(alt) && alt < 12) y = Math.max(Math.min(y, maxY), 0.16);
+            else if (steep && Number.isFinite(alt) && alt < 48) y = Math.max(Math.min(y, 0.36), 0.22);
+            else y = Math.min(y, maxY);
+            return y;
+        }
         if (trueGlue && !opts.gapOpen) {
             // Keep unload near slab, but never flat when already diving into dirt band.
             if (steep && Number.isFinite(alt) && alt < 28) y = Math.max(y, 0.42);
@@ -7266,8 +13620,29 @@ window.AirArenaAI = {
             : 0;
         const wpSteer = ctx.survivalWp && ctx.survivalWp.ok ? ctx.survivalWp : null;
         const wpSide = wpSteer && wpSteer.preferredSide ? Math.sign(wpSteer.preferredSide) : 0;
+        const wpPocketRisk = Number(wpSteer && wpSteer.pocketRisk) || 0;
+        const wpFunnel = !!(wpSteer && (wpSteer.isFunnel || wpPocketRisk >= 0.28));
+        const gapAsymRoute = this.getCorridorGapAsymmetry(coverInfo);
+        // Funnel on sticky hold + opposite open gap → prefer gap/WP over gapHold.
+        const breakFunnelHold =
+            gapHold &&
+            gapAsymRoute.side &&
+            gapHold.side &&
+            Math.sign(gapAsymRoute.side) !== Math.sign(gapHold.side) &&
+            (Number(gapAsymRoute.strength) || 0) >= 0.75 &&
+            (wpFunnel || wpPocketRisk >= 0.28 || this.isFlyableCorridorGap(coverInfo));
+        const effectiveGapHold = breakFunnelHold ? null : gapHold;
+        // P1: corridor homotopy (L/R/C) — prefer active lateral over raw gap when committed.
+        const htRoute = ctx.corridorHomotopy || this.getCorridorHomotopy(teamId, turnNo);
+        const htSide =
+            htRoute && htRoute.active && htRoute.active.homotopyId !== 'C'
+                ? Math.sign(Number(htRoute.active.side) || 0)
+                : 0;
+        const htClimb = !!(htRoute && htRoute.active && htRoute.active.homotopyId === 'C');
         const preferredSide = Math.sign(
-            (gapHold && gapHold.side) ||
+            (effectiveGapHold && effectiveGapHold.side) ||
+            // Mid-term: committed bake dual / homotopy lateral outranks raw mesh gap.
+            htSide ||
             gapSide ||
             wpSide ||
             bakeSide ||
@@ -7338,6 +13713,7 @@ window.AirArenaAI = {
             stalled: !!team.stalled,
             ap: team.ap,
             denseUrban,
+            forwardY: ctx.forwardY != null ? ctx.forwardY : (team.forward && team.forward.y),
             aiMapClearAbove: !!ctx.aiMapClearAbove,
             aiMapSkyOpen: !!ctx.aiMapSkyOpen
         });
@@ -7589,7 +13965,25 @@ window.AirArenaAI = {
 
         // Dedicated preferred-side embed push-out — competes on score vs opposite thrash.
         if (meshEmbed) {
-            const pushSide = Math.sign(preferredSide || breakSide || 1) || 1;
+            let pushSide = Math.sign(preferredSide || breakSide || 1) || 1;
+            const coverFwdN = Number(coverInfo.forwardDistance);
+            const coverDistN = Number(coverInfo.distance);
+            const noseDead =
+                (Number.isFinite(coverFwdN) && coverFwdN >= 0 && coverFwdN < 1.5) ||
+                (Number.isFinite(coverDistN) && coverDistN < 2.2);
+            // Knife 4: when nose is into mesh, prefer open corridor over sticky preferred scrape.
+            if (noseDead) {
+                const leftOpen = !!(
+                    coverInfo.corridorLeftClear ||
+                    (Number.isFinite(Number(coverInfo.corridorLeft)) && Number(coverInfo.corridorLeft) > 8)
+                );
+                const rightOpen = !!(
+                    coverInfo.corridorRightClear ||
+                    (Number.isFinite(Number(coverInfo.corridorRight)) && Number(coverInfo.corridorRight) > 8)
+                );
+                if (leftOpen && !rightOpen) pushSide = -1;
+                else if (rightOpen && !leftOpen) pushSide = 1;
+            }
             const diveNose = Number(ctx.forwardY) < -0.35;
             const mildDescend = Number(ctx.forwardY) < -0.2;
             // T66: while descending under mesh, keep level band (not joyY≈0.1 flat thrash).
@@ -7599,31 +13993,39 @@ window.AirArenaAI = {
                     ? (altitude < 16 ? 0.42 : 0.32)
                     : (altitude < 12 ? 0.28 : 0.14));
             const levelPull = !!(diveNose || (mildDescend && altitude < 20));
+            const pushThr = noseDead || getEngineHeatLevel(team.heat) > 82 ? 3 : 4;
+            const pushAuth = noseDead ? 0.42 : 0.48;
             candidates.push({
                 ...base,
                 state: 'urbanEmbedPushOut',
                 statusText: 'NPC: 城市規劃-單側嵌樓推出',
-                throttle: getEngineHeatLevel(team.heat) > 82 ? 3 : 4,
-                joyX: this.clamp(pushSide * 0.48, -0.52, 0.52),
-                joyY: pushY,
+                throttle: pushThr,
+                joyX: this.clamp(pushSide * pushAuth, -0.52, 0.52),
+                joyY: noseDead ? Math.min(0.18, Math.max(0.12, pushY * 0.55)) : pushY,
                 roll: this.clamp(pushSide * Math.PI / 9, -Math.PI / 9, Math.PI / 9),
-                diveLevelPull: levelPull,
-                reason: levelPull
-                    ? 'Urban embed: preferred-side push + level while descending'
-                    : 'Urban embed: sustained preferred-side push-out (score vs snake)'
+                diveLevelPull: levelPull || noseDead,
+                reason: noseDead
+                    ? 'Urban embed: nose-dead soft lateral (thr≤3, open-corridor prefer)'
+                    : (levelPull
+                        ? 'Urban embed: preferred-side push + level while descending'
+                        : 'Urban embed: sustained preferred-side push-out (score vs snake)')
             });
             candidates.push({
                 ...base,
                 state: 'urbanEmbedPushOut',
                 statusText: 'NPC: 城市規劃-單側嵌樓推出',
-                throttle: getEngineHeatLevel(team.heat) > 82 ? 3 : 4,
-                joyX: this.clamp(pushSide * 0.42, -0.48, 0.48),
-                joyY: levelPull ? Math.min(0.42, Math.max(0.28, pushY * 0.85)) : Math.min(0.22, pushY),
+                throttle: pushThr,
+                joyX: this.clamp(pushSide * (noseDead ? 0.36 : 0.42), -0.48, 0.48),
+                joyY: noseDead
+                    ? Math.min(0.16, Math.max(0.1, pushY * 0.45))
+                    : (levelPull ? Math.min(0.42, Math.max(0.28, pushY * 0.85)) : Math.min(0.22, pushY)),
                 roll: this.clamp(pushSide * Math.PI / 10, -Math.PI / 10, Math.PI / 10),
-                diveLevelPull: levelPull,
-                reason: levelPull
-                    ? 'Urban embed: milder push + level while descending'
-                    : 'Urban embed: milder preferred-side push (keep thr4)'
+                diveLevelPull: levelPull || noseDead,
+                reason: noseDead
+                    ? 'Urban embed: nose-dead milder lateral hold'
+                    : (levelPull
+                        ? 'Urban embed: milder push + level while descending'
+                        : 'Urban embed: milder preferred-side push (keep thr4)')
             });
         }
 
@@ -7660,8 +14062,17 @@ window.AirArenaAI = {
 
         // Straight / mild-climb energy rebuild (player doctrine) — competes on score, not forced.
         // P1: while FOX-1 bake-yield lock is active, skip cruise (prevents post-yield sink).
+        // T112 blue: energy cruise shallow cut joyY≈0.02 while diving beside facade → tableUndercroft.
         const fox1YieldLock = this.getFox1BakeYieldLock(teamId, turnNo);
-        if (!hardBuilding && !underRoof && !fox1YieldLock.active) {
+        const cruiseDiveBan =
+            (facadeForJoy ||
+                (Number.isFinite(Number(coverInfo.roofClearance)) &&
+                    Number(coverInfo.roofClearance) < 0 &&
+                    Number.isFinite(Number(coverInfo.distance)) &&
+                    Number(coverInfo.distance) < 100)) &&
+            Number.isFinite(Number(ctx.forwardY)) &&
+            Number(ctx.forwardY) < -0.22;
+        if (!hardBuilding && !underRoof && !fox1YieldLock.active && !cruiseDiveBan) {
             const cruiseThr = getEngineHeatLevel(team.heat) > 82 ? 4 : 5;
             const cruiseClimb = preferStraightClimb
                 ? (altitude < 28 ? 0.28 : (altitude < 52 ? 0.2 : 0.1))
@@ -7690,6 +14101,8 @@ window.AirArenaAI = {
                     reason: 'Urban energy cruise with shallow cut (repeat cycle)'
                 });
             }
+        } else if (cruiseDiveBan && Array.isArray(ctx.debugTree)) {
+            ctx.debugTree.push('urbanEnergyCruise: deferred=facadeDive');
         }
 
         const brakeTurnAllowed =
@@ -7763,7 +14176,7 @@ window.AirArenaAI = {
                     Number.isFinite(fwdClear) &&
                     fwdClear > 10
                 ) ||
-                (!!gapHold && coverDistNum >= 5 && coverDistNum <= 32) ||
+                (!!effectiveGapHold && coverDistNum >= 5 && coverDistNum <= 32) ||
                 // Phase 2: bake corridor open with mid clearance — allow weave without fat AABB gap.
                 (
                     !!bakeCorr &&
@@ -7774,6 +14187,14 @@ window.AirArenaAI = {
                 )
             );
         if (weaveEligible) {
+            const fyWeave = Number(ctx.forwardY);
+            // T150 03:30 blue: weave while fy≈0.6–0.8 into collapsing cov → climb into undercroft.
+            const weaveNoseBan =
+                Number.isFinite(fyWeave) &&
+                fyWeave > 0.45 &&
+                Number.isFinite(coverDistNum) &&
+                coverDistNum < 18;
+            if (!weaveNoseBan) {
             const weaveJoyY = gapTier === 'wide'
                 ? (altitude < 30 ? 0.14 : 0.04)
                 : (altitude < 30 ? 0.2 : 0.05);
@@ -7781,7 +14202,7 @@ window.AirArenaAI = {
                 ? (gapTier === 'wide' ? 0.28 : (corridorClear ? 0.32 : 0.38))
                 : (gapTier === 'wide' ? 0.34 : (corridorClear ? 0.38 : 0.48));
             // Gap hold / asymmetric corridor: commit wider side first (avoid flip thrash).
-            const weaveSides = gapHold
+            const weaveSides = effectiveGapHold
                 ? [preferredSide]
                 : (gapSide ? [preferredSide, -preferredSide] : sideOrder);
             for (const side of weaveSides) {
@@ -7795,7 +14216,7 @@ window.AirArenaAI = {
                     joyX: this.clamp(side * weaveJoyScale, -0.62, 0.62),
                     joyY: weaveJoyY,
                     roll: this.clamp(side * Math.PI / 8, -Math.PI / 8, Math.PI / 8),
-                    reason: gapHold
+                    reason: effectiveGapHold
                         ? 'Urban planner gap-hold corridor weave'
                         : (corridorClear || gapTier === 'ok' || gapTier === 'wide'
                             ? 'Urban planner corridor weave'
@@ -7803,6 +14224,9 @@ window.AirArenaAI = {
                                 ? 'Urban planner side-lane weave'
                                 : 'Urban planner building-lane weave'))
                 });
+            }
+            } else if (Array.isArray(ctx.debugTree)) {
+                ctx.debugTree.push('urbanBuildingWeave: deferred=noseHighCover');
             }
         }
 
@@ -7888,6 +14312,15 @@ window.AirArenaAI = {
             if (Number.isFinite(eval2.sink) && eval2.sink <= 6) routeScore += 14;
             else if (Number.isFinite(eval2.sink) && eval2.sink > 12) routeScore -= Math.min(40, (eval2.sink - 12) * 2);
             if (!eval2.buildingHit) routeScore += 80;
+            // T150 03:30: weave while nose-high into collapsing cover — lose hard.
+            if (
+                candidate.state === 'urbanBuildingWeave' &&
+                Number(ctx.forwardY) > 0.45 &&
+                Number.isFinite(Number(coverInfo.distance)) &&
+                Number(coverInfo.distance) < 20
+            ) {
+                routeScore -= 110;
+            }
             // All candidates: one-sided gap bias (not weave-only).
             if (gapAsym.strength >= 1 && sideSign) {
                 if (sideSign === gapAsym.side) routeScore += gapAsym.strength >= 2 ? 64 : 36;
@@ -7932,6 +14365,59 @@ window.AirArenaAI = {
                 }
                 if (wpSteer.source === 'path' && !eval2.buildingHit && turnAuth >= 0.32) {
                     routeScore += 18;
+                }
+            }
+            // Soft pocketRisk: demote funnel-side / climb into pocket; promote open gap break.
+            {
+                const pocketRisk = Number(wpSteer && wpSteer.pocketRisk) || 0;
+                const funnel = !!(wpSteer && wpSteer.isFunnel) || pocketRisk >= 0.28;
+                if (funnel && pocketRisk > 0) {
+                    const openGapSide = Math.sign(
+                        (gapAsymRoute && gapAsymRoute.side) || gapSide || 0
+                    );
+                    if (wpSide && sideSign === wpSide && (!openGapSide || sideSign !== openGapSide)) {
+                        routeScore -= Math.round(42 + pocketRisk * 52);
+                    }
+                    if (openGapSide && sideSign === openGapSide) {
+                        routeScore += Math.round(28 + pocketRisk * 36);
+                    }
+                    if (
+                        funnel &&
+                        (candidate.state === 'urbanRouteClimbOut' || candidate.state === 'urbanClimbingTurn') &&
+                        Math.abs(sideSign) < 0.5
+                    ) {
+                        routeScore -= Math.round(32 + pocketRisk * 28);
+                    }
+                }
+            }
+            // P1: soft bias to active corridor homotopy (L/R/C).
+            if (htRoute && htRoute.active) {
+                if (htClimb) {
+                    if (
+                        candidate.state === 'urbanRouteClimbOut' ||
+                        candidate.state === 'urbanClimbingTurn' ||
+                        candidate.state === 'urbanRoofClimb'
+                    ) {
+                        routeScore += 34;
+                    }
+                    if (
+                        candidate.state === 'urbanBuildingWeave' ||
+                        candidate.state === 'urbanRouteSide' ||
+                        candidate.state === 'urbanPreemptiveRoute'
+                    ) {
+                        if (Math.abs(sideSign) >= 0.5 && (candidate.joyY || 0) < 0.22) routeScore -= 18;
+                    }
+                } else if (htSide) {
+                    if (sideSign === htSide) routeScore += 30;
+                    else if (sideSign === -htSide) routeScore -= 26;
+                    if (
+                        htRoute.alt &&
+                        htRoute.alt.homotopyId !== 'C' &&
+                        sideSign === Math.sign(Number(htRoute.alt.side) || 0) &&
+                        Number(htRoute.active.pocketScore) >= 0.4
+                    ) {
+                        routeScore += 12;
+                    }
                 }
             }
             routeScore = this.applyBakeRouteCombatScore(routeScore, {
@@ -7987,7 +14473,7 @@ window.AirArenaAI = {
                     else if (gapW >= gapMeta.minGap * 0.75) routeScore += 6;
                     else routeScore -= 28;
                 }
-                if (gapHold && sideSign === preferredSide) routeScore += 40;
+                if (effectiveGapHold && sideSign === preferredSide) routeScore += 40;
                 if (gapSide && sideSign === gapSide) routeScore += 28;
                 else if (gapSide && sideSign === -gapSide) routeScore -= 34;
                 // Stay in flyable street when gap is open — climb thrash loses score.
@@ -8040,6 +14526,8 @@ window.AirArenaAI = {
                 if ((candidate.joyY || 0) >= 0.05 && (candidate.joyY || 0) <= 0.32) routeScore += 18;
                 if (Number.isFinite(apDrop) && apDrop <= 10) routeScore += 20;
                 if (Number.isFinite(finalAP) && Number.isFinite(apNow) && finalAP >= apNow - 4) routeScore += 16;
+                // T112: never prefer cruise while diving into facade / neg roof.
+                if (facadeForJoy && Number(ctx.forwardY) < -0.22) routeScore -= 140;
             }
             // Open-sky altitude bank: score preference vs low-speed snake (candidates still compete).
             if (preferStraightClimb && !hardBuilding && !eval2.buildingHit) {
@@ -8243,11 +14731,28 @@ window.AirArenaAI = {
                 const roofEscapeScore = Math.min(Number(tuning.combatBandMax) || 92, 80);
                 const hardContactRoute = this.isHardBuildingContact(coverInfo);
                 const roofNeg = Number.isFinite(Number(coverInfo.roofClearance)) && Number(coverInfo.roofClearance) < 2;
+                // C: already nesting — climbOut/weave lose hard to scored/table (T52 steal).
+                const hardOverSoftScore = this.wantsHardEscapeOverSoftUrbanRoute(coverInfo, {
+                    altitude,
+                    forwardY: ctx.forwardY,
+                    teamId,
+                    turnNo,
+                    hardContact: hardContactRoute || !!ctx.hardBuildingContact,
+                    deepEmbed: !!ctx.deepEmbed,
+                    underRoof,
+                    aiMapClearAbove: !!ctx.aiMapClearAbove,
+                    aiMapSkyOpen: !!ctx.aiMapSkyOpen,
+                    hardChokeKind: coverInfo.hardChokeKind
+                });
+                if (hardOverSoftScore) {
+                    routeScore -= 160;
+                    if ((candidate.joyY || 0) > 0.28) routeScore -= 40;
+                }
                 // Under-roof / hard contact: climb candidates lose on score (no stick ban beyond eligibility).
                 if (hardContactRoute || roofNeg || underRoof) {
                     routeScore -= 120;
                     if ((candidate.joyY || 0) > 0.22) routeScore -= 40;
-                } else if (preferRoofExit || preferStraightClimb) {
+                } else if (!hardOverSoftScore && (preferRoofExit || preferStraightClimb)) {
                     // Soft Slice B: bias climb-out / straight climb when sky is clear.
                     routeScore += preferRoofExit ? (denseUrban ? 58 : 44) : (denseUrban ? 48 : 36);
                     if (candidate.state === 'urbanRouteClimbOut') routeScore += 22;
@@ -8267,6 +14772,39 @@ window.AirArenaAI = {
                 // Past rooftop band: climbing turn leaves the city and kills weave lanes.
                 if (altitude >= roofEscapeScore - 4) routeScore -= denseUrban ? 28 : 18;
                 if (ctx.actualMissileThreat || ctx.missileThreatEvade) routeScore -= 80;
+            }
+            // C: soft weave / energy cruise also lose when already nesting.
+            {
+                const hardOverSoftAll = this.wantsHardEscapeOverSoftUrbanRoute(coverInfo, {
+                    altitude,
+                    forwardY: ctx.forwardY,
+                    teamId,
+                    turnNo,
+                    hardContact: this.isHardBuildingContact(coverInfo) || !!ctx.hardBuildingContact,
+                    deepEmbed: !!ctx.deepEmbed,
+                    underRoof,
+                    aiMapClearAbove: !!ctx.aiMapClearAbove,
+                    aiMapSkyOpen: !!ctx.aiMapSkyOpen,
+                    hardChokeKind: coverInfo.hardChokeKind
+                });
+                if (hardOverSoftAll) {
+                    if (
+                        candidate.state === 'urbanBuildingWeave' ||
+                        candidate.state === 'urbanEnergyCruise' ||
+                        candidate.state === 'urbanEnergyCruiseCut' ||
+                        candidate.state === 'urbanPreemptiveRoute' ||
+                        candidate.state === 'urbanPreemptiveAvoid'
+                    ) {
+                        routeScore -= 140;
+                    }
+                    if (
+                        candidate.state === 'obstacleEmergencyRoute' ||
+                        candidate.state === 'obstacleEnergyClimbRoute' ||
+                        candidate.state === 'urbanEmbedPushOut'
+                    ) {
+                        routeScore += 70;
+                    }
+                }
             }
             // Prefer level side routes when under overhang (score, not forced stick).
             // T66: while descending, do NOT reward joyY≤0.12 flat thrash into dirt/mesh.
@@ -8291,6 +14829,32 @@ window.AirArenaAI = {
                 bakeSoftClear
             ) {
                 routeScore -= 220;
+            }
+            // Knife 4: nose into mesh — demote thr4 embed scrape; prefer soft lateral / clear-side.
+            {
+                const coverFwdScore = Number(coverInfo.forwardDistance);
+                const coverDistScore = Number(coverInfo.distance);
+                const noseDeadScore =
+                    (Number.isFinite(coverFwdScore) && coverFwdScore >= 0 && coverFwdScore < 1.5) ||
+                    (Number.isFinite(coverDistScore) && coverDistScore < 2.2);
+                if (noseDeadScore && candidate.state === 'urbanEmbedPushOut') {
+                    routeScore -= 90;
+                    if ((candidate.throttle || 0) >= 4) routeScore -= 70;
+                    if ((candidate.joyY || 0) > 0.22) routeScore -= 24;
+                    const sideSign = Math.sign(Number(candidate.joyX) || 0) || 0;
+                    const leftOpen = !!(
+                        coverInfo.corridorLeftClear ||
+                        (Number.isFinite(Number(coverInfo.corridorLeft)) && Number(coverInfo.corridorLeft) > 8)
+                    );
+                    const rightOpen = !!(
+                        coverInfo.corridorRightClear ||
+                        (Number.isFinite(Number(coverInfo.corridorRight)) && Number(coverInfo.corridorRight) > 8)
+                    );
+                    if (leftOpen && !rightOpen && sideSign === -1) routeScore += 48;
+                    if (rightOpen && !leftOpen && sideSign === 1) routeScore += 48;
+                    if (leftOpen && !rightOpen && sideSign === 1) routeScore -= 56;
+                    if (rightOpen && !leftOpen && sideSign === -1) routeScore -= 56;
+                }
             }
             // Phase 1: heavily reject energy-climb / preemptive burn when bake clearAbove.
             if (
@@ -8463,7 +15027,16 @@ window.AirArenaAI = {
                 gapTier: gapMeta.tier,
                 gapWidth: Number.isFinite(Number(coverInfo.corridorGap)) ? Number(coverInfo.corridorGap) : null,
                 gapSide: gapSide || 0,
-                gapHold: gapHold ? 1 : 0
+                gapHold: effectiveGapHold ? 1 : 0,
+                pocketRisk: wpPocketRisk,
+                wpFunnel: wpFunnel ? 1 : 0,
+                breakFunnelHold: breakFunnelHold ? 1 : 0,
+                homotopyId: (htRoute && htRoute.active && htRoute.active.homotopyId) || null,
+                homotopyPocket: (htRoute && htRoute.active)
+                    ? Number(htRoute.active.pocketScore)
+                    : null,
+                homotopyAlt: (htRoute && htRoute.alt && htRoute.alt.homotopyId) || null,
+                homotopyWhy: (htRoute && htRoute.switchWhy) || null
             }
         };
     },
@@ -8568,6 +15141,118 @@ window.AirArenaAI = {
     applyHeadroomClimbLimit(action, headroom, opts = {}) {
         if (!action || typeof action.joyY !== 'number') return action;
         const alt = Number(opts.altitude);
+        const coverInfo = opts.coverInfo || {};
+        const slabBlocked =
+            this.isSlabClimbBlocked({
+                coverInfo,
+                roofClearance: opts.roofClearance != null ? opts.roofClearance : coverInfo.roofClearance,
+                coverDistance: opts.coverDistance != null ? opts.coverDistance : coverInfo.distance,
+                headroom: opts.headroom != null ? opts.headroom : coverInfo.headroom,
+                hardChokeKind: opts.hardChokeKind || coverInfo.hardChokeKind,
+                underRoof: !!opts.underRoof,
+                deepEmbed: !!opts.deepEmbed,
+                altitude: alt,
+                aiMapClearAbove: opts.aiMapClearAbove,
+                aiMapSkyOpen: opts.aiMapSkyOpen,
+                hardContact: opts.hardContact
+            }) ||
+            (
+                /tableUndercroft|tightUndercroft|undercroftSlabSkim|ban climb-into-slab/i.test(
+                    String(action.reason || '')
+                ) &&
+                !this.isFacadeBowlOpen(coverInfo, {
+                    altitude: alt,
+                    coverDistance: opts.coverDistance != null ? opts.coverDistance : coverInfo.distance,
+                    roofClearance: opts.roofClearance != null ? opts.roofClearance : coverInfo.roofClearance,
+                    headroom: opts.headroom != null ? opts.headroom : coverInfo.headroom,
+                    aiMapClearAbove: opts.aiMapClearAbove,
+                    aiMapSkyOpen: opts.aiMapSkyOpen,
+                    hardContact: opts.hardContact,
+                    deepEmbed: !!opts.deepEmbed
+                })
+            );
+        // Table / true negative roof: headroom above slab is a trap — never unlock climb via
+        // diveLevelPull or alt-sink high joyY.
+        if (slabBlocked) {
+            const h = Number(headroom);
+            const dist = Number(
+                opts.coverDistance != null ? opts.coverDistance : coverInfo.distance
+            );
+            const fy = Number(opts.forwardY);
+            // T150 A blue2: do not crush dirt-arrest joyY back to skim while still diving into ground.
+            if (this.wantsSlabDirtArrest(alt, fy) || /slabDirtArrest|dirt arrest/i.test(String(action.reason || ''))) {
+                const arrestY = this.getSlabDirtArrestJoyY(
+                    Number.isFinite(alt) ? alt : 10,
+                    Number.isFinite(fy) ? fy : -0.5,
+                    {
+                        roofClearance: opts.roofClearance != null ? opts.roofClearance : coverInfo.roofClearance,
+                        coverInfo
+                    }
+                );
+                // Never re-inflate past table stick owner / tagged skim after decide.
+                // Never soft-bank |joyX| when owner owns sticky escape (nest thrash, T100).
+                if (action.tableStickOwner || /tableStickOwner/i.test(String(action.reason || ''))) {
+                    if (Number(action.joyY) > arrestY) action.joyY = arrestY;
+                } else {
+                    if (action.joyY < arrestY) action.joyY = arrestY;
+                    action.joyX = this.clamp(Number(action.joyX) || 0, -0.42, 0.42);
+                }
+                action.diveLevelPull = true;
+                action.dirtPullFloor = true;
+                if (action.debug) {
+                    action.debug.headroom = Number.isFinite(h) ? Number(h.toFixed(1)) : null;
+                    action.debug.headroomCap = arrestY;
+                    action.debug.headroomSlabDirtArrest = 1;
+                }
+                return action;
+            }
+            // Knife 2 residual: dirtBleed/collapse/arrest pitch owner — ban deepNest maxY=0.14 flatten.
+            if (
+                this.shouldPreserveEscapePitch(action) ||
+                this.hasEscapePitchOwner(action) ||
+                /dirtBleedRecover|dirtUnderTable=1|collapseExit=1|collapseRecover=/i.test(String(action.reason || ''))
+            ) {
+                this.stripProvisionalUndercroftSkimTag(action);
+                if (action.debug) {
+                    action.debug.headroom = Number.isFinite(h) ? Number(h.toFixed(1)) : null;
+                    action.debug.headroomPitchOwnerHold = 1;
+                }
+                return this.clampSoftUrbanStick(action);
+            }
+            const deepNest =
+                (Number.isFinite(dist) && dist < 2.5) ||
+                /deepNestUnload|deepGlue=1|allHitFlip|opposite flip/i.test(String(action.reason || ''));
+            // Deep nest: allow brief nose unload (minY was 0.12 → cancelled flip exit, T7).
+            const maxY = deepNest
+                ? 0.14
+                : (Number.isFinite(alt) && alt < 8 ? 0.26 : 0.2);
+            const minY = deepNest
+                ? -0.14
+                : (Number.isFinite(alt) && alt < 14 ? 0.12 : 0.08);
+            if (action.joyY > maxY) action.joyY = maxY;
+            if (action.joyY < minY) action.joyY = minY;
+            // Soft nest exit owns |jx|≤0.58 — headroom must not re-amp soft 0.5→0.78 (T150 RETAIN death).
+            const softNestBank =
+                this.isNestExitSoftStick(action) || this.shouldHoldSoftUrbanThrottle(action);
+            if (softNestBank) {
+                if (Math.abs(Number(action.joyX) || 0) > 0.58) {
+                    const side = Math.sign(Number(action.joyX) || 0) || (opts.defaultSide || 1);
+                    action.joyX = this.clamp(side * 0.58, -0.58, 0.58);
+                }
+            } else if (Math.abs(Number(action.joyX) || 0) < (deepNest ? 0.62 : 0.48)) {
+                const side = Math.sign(Number(action.joyX) || 0) || (opts.defaultSide || 1);
+                action.joyX = this.clamp(side * (deepNest ? 0.78 : 0.62), -0.82, 0.82);
+            }
+            action.diveLevelPull = false;
+            if (action.debug) {
+                action.debug.headroom = Number.isFinite(h) ? Number(h.toFixed(1)) : null;
+                action.debug.headroomCap = maxY;
+                action.debug.headroomSlabSkim = 1;
+                if (deepNest) action.debug.headroomDeepNestUnload = 1;
+                if (softNestBank) action.debug.headroomSoftNestBank = 1;
+            }
+            return this.clampSoftUrbanStick(action);
+        }
         // Dive/dirt level-out must never be nose-down capped as climb-into-mesh (T66/T42).
         if (this.isDiveLevelPullAction(action)) {
             const h = Number(headroom);
@@ -8580,6 +15265,38 @@ window.AirArenaAI = {
                 action.debug.headroom = Number.isFinite(h) ? Number(h.toFixed(1)) : null;
                 action.debug.headroomCap = maxY;
                 action.debug.headroomDivePull = 1;
+            }
+            return action;
+        }
+        // T27 blue2: T38 undercroft joyY=0.12 → headroom h<4 capped to -0.12 → smashed floor under slab.
+        // Lateral undercroft skim may climb-cap, but must never force nose-down.
+        const undercroftSkim =
+            !!action.dirtPullFloor ||
+            action.navMode === 'embedPush' ||
+            action.navMode === 'noseUnload' ||
+            action.state === 'obstacleEmergencyEscape' ||
+            action.state === 'obstacleEnergyClimb' ||
+            /undercroft|embedPush|noseUnload|P1 undercroft|tableUndercroft/i.test(String(action.reason || ''));
+        if (undercroftSkim) {
+            const h = Number(headroom);
+            // Alt collapse under open undercroft (no slab): allow dirt-pull joyY.
+            // True tight headroom still soft-caps below slab smash.
+            const sink = Number.isFinite(alt) && alt < 16;
+            const maxY = sink
+                ? (!Number.isFinite(h) || h >= 8 ? 0.72 : (h < 4 ? 0.42 : 0.55))
+                : (!Number.isFinite(h)
+                    ? 0.22
+                    : (h < 4 ? 0.14 : (h < 8 ? 0.2 : 0.28)));
+            const minY = Number.isFinite(alt) && alt < 22
+                ? (sink ? 0.28 : 0.12)
+                : 0.08;
+            if (action.joyY > maxY) action.joyY = maxY;
+            if (action.joyY < minY) action.joyY = minY;
+            if (action.debug) {
+                action.debug.headroom = Number.isFinite(h) ? Number(h.toFixed(1)) : null;
+                action.debug.headroomCap = maxY;
+                action.debug.headroomUndercroftSkim = 1;
+                if (sink) action.debug.headroomUndercroftAltSink = 1;
             }
             return action;
         }
@@ -9017,6 +15734,23 @@ window.AirArenaAI = {
         if (underRoof) return null;
         if (coverInfo.hardChoke && Number(coverInfo.hardChokeSeverity) >= 1) return null;
         if (tier === 'blocked' && !coverInfo.corridorClear) return null;
+        // Near-term: funnel on held side + opposite flyable gap → drop hold (routePocket aversion).
+        const gapAsym = this.getCorridorGapAsymmetry(coverInfo);
+        const opp = Math.sign(gapAsym.side || 0);
+        if (
+            opp &&
+            opp !== side &&
+            (Number(gapAsym.strength) || 0) >= 1 &&
+            this.isFlyableCorridorGap(coverInfo)
+        ) {
+            const wpMem = this.survivalWaypointMemory[teamId];
+            const holdFunnel =
+                (wpMem && (!!wpMem.isFunnel || Number(wpMem.pocketRisk) >= 0.28)) ||
+                (wpMem && wpMem.side && Math.sign(wpMem.side) === side && Number(wpMem.pocketRisk) >= 0.28);
+            if (holdFunnel || String(mem.gapHoldSource || '').indexOf('pocketBreak') === 0) {
+                return null;
+            }
+        }
         return {
             side,
             until: Number(mem.gapHoldUntil),
@@ -9447,11 +16181,27 @@ window.AirArenaAI = {
         const sensor = this.evaluateSensorContact(teamId, selfPos, selfForward, enemyPos, enemyForward, turnNo, arenaMode);
         const passiveSearchRange = this.getPassiveSearchRange(arenaMode);
         const passiveSearchBearing = !sensor.seenNow && !sensor.hasMemory && sensor.distance <= passiveSearchRange;
-        const trackedEnemyPos = sensor.seenNow
+        let trackedEnemyPos = sensor.seenNow
             ? enemyPos
             : (sensor.memoryPos || (passiveSearchBearing ? enemyPos : null));
         if (!trackedEnemyPos) {
             const sensorBlindAction = this.tryDecideGate('sensorBlind', () => {
+            // P0/T150: outside / near-hard rim must fall through to airspaceBoundary (search flew off-map).
+            if (typeof getAirspacePressure === 'function') {
+                const apBlind = getAirspacePressure(selfPos);
+                if (apBlind && apBlind.airspace && apBlind.airspace.enabled) {
+                    const rimBlind = this.sampleAirspaceRimGeometry(selfPos, selfForward, apBlind);
+                    const outsideBlind =
+                        apBlind.band === 'outside' ||
+                        (Number.isFinite(rimBlind.hardClearance) && rimBlind.hardClearance < 25) ||
+                        (Number.isFinite(rimBlind.hardClearance) &&
+                            rimBlind.hardClearance < 55 &&
+                            rimBlind.outboundDot > 0.45);
+                    if (outsideBlind) {
+                        return null;
+                    }
+                }
+            }
             const acConfig = (typeof CONFIG !== 'undefined' && CONFIG.aircrafts) ? CONFIG.aircrafts[self.type || 'mig21'] : null;
             const maxPitchCmd = acConfig ? acConfig.maxPitch : Math.PI / 3;
             const searchGroundRisk =
@@ -9535,6 +16285,9 @@ window.AirArenaAI = {
             }, [`sensorGate: contact=0 seen=0 mem=0 dist=${sensor.distance} ang=${sensor.angleDeg} passiveRange=${passiveSearchRange}`], 'search');
             });
             if (sensorBlindAction) return sensorBlindAction;
+            // Fallthrough to airspaceBoundary (or later gates): soft-fill geom track so .clone() is safe.
+            // Offense still gated by sensor.seenNow / hasMemory / hasContact — not by this fill.
+            trackedEnemyPos = enemyPos || selfPos.clone();
         }
         const tuning = this.getTuning();
         const acConfig = (typeof CONFIG !== 'undefined' && CONFIG.aircrafts) ? CONFIG.aircrafts[self.type || 'mig21'] : null;
@@ -9723,12 +16476,14 @@ window.AirArenaAI = {
         const missileLock = distance >= missileLockMinDist && distance <= missileLockRange && angleToTarget <= missileLockAngle && !lineOfSightBlocked && localToEnemy.z > missileLockNoseDot;
         const baseHorizontalBias = this.clamp(-localToEnemy.x * 1.25, -1, 1);
         const baseVerticalBias = this.clamp(localToEnemy.y * 0.85, -0.65, 0.65);
-        const lookaheadAllowed =
-            !self.stalled &&
-            (self.ap || 0) > (tuning.lowAp + 6) &&
-            altitude > 26 &&
-            coverInfo.collisionRisk === 'low' &&
-            !loopEval.loopTrap;
+        const lookaheadWeight = this.resolveLookaheadWeight(coverInfo, {
+            stalled: !!self.stalled,
+            ap: self.ap,
+            altitude,
+            loopTrap: !!loopEval.loopTrap,
+            hardContact: this.isHardBuildingContact(coverInfo)
+        }, tuning);
+        const lookaheadAllowed = lookaheadWeight > 0.05;
         const lookaheadPlan = lookaheadAllowed
             ? this.planLookaheadIntercept(
                 teamId,
@@ -9823,6 +16578,7 @@ window.AirArenaAI = {
             loopCount: loopEval.loopCount,
             loopTrap: loopEval.loopTrap ? 1 : 0,
             lookaheadEnabled: lookaheadAllowed ? 1 : 0,
+            lookaheadWeight: Number(lookaheadWeight.toFixed(2)),
             lookaheadLead: lookaheadPlan.leadTurns,
             lookaheadProfile: lookaheadPlan.profile,
             lookaheadScore: lookaheadPlan.score,
@@ -9843,7 +16599,7 @@ window.AirArenaAI = {
         tree.push(`sensorGate: contact=${sensor.hasContact} seenNow=${sensor.seenNow} mem=${sensor.memoryTurnsLeft} radar=${sensor.radarContact} visual=${sensor.visualContact} los=${sensor.losBlocked} passiveBearing=${passiveSearchBearing ? 1 : 0} passiveRange=${passiveSearchRange} radarR=${this.getSensorProfile(arenaMode).radarRange}`);
         tree.push(`aiMapGate: avail=${aiMapCtx.available ? 1 : 0} sky=${aiMapCtx.skyOpen ? 1 : 0} perch=${aiMapCtx.sarhPerch ? 1 : 0} clear=${aiMapCtx.clearAbove ? 1 : 0} mapLane=${aiMapCtx.mapLane || 'n/a'} roof=${aiMapCtx.available ? Number(aiMapCtx.localRoofMax).toFixed(1) : 'n/a'} margin=${aiMapCtx.margin == null ? 'n/a' : Number(aiMapCtx.margin).toFixed(1)} corr=${aiMapCtx.corridor && aiMapCtx.corridor.ok ? `s${aiMapCtx.corridor.strength}:${aiMapCtx.corridor.preferredSide}|fwd=${aiMapCtx.corridor.forwardClear ? 1 : 0}|open=${aiMapCtx.corridor.corridorOpen ? 1 : 0}` : 'n/a'} wp=${aiMapCtx.survivalWaypoints && aiMapCtx.survivalWaypoints.ok ? `s${aiMapCtx.survivalWaypoints.strength}:${aiMapCtx.survivalWaypoints.preferredSide}|n=${aiMapCtx.survivalWaypoints.steps || 0}` : 'n/a'}`);
         tree.push(`offenseAssist: vsHuman=${offenseAssist.vsHuman ? 1 : 0} pathLead=${offenseAssist.pathLeadCheat ? 1 : 0} deferLevel=${offenseAssist.deferLevelOut ? 1 : 0} gunMul=${offenseAssist.gunRangeMul.toFixed(2)}`);
-        tree.push(`lookaheadGate: enabled=${lookaheadAllowed} lead=${lookaheadPlan.leadTurns} profile=${lookaheadPlan.profile} score=${lookaheadPlan.score ?? 'n/a'} angle=${lookaheadPlan.finalAngleDeg ?? '-'} dist=${lookaheadPlan.finalDistance ?? '-'}`);
+        tree.push(`lookaheadGate: enabled=${lookaheadAllowed} w=${lookaheadWeight.toFixed(2)} risk=${coverInfo.collisionRisk || 'n/a'} lead=${lookaheadPlan.leadTurns} profile=${lookaheadPlan.profile} score=${lookaheadPlan.score ?? 'n/a'} angle=${lookaheadPlan.finalAngleDeg ?? '-'} dist=${lookaheadPlan.finalDistance ?? '-'}`);
         tree.push(`loopGate: trap=${loopEval.loopTrap} count=${loopEval.loopCount} dist=${distance.toFixed(1)} ang=${angleToTargetDeg.toFixed(1)} lx=${localToEnemy.x.toFixed(2)}`);
         tree.push(`lowAltLock: active=${lowAltRecoverLock.active} until=${lowAltRecoverLock.untilTurn}`);
         tree.push(`postGroundLock: active=${postGroundRecoveryLock.active} until=${postGroundRecoveryLock.untilTurn}`);
@@ -9853,13 +16609,19 @@ window.AirArenaAI = {
 
         const plannedX = (lookaheadPlan && typeof lookaheadPlan.horizontalBias === 'number') ? lookaheadPlan.horizontalBias : baseHorizontalBias;
         const plannedY = (lookaheadPlan && typeof lookaheadPlan.verticalBias === 'number') ? lookaheadPlan.verticalBias : baseVerticalBias;
+        const lookMixH = 0.75 * lookaheadWeight;
+        const lookMixV = 0.65 * lookaheadWeight;
         const horizontalBias = this.clamp(
-            lookaheadAllowed ? (plannedX * 0.75 + baseHorizontalBias * 0.25) : baseHorizontalBias,
+            lookaheadAllowed
+                ? (plannedX * lookMixH + baseHorizontalBias * (1 - lookMixH))
+                : baseHorizontalBias,
             -1,
             1
         );
         const verticalBias = this.clamp(
-            lookaheadAllowed ? (plannedY * 0.65 + baseVerticalBias * 0.35) : baseVerticalBias,
+            lookaheadAllowed
+                ? (plannedY * lookMixV + baseVerticalBias * (1 - lookMixV))
+                : baseVerticalBias,
             -0.65,
             0.65
         );
@@ -9870,6 +16632,28 @@ window.AirArenaAI = {
         const hasPoweringMissile = (self.pylons || []).some(p => p.state === 'powering');
         // powering counts — opening ambush leaves seekers mid-boot for one turn (H2).
         let hasAnyMissile = hasArmedMissile || hasStandbyMissile || hasPoweringMissile;
+        // Geometry want ≠ live SMS: drop conflicting powering/armed and power wanted type (on live team).
+        const missileTypeSwitch = this.reconcileLiveMissileTypeSwitch(
+            teamId,
+            liveSelf || self,
+            aiMissileType,
+            {
+                distance,
+                angleDeg: angleToTargetDeg,
+                turnNo,
+                policyMode
+            }
+        );
+        if (missileTypeSwitch.switched) {
+            const pylonsNow = ((liveSelf && liveSelf.pylons) || self.pylons || []);
+            hasArmedMissile = pylonsNow.some((p) => p && p.state === 'armed');
+            hasAnyMissile = hasArmedMissile
+                || pylonsNow.some((p) => p && (p.state === 'standby' || p.state === 'powering'));
+            // Keep snapshot pylons in sync when self is a plain battleState copy.
+            if (self.pylons && liveSelf && liveSelf.pylons && self.pylons !== liveSelf.pylons) {
+                self.pylons = liveSelf.pylons;
+            }
+        }
         const hasFox1Load = hasFox1LoadEarly;
         const hasFox2Load = hasFox2LoadEarly;
         // aiMissileType / ownEnv already resolved (Phase 0 typed envelope)
@@ -9932,6 +16716,9 @@ window.AirArenaAI = {
         }
         tree.push(`rangeMode: ${rangeMode} dist=${distance.toFixed(1)}`);
         tree.push(`envelope: type=${aiMissileType} min=${missileMinRange} max=${missileMaxRange} lock=${missileLockRange} threat=${threatType}`);
+        tree.push(
+            `missileTypeSwitch: want=${aiMissileType} live=${missileTypeSwitch.live || 'n/a'} sw=${missileTypeSwitch.switched || 0} pend=${missileTypeSwitch.pending || 0} drop=${missileTypeSwitch.dropped != null ? missileTypeSwitch.dropped : 0} pwr=${missileTypeSwitch.powered != null ? missileTypeSwitch.powered : 0}${missileTypeSwitch.note ? ` note=${missileTypeSwitch.note}` : ''}`
+        );
         tree.push(`openingFox2: rush=${openingFox2Rush ? 1 : 0} ambush=${fox2OpeningAmbush ? 1 : 0} policy=${policyMode}`);
         const steepClimb = selfForward.y > 0.42;
         const stallTrap = self.stalled && selfForward.y > tuning.stallPitchThreshold && altitude > tuning.minRecoverAlt;
@@ -9940,13 +16727,19 @@ window.AirArenaAI = {
         // Hard ground risk only when altitude/dive actually threaten terrain.
         // Mild dive inside combat band (e.g. 51m / fwdY=-0.22) must NOT force groundAvoid.
         // T40: combat-band near-vertical (alt~52, fwdY=-0.78) still missed risk and kept fox2 align.
+        // T133 red T116: alt=58.3 fy=-0.84 missed alt<58 → tacticalLagPursuit jy=-0.19 into undercroft.
+        // T112 blue2: alt≈86–98 fy≪-0.75 kept engagement/orbit while plummeting into city.
         const groundRisk =
             altitude < 18 ||
             (altitude < 28 && selfForward.y < -0.12) ||
             (altitude < 36 && selfForward.y < -0.14) ||
             (altitude < 40 && selfForward.y < -0.32) ||
             (altitude < 52 && selfForward.y < -0.55) ||
-            (altitude < 58 && selfForward.y < -0.7);
+            (altitude < 58 && selfForward.y < -0.7) ||
+            (altitude < 64 && selfForward.y < -0.75) ||
+            (altitude < 72 && selfForward.y < -0.82) ||
+            (altitude < 95 && selfForward.y < -0.78) ||
+            (altitude < 110 && selfForward.y < -0.88);
         const shallowDiveLevel =
             !groundRisk &&
             altitude < 58 &&
@@ -9973,22 +16766,73 @@ window.AirArenaAI = {
             stalled: !!self.stalled,
             ap: self.ap,
             denseUrban,
+            forwardY: selfForward.y,
             aiMapClearAbove: !!(aiMapCtx && aiMapCtx.clearAbove),
             aiMapSkyOpen: !!(aiMapCtx && aiMapCtx.skyOpen)
         });
         tree.push(
-            `altitudeLane: flightBand=${altitudeLane.flightBand || altitudeLane.lane} roofExit=${altitudeLane.preferRoofExit ? 1 : 0} straightClimb=${altitudeLane.preferStraightClimb ? 1 : 0} sky=${altitudeLane.skyOpen ? 1 : 0} canyon<${altitudeLane.canyonMax} roof=${altitudeLane.roofEscape} embed=${altitudeLane.embedded ? 1 : 0} mandClimb=${altitudeLane.mandatoryClimb ? 1 : 0}`
+            `altitudeLane: flightBand=${altitudeLane.flightBand || altitudeLane.lane} roofExit=${altitudeLane.preferRoofExit ? 1 : 0} straightClimb=${altitudeLane.preferStraightClimb ? 1 : 0} sky=${altitudeLane.skyOpen ? 1 : 0} canyon<${altitudeLane.canyonMax} roof=${altitudeLane.roofEscape} embed=${altitudeLane.embedded ? 1 : 0} mandClimb=${altitudeLane.mandatoryClimb ? 1 : 0} bowlExit=${altitudeLane.bowlExit ? 1 : 0}`
         );
 
         if (altitudeLane.mandatoryClimb) {
-            this.armNavClimbOut(teamId, {
-                turnNo,
-                holdTurns: 6,
-                targetAlt: Math.max(Number(tuning.combatBandMin) || 35, altitudeLane.climbFloor + 16),
-                side: urbanAvoidSide || breakSide,
-                source: 'mandatoryClimb'
+            const mandSlabBan = this.isSlabClimbBlocked({
+                coverInfo,
+                altitude,
+                forwardY: selfForward.y,
+                roofClearance: coverInfo.roofClearance,
+                coverDistance: coverInfo.distance,
+                headroom: coverInfo.headroom,
+                hardChokeKind: coverInfo.hardChokeKind,
+                aiMapClearAbove: !!(aiMapCtx && aiMapCtx.clearAbove),
+                aiMapSkyOpen: !!(aiMapCtx && aiMapCtx.skyOpen)
             });
-            tree.push(`mandatoryClimb: floor=${altitudeLane.climbFloor} arm=1`);
+            if (!mandSlabBan) {
+                this.armNavClimbOut(teamId, {
+                    turnNo,
+                    holdTurns: 6,
+                    targetAlt: Math.max(Number(tuning.combatBandMin) || 35, altitudeLane.climbFloor + 16),
+                    side: urbanAvoidSide || breakSide,
+                    source: 'mandatoryClimb'
+                });
+                tree.push(`mandatoryClimb: floor=${altitudeLane.climbFloor} arm=1`);
+            } else {
+                tree.push(
+                    `mandatoryClimb: deferred=slabOverhead cov=${Number(coverInfo.distance).toFixed(1)} roof=${Number(coverInfo.roofClearance).toFixed(1)}`
+                );
+            }
+        } else if (altitudeLane.bowlExit) {
+            // T145: do not arm climb-out while already diving into cover.
+            const bowlDiveBan =
+                Number.isFinite(selfForward.y) &&
+                selfForward.y < -0.35 &&
+                Number.isFinite(Number(coverInfo.distance)) &&
+                Number(coverInfo.distance) < 24;
+            const bowlTableBan = this.shouldYieldClimbOutToTableEscape(coverInfo, {
+                altitude,
+                forwardY: selfForward.y,
+                aiMapClearAbove: !!(aiMapCtx && aiMapCtx.clearAbove),
+                aiMapSkyOpen: !!(aiMapCtx && aiMapCtx.skyOpen),
+                underRoof: !!altitudeLane.underRoof,
+                deepEmbed: !!altitudeLane.embedded
+            });
+            if (bowlTableBan) {
+                tree.push(
+                    `bowlExit: deferred=tableEscape cov=${Number.isFinite(Number(coverInfo.distance)) ? Number(coverInfo.distance).toFixed(1) : 'n/a'}`
+                );
+            } else if (!bowlDiveBan) {
+                this.armNavClimbOut(teamId, {
+                    turnNo,
+                    holdTurns: 5,
+                    targetAlt: Math.max(Number(tuning.combatBandMin) || 35, altitude + 18),
+                    side: urbanAvoidSide || breakSide,
+                    source: 'facadeBowl'
+                });
+                tree.push('bowlExit: armClimbOut=1');
+            } else {
+                tree.push(
+                    `bowlExit: deferred=diveIntoCover fy=${selfForward.y.toFixed(2)} cov=${Number(coverInfo.distance).toFixed(1)}`
+                );
+            }
         }
 
         const navClimbOut = this.syncNavClimbOut(teamId, {
@@ -10027,6 +16871,10 @@ window.AirArenaAI = {
             canUseFlare,
             flareCooldownReady,
             shouldSaveFlare,
+            canUseChaff,
+            chaffCooldownReady,
+            shouldSaveChaff,
+            shouldChaffNow,
             lineOfSightBlocked,
             mandatoryMergeBreak: false,
             lowAltitudeTacticalBan,
@@ -10042,6 +16890,9 @@ window.AirArenaAI = {
             aiMapSarhPerch: !!(aiMapCtx && aiMapCtx.sarhPerch),
             aiMapMargin: aiMapCtx && aiMapCtx.margin != null ? aiMapCtx.margin : null,
             bakeCorridor: aiMapCtx && aiMapCtx.corridor && aiMapCtx.corridor.ok ? aiMapCtx.corridor : null,
+            dualHomotopyCorridors: aiMapCtx && aiMapCtx.dualHomotopyCorridors && aiMapCtx.dualHomotopyCorridors.ok
+                ? aiMapCtx.dualHomotopyCorridors
+                : null,
             survivalWp: null,
             selfPos,
             selfForward,
@@ -10087,7 +16938,8 @@ window.AirArenaAI = {
             turnNo,
             hardContact: hardBuildingContact,
             deepEmbed: deepEmbedContact,
-            selfPos
+            selfPos,
+            debugTree: tree
         });
         urbanRouteCtx.survivalWp = survivalWpSteer;
         urbanRouteCtx.survivalWpHint =
@@ -10102,10 +16954,45 @@ window.AirArenaAI = {
                 urbanRouteCtx.preferredSide = urbanAvoidSide;
             }
             tree.push(
-                `survivalWpGate: active=1 side=${survivalWpSteer.preferredSide || 0} str=${survivalWpSteer.strength} n=${(survivalWpSteer.waypoints && survivalWpSteer.waypoints.length) || 0} clear0=${survivalWpSteer.firstClear ? 1 : 0} fwdClimb=${survivalWpSteer.forwardClimb ? 1 : 0} climbB=${(Number(survivalWpSteer.climbBias) || 0).toFixed(2)} src=${survivalWpSteer.source || 'wp'}`
+                `survivalWpGate: active=1 side=${survivalWpSteer.preferredSide || 0} str=${survivalWpSteer.strength} n=${(survivalWpSteer.waypoints && survivalWpSteer.waypoints.length) || 0} clear0=${survivalWpSteer.firstClear ? 1 : 0} fwdClimb=${survivalWpSteer.forwardClimb ? 1 : 0} climbB=${(Number(survivalWpSteer.climbBias) || 0).toFixed(2)} src=${survivalWpSteer.source || 'wp'} pocketRisk=${(Number(survivalWpSteer.pocketRisk) || 0).toFixed(2)} wpFunnel=${survivalWpSteer.isFunnel || (Number(survivalWpSteer.pocketRisk) || 0) >= 0.28 ? 1 : 0}`
             );
         } else {
             tree.push('survivalWpGate: active=0');
+        }
+        // P1: dual corridor homotopy commit (L/R/C) — soft preferredSide, not joyX-only lock.
+        {
+            const ht = this.resolveCorridorHomotopy(teamId, turnNo, coverInfo, {
+                survivalWp: survivalWpSteer,
+                bakeCorridor: urbanRouteCtx.bakeCorridor,
+                dualHomotopyCorridors: urbanRouteCtx.dualHomotopyCorridors,
+                aiMapSkyOpen: !!urbanRouteCtx.aiMapSkyOpen,
+                aiMapClearAbove: !!urbanRouteCtx.aiMapClearAbove,
+                wpReplanWhy: survivalWpSteer && survivalWpSteer.replanWhy,
+                trueUnderRoof: this.isTrueUnderRoof(coverInfo, { hardContact: hardBuildingContact }),
+                hardContact: hardBuildingContact,
+                hardChokeKind: coverInfo.hardChokeKind,
+                forwardY: selfForward && selfForward.y,
+                combatPreferredSide: urbanAvoidSide || breakSide,
+                debugTree: tree
+            });
+            urbanRouteCtx.corridorHomotopy = ht;
+            if (ht && ht.active) {
+                if (ht.active.homotopyId !== 'C' && ht.active.side) {
+                    urbanAvoidSide = Math.sign(ht.active.side);
+                    urbanRouteCtx.preferredSide = urbanAvoidSide;
+                }
+                if (ht.active.source === 'bakeDual' || (urbanRouteCtx.dualHomotopyCorridors && urbanRouteCtx.dualHomotopyCorridors.ok)) {
+                    tree.push(
+                        `bakeDualHt: pref=${(urbanRouteCtx.dualHomotopyCorridors && urbanRouteCtx.dualHomotopyCorridors.preferredHomotopyId) || '-'} ` +
+                        `L=${urbanRouteCtx.dualHomotopyCorridors && urbanRouteCtx.dualHomotopyCorridors.left
+                            ? Number(urbanRouteCtx.dualHomotopyCorridors.left.pocketRisk).toFixed(2)
+                            : 'n/a'} ` +
+                        `R=${urbanRouteCtx.dualHomotopyCorridors && urbanRouteCtx.dualHomotopyCorridors.right
+                            ? Number(urbanRouteCtx.dualHomotopyCorridors.right.pocketRisk).toFixed(2)
+                            : 'n/a'}`
+                    );
+                }
+            }
         }
         const meshGlueContact =
             hardBuildingContact &&
@@ -10134,6 +17021,17 @@ window.AirArenaAI = {
             this.isFacadeClosingScore(coverInfo) ||
             this.isSteepDiveIntoFacade(coverInfo, selfForward.y, altitude);
         const gapSideNow = this.getCorridorGapSide(coverInfo);
+        const glueNowForSide = this.getGlueEscapeLock(teamId, turnNo);
+        const undercroftHoldSide =
+            this.isSlabClimbBlocked({
+                coverInfo,
+                roofClearance: roofClearNow,
+                coverDistance: coverDistNow,
+                hardChokeKind: coverInfo.hardChokeKind,
+                underRoof: Number.isFinite(roofClearNow) && roofClearNow < 0,
+                deepEmbed: deepEmbedContact
+            }) ||
+            !!this.isNegativeRoofCruiseBan(coverInfo, { forwardY: selfForward.y });
         const sideAuth = (typeof AirArenaUrbanAvoidSide !== 'undefined' &&
             AirArenaUrbanAvoidSide.resolveAvoidSideAuthority)
             ? AirArenaUrbanAvoidSide.resolveAvoidSideAuthority({
@@ -10155,7 +17053,11 @@ window.AirArenaAI = {
                 earlyBuildingApproach,
                 facadeClosingNow,
                 embeddedLane: !!altitudeLane.embedded,
-                collisionRisk: coverInfo.collisionRisk
+                collisionRisk: coverInfo.collisionRisk,
+                glueLockHoldSide: (glueNowForSide.active && glueNowForSide.side)
+                    ? glueNowForSide.side
+                    : 0,
+                undercroftHold: undercroftHoldSide && glueNowForSide.active
             })
             : null;
         if (sideAuth && sideAuth.applyMemory) {
@@ -10172,17 +17074,51 @@ window.AirArenaAI = {
             urbanAvoidSide = sideAuth.side;
             urbanRouteCtx.preferredSide = sideAuth.side;
             // T109: never flip side under deep mesh / true undercroft — thrash into slab.
+            // P0: early undercroft / score glue lock also suppress flip.
+            // T150: cov→0 nest — allow one flip out of allHitHold glue (forceUndercroftFlip).
+            const forceUndercroftFlip =
+                Number.isFinite(coverDistNow) &&
+                coverDistNow < 6 &&
+                (deepEmbedContact || meshGlueContact || undercroftHoldSide);
             const undercroftNoFlip =
-                deepEmbedContact ||
+                !forceUndercroftFlip &&
                 (
-                    meshGlueContact &&
-                    Number.isFinite(roofClearNow) &&
-                    roofClearNow < -4 &&
-                    Number.isFinite(coverDistNow) &&
-                    coverDistNow < 4
+                    deepEmbedContact ||
+                    undercroftHoldSide ||
+                    (
+                        meshGlueContact &&
+                        Number.isFinite(roofClearNow) &&
+                        roofClearNow < -4 &&
+                        Number.isFinite(coverDistNow) &&
+                        coverDistNow < 4
+                    )
                 );
             embedFlip = undercroftNoFlip ? 0 : (sideAuth.embedFlip || 0);
-            if (undercroftNoFlip && sideAuth.embedFlip) {
+            if (forceUndercroftFlip && glueNowForSide.active && glueNowForSide.side) {
+                // Only flip when locked INTO mesh. If already away-from-mesh, hold (was flipping to -lock).
+                const awayNow = this.getAwayFromMeshSide(coverInfo, selfForward);
+                const intoMesh = !!(awayNow && glueNowForSide.side !== awayNow);
+                if (intoMesh) {
+                    const flipSide = awayNow;
+                    if (flipSide && urbanAvoidSide !== flipSide) {
+                        urbanAvoidSide = flipSide;
+                        urbanRouteCtx.preferredSide = flipSide;
+                        this.clearGlueEscapeLock(teamId);
+                        this.armGlueEscapeLock(teamId, {
+                            turnNo,
+                            side: flipSide,
+                            holdTurns: 5,
+                            source: 'undercroftDeepFlip'
+                        });
+                        embedFlip = 1;
+                        tree.push(`embedEscape: forceUndercroftFlip=1 side=${flipSide} away=${awayNow}`);
+                    }
+                } else {
+                    tree.push(
+                        `embedEscape: forceUndercroftFlip=hold alreadyAway=1 side=${glueNowForSide.side}${awayNow ? ` away=${awayNow}` : ''}`
+                    );
+                }
+            } else if (undercroftNoFlip && sideAuth.embedFlip) {
                 tree.push('embedEscape: flipSuppressed=undercroft');
             }
             if (sideAuth.treeNote) tree.push(sideAuth.treeNote);
@@ -10214,9 +17150,13 @@ window.AirArenaAI = {
             localToEnemy,
             breakSide: urbanAvoidSide || breakSide,
             teamId,
+            turnNo,
             heat: (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(self.heat) : (self.heat || 0)),
             ap: self.ap,
-            lowAp: tuning.lowAp
+            lowAp: tuning.lowAp,
+            faction: GameContext.getFaction && GameContext.getFaction(teamId),
+            coverInfo,
+            selfForward
         };
         const imminentBuildingHit =
             hardBuildingContact ||
@@ -10231,9 +17171,10 @@ window.AirArenaAI = {
                 Number.isFinite(coverInfo.forwardDistance) &&
                 coverInfo.forwardDistance > 0 &&
                 coverInfo.forwardDistance < 14);
+        // fox2-first opening window: always own perch/prep for early turns.
+        // Ambush (~20%) only unlocks rush / mask-skip aggression — not the whole opening gate (T21 rush=0 perch=0).
         const fox2PerchWindow =
             policyMode === 'fox2-first' &&
-            fox2OpeningAmbush &&
             turnNo <= 24 &&
             hasAnyMissile &&
             !actualMissileThreat &&
@@ -10242,6 +17183,9 @@ window.AirArenaAI = {
         tree.push(`urbanCombatGate: defer=${closeCombatUrbanDefer} closeContact=${closeContactUrbanDefer ? 1 : 0} imminentBldg=${imminentBuildingHit ? 1 : 0} strictBldg=${strictImminentBuilding ? 1 : 0} hardContact=${hardBuildingContact ? 1 : 0} perch=${fox2PerchWindow ? 1 : 0} dist=${distance.toFixed(1)} ang=${angleToTargetDeg.toFixed(1)}`);
 
         const imminentGroundImpact = altitude < 12 || (altitude < 26 && selfForward.y < -0.45);
+
+        // Soft-yield thin knife: gates may stash blends; applied after pipeline selects combat.
+        const decideSoftHints = { airspaceBlend: null, bandSoftCombat: null };
 
         // H3 named priority pipeline (order owned by AirArenaDecidePipeline.MAIN_GATE_ORDER).
         const __pipelineAction = this.runDecidePipeline([
@@ -10373,24 +17317,24 @@ window.AirArenaAI = {
                                     enemyDistance: distance,
                                     missileMaxRange
                                 });
-                                if (
-                                    !emergencyHardLock &&
-                                    this.shouldHandoffEscapeToEngage(coverInfo, {
-                                        altitude,
-                                        forwardY: selfForward.y,
-                                        hardContact: hardBuildingContact,
-                                        aiMapClearAbove: aiMapCtx.clearAbove,
-                                        aiMapSkyOpen: aiMapCtx.skyOpen,
-                                        combatContact
-                                    })
-                                ) {
+                                const handoff = this.resolveEngageHandoffDefer(coverInfo, {
+                                    altitude,
+                                    forwardY: selfForward.y,
+                                    hardContact: hardBuildingContact,
+                                    aiMapClearAbove: aiMapCtx.clearAbove,
+                                    aiMapSkyOpen: aiMapCtx.skyOpen,
+                                    combatContact,
+                                    altitudeLane,
+                                    tuning
+                                }, tree);
+                                if (!emergencyHardLock && handoff.ok) {
                                     this.releaseEscapeLocksForEngageHandoff(teamId, tree);
                                     // Clear mandatoryClimb / navClimbOut so groundEmergency cannot re-seize climb.
                                     this.clearNavIntent(teamId);
                                     navClimbOut.active = false;
                                     navClimbOut.clearanceOk = true;
                                     tree.push(
-                                        `obstacleEmergency: deferred=engageHandoff${combatContact ? ' contact=1' : ''} risk=${coverInfo.collisionRisk || 'n/a'} dist=${Number.isFinite(Number(coverInfo.distance)) ? Number(coverInfo.distance).toFixed(1) : 'n/a'} fwdY=${selfForward.y.toFixed(2)}`
+                                        `obstacleEmergency: deferred=engageHandoff tag=${handoff.tag}${combatContact ? ' contact=1' : ''} risk=${coverInfo.collisionRisk || 'n/a'} dist=${Number.isFinite(Number(coverInfo.distance)) ? Number(coverInfo.distance).toFixed(1) : 'n/a'} fwdY=${selfForward.y.toFixed(2)}`
                                     );
                                     return null;
                                 }
@@ -10410,9 +17354,16 @@ window.AirArenaAI = {
                                 const underRoofMand =
                                     (Number.isFinite(roofClearMand) && roofClearMand < 2) ||
                                     !!altitudeLane.underRoof;
+                                const bowlExitMand = !!altitudeLane.bowlExit || this.isFacadeBowlOpen(coverInfo, {
+                                    altitude,
+                                    aiMapClearAbove: !!(aiMapCtx && aiMapCtx.clearAbove),
+                                    aiMapSkyOpen: !!(aiMapCtx && aiMapCtx.skyOpen),
+                                    hardContact: !!hardBuildingContact,
+                                    deepEmbed: !!altitudeLane.embedded
+                                });
                                 const climbFloorNow = this.getMandatoryClimbAlt(tuning);
                                 const gapOpenForRoute =
-                                    !underRoofMand &&
+                                    (!underRoofMand || bowlExitMand) &&
                                     (
                                         !!coverInfo.corridorClear ||
                                         this.getCorridorGapTier(coverInfo).tier === 'wide' ||
@@ -10433,14 +17384,26 @@ window.AirArenaAI = {
                                         }) ||
                                         (navClimbOut.active &&
                                             (navClimbOut.source === 'mandatoryClimb' ||
-                                                navClimbOut.source === 'postGround'))
+                                                navClimbOut.source === 'postGround' ||
+                                                navClimbOut.source === 'facadeBowl')) ||
+                                        bowlExitMand
                                     ) &&
-                                    !underRoofMand &&
+                                    (!underRoofMand || bowlExitMand) &&
                                     !this.isSlabClimbBlocked({
                                         coverInfo,
                                         coverDistance: coverInfo.distance,
                                         roofClearance: coverInfo.roofClearance,
-                                        hardChokeKind: coverInfo.hardChokeKind
+                                        headroom: coverInfo.headroom,
+                                        hardChokeKind: coverInfo.hardChokeKind,
+                                        altitude,
+                                        aiMapClearAbove: !!(aiMapCtx && aiMapCtx.clearAbove),
+                                        aiMapSkyOpen: !!(aiMapCtx && aiMapCtx.skyOpen)
+                                    }) &&
+                                    !this.isNavClimbOutFacadeUnsafe(coverInfo, {
+                                        altitude,
+                                        forwardY: selfForward.y,
+                                        aiMapClearAbove: !!(aiMapCtx && aiMapCtx.clearAbove),
+                                        aiMapSkyOpen: !!(aiMapCtx && aiMapCtx.skyOpen)
                                     }) &&
                                     selfForward.y > -0.55 &&
                                     !(selfForward.y > 0.35 && hardBuildingContact) &&
@@ -10457,8 +17420,10 @@ window.AirArenaAI = {
                                     }) &&
                                     // Prefer corridor planner over forced climb when a gap is flyable
                                     // — except dirt/canyon hold: climb beats weave thrash (T72 A).
+                                    // Bowl exit: climb still preferred even if a weak gap exists.
                                     !(
                                         gapOpenForRoute &&
+                                        !bowlExitMand &&
                                         !this.shouldHoldCanyonClimbOut({
                                             altitude,
                                             forwardY: selfForward.y,
@@ -10553,15 +17518,17 @@ window.AirArenaAI = {
                                     });
                                     return this.withDebug(
                                         this.buildNavClimbOutAction({
-                                            altitude,
+altitude,
                                             forwardY: selfForward.y,
                                             heat: (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(self.heat) : (self.heat || 0)),
                                             side: climbSide,
                                             targetAlt: climbTarget,
                                             maxPitchCmd,
                                             source: 'mandatoryClimb',
-                                            coverInfo
-                                        }),
+                                            coverInfo,
+                            teamId,
+                            turnNo
+                        }),
                                         debugBase,
                                         [...tree, `selected: postGroundClimbOut-mandatoryOverObstacle alt=${altitude.toFixed(1)}`],
                                         'postGroundClimbOut'
@@ -10649,7 +17616,38 @@ window.AirArenaAI = {
                                 !underRoofNow &&
                                 Number.isFinite(Number(coverInfo.roofClearance)) &&
                                 Number(coverInfo.roofClearance) < 0;
+                            // C: ClimbOut/weave must not steal scored/table when already nesting (T52).
+                            const hardOverSoftPlanner = this.wantsHardEscapeOverSoftUrbanRoute(coverInfo, {
+                                altitude,
+                                forwardY: selfForward.y,
+                                hardContact: hardBuildingContact,
+                                deepEmbed: deepEmbedContact,
+                                underRoof: underRoofNow,
+                                teamId,
+                                turnNo,
+                                aiMapClearAbove: !!(aiMapCtx && aiMapCtx.clearAbove),
+                                aiMapSkyOpen: !!(aiMapCtx && aiMapCtx.skyOpen),
+                                hardChokeKind: coverInfo.hardChokeKind
+                            });
                             if (
+                                routedEmergency &&
+                                hardOverSoftPlanner &&
+                                this.isSoftUrbanRouteClimbSteal(routedEmergency)
+                            ) {
+                                tree.push(
+                                    `urbanRouteGate: deferred=hardEscapeOverSoftClimb cov=${
+                                        Number.isFinite(Number(coverInfo.distance))
+                                            ? Number(coverInfo.distance).toFixed(1)
+                                            : 'n/a'
+                                    } src=${
+                                        (routedEmergency.urbanRoute && routedEmergency.urbanRoute.source) ||
+                                        routedEmergency.state
+                                    }`
+                                );
+                                this.clearNavIntent(teamId);
+                                navClimbOut.active = false;
+                                // Fall through to scored / hard escape stick.
+                            } else if (
                                 routedEmergency &&
                                 !forceHardDive &&
                                 (plannerEmbed || plannerGap || gapOpenPrefer || roofBesidePressure || !divingEarly)
@@ -10664,7 +17662,12 @@ window.AirArenaAI = {
                                 // T38: only true mesh glue — bake clear / beside-tall AABB falls to planner.
                                 const glueDist = Number(coverInfo.distance);
                                 const bakeClearNow = this.shouldSuppressSoftUrbanBurn(aiMapCtx, {
-                                    hardContact: hardBuildingContact
+                                    hardContact: hardBuildingContact,
+                                    coverInfo,
+                                    roofClearance: coverInfo.roofClearance,
+                                    coverDistance: coverInfo.distance,
+                                    hardChokeKind: coverInfo.hardChokeKind,
+                                    underRoof: underRoofNow
                                 });
                                 const gluedRoof =
                                     !bakeClearNow &&
@@ -10797,29 +17800,49 @@ window.AirArenaAI = {
                                         )
                                     )
                                 );
-                            const flareWhileEscape =
-                                actualMissileThreat &&
-                                canUseFlare &&
-                                flareCooldownReady &&
-                                !shouldSaveFlare &&
-                                !lineOfSightBlocked &&
-                                altitude >= 14;
+                            const escapeCm = this.resolveEscapeCountermeasure({
+                                altitude,
+                                actualMissileThreat,
+                                canUseFlare,
+                                flareCooldownReady,
+                                shouldSaveFlare,
+                                canUseChaff,
+                                chaffCooldownReady,
+                                shouldSaveChaff,
+                                shouldChaffNow,
+                                lineOfSightBlocked
+                            });
+                            // Legacy flag: resolveUrbanHardEscapeStick throttle pad when any escape CM is active.
+                            const flareWhileEscape = !!escapeCm;
                             // Prefer short-horizon scored ±side/climb/level over fixed T38 (少強制、優選路).
+                            // T150: forceHardDive must not blank scored under table/true undercroft.
                             const diveOwnsForScore =
                                 (diveIntoFacade || steepFaceDiveEarly) &&
                                 !(gapOpenPrefer && altitude >= 20);
-                            const scoredEsc = (!forceHardDive || roofBesidePressure)
+                            const undercroftNeedScore =
+                                underRoofNow ||
+                                coverInfo.hardChokeKind === 'tableUndercroft' ||
+                                coverInfo.hardChokeKind === 'tightUndercroft' ||
+                                (Number.isFinite(Number(coverInfo.roofClearance)) &&
+                                    Number(coverInfo.roofClearance) < -0.8 &&
+                                    Number.isFinite(Number(coverInfo.distance)) &&
+                                    Number(coverInfo.distance) < (Number(this.EARLY_UNDERCROFT_COV) || 14));
+                            const scoredEsc = (!forceHardDive || roofBesidePressure || undercroftNeedScore)
                                 ? this.pickScoredUrbanEscapeStick(teamId, {
                                     side: urbanAvoidSide,
+                                    lockSide: (this.getGlueEscapeLock(teamId, turnNo).side) || urbanAvoidSide,
+                                    turnNo,
                                     altitude,
                                     forwardY: selfForward.y,
+                                    selfForward,
                                     coverDistance: coverInfo.distance,
+                                    coverForwardDistance: coverInfo.forwardDistance,
                                     roofClearance: coverInfo.roofClearance,
                                     headroom: coverInfo.headroom,
                                     hardContact: hardBuildingContact,
                                     deepEmbed,
                                     trueUnderRoof: underRoofNow,
-                                    diveOwnsStick: diveOwnsForScore,
+                                    diveOwnsStick: diveOwnsForScore && !undercroftNeedScore,
                                     energyCritical,
                                     lowEnergyEscape,
                                     heat: (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(self.heat) : (self.heat || 0)),
@@ -10827,39 +17850,186 @@ window.AirArenaAI = {
                                     coverInfo,
                                     hardChokeKind: coverInfo.hardChokeKind,
                                     bakeCorridor: aiMapCtx && aiMapCtx.corridor,
-                                    survivalWp: survivalWpSteer
+                                    survivalWp: survivalWpSteer,
+                                    dualHomotopyCorridors: urbanRouteCtx && urbanRouteCtx.dualHomotopyCorridors,
+                                    aiMapSkyOpen: !!(urbanRouteCtx && urbanRouteCtx.aiMapSkyOpen),
+                                    aiMapClearAbove: !!(urbanRouteCtx && urbanRouteCtx.aiMapClearAbove),
+                                    wpReplanWhy: survivalWpSteer && survivalWpSteer.replanWhy
                                 })
                                 : null;
-                            if (!scoredEsc && (
-                                (underRoofNow && Number.isFinite(Number(coverInfo.distance)) && Number(coverInfo.distance) < (Number(this.EARLY_UNDERCROFT_COV) || 10)) ||
-                                (Number.isFinite(Number(coverInfo.roofClearance)) && Number(coverInfo.roofClearance) < -1.5 &&
-                                    Number.isFinite(Number(coverInfo.distance)) && Number(coverInfo.distance) < (Number(this.EARLY_UNDERCROFT_COV) || 10)) ||
-                                coverInfo.hardChokeKind === 'tableUndercroft' ||
-                                coverInfo.hardChokeKind === 'tightUndercroft'
-                            )) {
+                            if (!scoredEsc && undercroftNeedScore) {
                                 tree.push(
-                                    `urbanEscapeScore: deferred=earlyUndercroft cov=${Number.isFinite(Number(coverInfo.distance)) ? Number(coverInfo.distance).toFixed(1) : 'n/a'} roof=${Number.isFinite(Number(coverInfo.roofClearance)) ? Number(coverInfo.roofClearance).toFixed(1) : 'n/a'}`
+                                    `urbanEscapeScore: deferred=earlyUndercroft cov=${Number.isFinite(Number(coverInfo.distance)) ? Number(coverInfo.distance).toFixed(1) : 'n/a'} roof=${Number.isFinite(Number(coverInfo.roofClearance)) ? Number(coverInfo.roofClearance).toFixed(1) : 'n/a'} choke=${coverInfo.hardChokeKind || 'n/a'}`
                                 );
                             }
                             if (scoredEsc) {
                                 tree.push(
-                                    `urbanEscapeScore: branch=${scoredEsc.branch} score=${scoredEsc.score} mode=${scoredEsc.mode}`
+                                    `urbanEscapeScore: branch=${scoredEsc.branch} score=${scoredEsc.score} mode=${scoredEsc.mode}${undercroftNeedScore ? ' undercroft=1' : ''}`
                                 );
-                                if (hardBuildingContact || deepEmbed || (Number.isFinite(Number(coverInfo.distance)) && Number(coverInfo.distance) < 4)) {
+                                const flipOut =
+                                    scoredEsc.branch === 'allHitFlip' ||
+                                    scoredEsc.mode === 'scoreAllHitFlip';
+                                const deepNest =
+                                    Number.isFinite(Number(coverInfo.distance)) &&
+                                    Number(coverInfo.distance) < 2.5;
+                                const midNest =
+                                    Number.isFinite(Number(coverInfo.distance)) &&
+                                    Number(coverInfo.distance) < 6;
+                                const undercroftSkimLock =
+                                    undercroftNeedScore ||
+                                    /undercroft|slabDirtArrest|deepNest|allHit|tableUndercroft|undercroftSideLock/i.test(
+                                        String(scoredEsc.reason || '')
+                                    ) ||
+                                    /scoreUndercroft|scoreAllHit|deepNestUnload|slabDirtArrest/i.test(
+                                        String(scoredEsc.navMode || scoredEsc.mode || '')
+                                    );
+                                if (
+                                    hardBuildingContact ||
+                                    deepEmbed ||
+                                    deepNest ||
+                                    midNest ||
+                                    undercroftSkimLock ||
+                                    (Number.isFinite(Number(coverInfo.distance)) && Number(coverInfo.distance) < 4)
+                                ) {
+                                    const prevGlue = this.getGlueEscapeLock(teamId, turnNo);
+                                    const awaySide = this.getAwayFromMeshSide(coverInfo, selfForward);
+                                    const stickyMem = this.tableStickAwayMemory[teamId];
+                                    const stickyAway =
+                                        stickyMem && stickyMem.side &&
+                                        Number(turnNo || 1) <= Number(stickyMem.untilTurn || 0)
+                                            ? Math.sign(stickyMem.side)
+                                            : 0;
+                                    const tableOwns = this.wantsTableEscapeStickOwner(coverInfo, {
+                                        altitude,
+                                        forwardY: selfForward.y,
+                                        coverDistance: coverInfo.distance,
+                                        roofClearance: coverInfo.roofClearance,
+                                        headroom: coverInfo.headroom,
+                                        hardChokeKind: coverInfo.hardChokeKind,
+                                        underRoof: underRoofNow,
+                                        deepEmbed,
+                                        aiMapClearAbove: aiMapCtx && aiMapCtx.clearAbove,
+                                        aiMapSkyOpen: aiMapCtx && aiMapCtx.skyOpen
+                                    });
+                                    const holdAway = (tableOwns && (stickyAway || awaySide)) || 0;
+                                    const fwdNow = Number(coverInfo.forwardDistance);
+                                    const commit = this.resolveUndercroftCommitSide({
+                                        candidateSide: Math.sign(Number(scoredEsc.joyX) || urbanAvoidSide) || 0,
+                                        lockSide: prevGlue.active ? prevGlue.side : 0,
+                                        awaySide: holdAway || awaySide,
+                                        gapSide: this.getCorridorGapSide(coverInfo),
+                                        gapOwns: false,
+                                        forwardDistance: fwdNow,
+                                        // Table stick owner: never unlock opposite sticky while glued.
+                                        allHitUnlock: !!(flipOut && !(tableOwns && holdAway &&
+                                            Number.isFinite(Number(coverInfo.distance)) &&
+                                            Number(coverInfo.distance) < 10))
+                                    });
+                                    if (flipOut || commit.unlocked) {
+                                        this.clearGlueEscapeLock(teamId);
+                                    }
+                                    let lockSide = commit.side ||
+                                        Math.sign(Number(scoredEsc.joyX) || urbanAvoidSide) || 0;
+                                    // T100 red2: post-score glue forced jx opposite to tableStickOwner away=.
+                                    if (holdAway && lockSide && lockSide !== holdAway) {
+                                        lockSide = holdAway;
+                                    }
+                                    // Hold lock: force stick to commit side so bake/embed cannot thrash next frame.
+                                    // Dirt arrest: keep soft bank so pitch owns the stick.
+                                    const arrestSoft =
+                                        /slabDirtArrest|dirt arrest|tableStickOwner|tableStickArrest/i.test(String(scoredEsc.reason || '')) ||
+                                        scoredEsc.navMode === 'slabDirtArrest' ||
+                                        scoredEsc.navMode === 'tableStickArrest' ||
+                                        scoredEsc.tableStickOwner ||
+                                        (!!scoredEsc.diveLevelPull && this.wantsSlabDirtArrest(altitude, selfForward.y));
+                                    // Soft nest / dirtBleed: sideLock may flip side but must not reseal |jx|→0.78.
+                                    const softNestBank =
+                                        !arrestSoft &&
+                                        (this.isNestExitSoftStick(scoredEsc) ||
+                                            this.shouldHoldSoftUrbanThrottle(scoredEsc));
+                                    if (
+                                        lockSide &&
+                                        Math.sign(Number(scoredEsc.joyX) || 0) &&
+                                        Math.sign(Number(scoredEsc.joyX) || 0) !== lockSide
+                                    ) {
+                                        const auth = arrestSoft
+                                            ? Math.min(0.42, Math.max(0.32, Math.abs(Number(scoredEsc.joyX) || 0.38)))
+                                            : (softNestBank
+                                                ? Math.min(0.58, Math.max(0.48, Math.abs(Number(scoredEsc.joyX) || 0.52)))
+                                                : Math.max(0.68, Math.abs(Number(scoredEsc.joyX) || 0.7)));
+                                        scoredEsc.joyX = this.clamp(
+                                            lockSide * auth,
+                                            arrestSoft ? -0.42 : (softNestBank ? -0.58 : -0.78),
+                                            arrestSoft ? 0.42 : (softNestBank ? 0.58 : 0.78)
+                                        );
+                                        if (scoredEsc.reason && !/undercroftSideLock/i.test(String(scoredEsc.reason))) {
+                                            scoredEsc.reason = `${scoredEsc.reason} | undercroftSideLock=1 src=${holdAway ? 'tableAway' : commit.source}`;
+                                        }
+                                    } else if (arrestSoft && Math.abs(Number(scoredEsc.joyX) || 0) > 0.42) {
+                                        const s = Math.sign(Number(scoredEsc.joyX) || lockSide || 1) || 1;
+                                        scoredEsc.joyX = this.clamp(s * 0.38, -0.42, 0.42);
+                                    } else if (softNestBank && Math.abs(Number(scoredEsc.joyX) || 0) > 0.58) {
+                                        const s = Math.sign(Number(scoredEsc.joyX) || lockSide || 1) || 1;
+                                        scoredEsc.joyX = this.clamp(s * 0.58, -0.58, 0.58);
+                                    }
                                     this.armGlueEscapeLock(teamId, {
                                         turnNo,
-                                        side: Math.sign(Number(scoredEsc.joyX) || urbanAvoidSide) || 0,
-                                        holdTurns: 5,
-                                        source: `score-${scoredEsc.mode}`
+                                        side: lockSide,
+                                        holdTurns: (flipOut || commit.unlocked)
+                                            ? 5
+                                            : (undercroftSkimLock || midNest ? 6 : (deepNest && scoredEsc.branch === 'allHitHold' ? 2 : 5)),
+                                        source: commit.unlocked
+                                            ? `score-unlock-${commit.source}`
+                                            : `score-${scoredEsc.mode}`
                                     });
-                                    tree.push(`glueEscapeLock: arm=1 src=score-${scoredEsc.mode}`);
+                                    if (lockSide && (undercroftSkimLock || midNest || deepNest)) {
+                                        this.updateUrbanAvoidMemory(teamId, lockSide, turnNo, (flipOut || commit.unlocked) ? 5 : 6, {
+                                            gluePushStreak: midNest || deepNest ? 2 : 1
+                                        });
+                                    }
+                                    // Soft nest intent before owner — owner is final stick writer (no post-owner nest rewrite).
+                                    if (
+                                        this.isNestExitSoftStick(scoredEsc) ||
+                                        /allHit|nestExit|collapseRecover/i.test(String(scoredEsc.mode || scoredEsc.branch || scoredEsc.reason || ''))
+                                    ) {
+                                        scoredEsc.nestExitSoft = 1;
+                                        tree.push('nestExitRetain: preOwner=1');
+                                    }
+                                    this.applyTableEscapeStickOwner(scoredEsc, {
+                                        teamId,
+                                        turnNo,
+                                        coverInfo,
+                                        coverDistance: coverInfo.distance,
+                                        roofClearance: coverInfo.roofClearance,
+                                        headroom: coverInfo.headroom,
+                                        forwardDistance: coverInfo.forwardDistance,
+                                        hardChokeKind: coverInfo.hardChokeKind,
+                                        altitude,
+                                        forwardY: selfForward.y,
+                                        heat: self.heat,
+                                        energyCritical,
+                                        lowEnergyEscape,
+                                        side: Math.sign(Number(scoredEsc.joyX) || lockSide || urbanAvoidSide || 1) || 1,
+                                        awaySide: holdAway || awaySide || this.getAwayFromMeshSide(coverInfo, selfForward),
+                                        selfForward,
+                                        aiMapClearAbove: !!(aiMapCtx && aiMapCtx.clearAbove),
+                                        aiMapSkyOpen: !!(aiMapCtx && aiMapCtx.skyOpen),
+                                        hardContact: hardBuildingContact,
+                                        deepEmbed,
+                                        underRoof: underRoofNow
+                                    });
+                                    this.stripProvisionalUndercroftSkimTag(scoredEsc);
+                                    this.clampSoftUrbanStick(scoredEsc);
+                                    tree.push(
+                                        `glueEscapeLock: arm=1 src=${commit.source} side=${lockSide}${flipOut ? ' flipOut=1' : ''}${commit.unlocked ? ' unlock=1' : ''}${undercroftSkimLock ? ' undercroftLock=1' : ''}${holdAway ? ` holdAway=${holdAway}` : (awaySide ? ` away=${awaySide}` : '')}${scoredEsc.escapePitchOwner ? ` pitchOwner=${scoredEsc.escapePitchOwner}` : ''}`
+                                    );
                                 }
-                                return this.withDebug({
-                                    state: flareWhileEscape
-                                        ? 'defensiveFlare'
+                                const escOut = this.withDebug({
+                                    state: escapeCm
+                                        ? escapeCm.state
                                         : 'obstacleEmergencyEscape',
-                                    statusText: flareWhileEscape
-                                        ? `NPC: 避撞熱焰 ${debugBase.coverDistance}m`
+                                    statusText: escapeCm
+                                        ? `NPC: ${escapeCm.statusPrefix} ${debugBase.coverDistance}m`
                                         : scoredEsc.statusText,
                                     throttle: scoredEsc.throttle,
                                     joyX: scoredEsc.joyX,
@@ -10871,14 +18041,20 @@ window.AirArenaAI = {
                                         scoredEsc.rollAuth || Math.PI / 10
                                     ),
                                     weapon: 'gun',
-                                    queueAction: flareWhileEscape ? 'flare' : 'none',
+                                    queueAction: escapeCm ? escapeCm.queueAction : 'none',
                                     ready: true,
+                                    navMode: scoredEsc.navMode || scoredEsc.mode || null,
                                     diveLevelPull: !!scoredEsc.diveLevelPull,
                                     dirtPullFloor: !!scoredEsc.dirtPullFloor,
-                                    reason: flareWhileEscape
-                                        ? 'Actual missile threat: flare while obstacle-escaping'
+                                    nestExitSoft: scoredEsc.nestExitSoft || undefined,
+                                    escapePitchOwner: scoredEsc.escapePitchOwner || undefined,
+                                    dirtPunchThrottle: scoredEsc.dirtPunchThrottle || undefined,
+                                    reason: escapeCm
+                                        ? `Actual missile threat: ${escapeCm.reasonSuffix.replace('building-escaping', 'obstacle-escaping')}`
                                         : scoredEsc.reason
-                                }, debugBase, [...tree, `selected: ${flareWhileEscape ? 'defensiveFlare-obstacleEscape' : `obstacleEmergencyEscape-${scoredEsc.mode}`} hardContact=${hardBuildingContact ? 1 : 0} embed=${embedNow ? 1 : 0} joyX=${Number(scoredEsc.joyX).toFixed(2)} thr=${scoredEsc.throttle}`], flareWhileEscape ? 'defensiveFlare' : 'obstacleEmergencyEscape');
+                                }, debugBase, [...tree, `selected: ${escapeCm ? `${escapeCm.state}-obstacleEscape` : `obstacleEmergencyEscape-${scoredEsc.mode}`} hardContact=${hardBuildingContact ? 1 : 0} embed=${embedNow ? 1 : 0} joyX=${Number(scoredEsc.joyX).toFixed(2)} thr=${scoredEsc.throttle}${scoredEsc.escapePitchOwner ? ` pitchOwner=${scoredEsc.escapePitchOwner}` : ''}`], escapeCm ? escapeCm.state : 'obstacleEmergencyEscape');
+                                this.stripProvisionalUndercroftSkimTag(escOut);
+                                return this.clampSoftUrbanStick(escOut);
                             }
                             const escStick = this.resolveUrbanHardEscapeStick({
                                 side: urbanAvoidSide,
@@ -10918,34 +18094,129 @@ window.AirArenaAI = {
                                 hardChokeKind: coverInfo.hardChokeKind,
                                 coverInfo
                             });
+                            this.applyTableEscapeStickOwner(escStick, {
+                                teamId,
+                                turnNo,
+                                coverInfo,
+                                coverDistance: coverInfo.distance,
+                                roofClearance: coverInfo.roofClearance,
+                                headroom: coverInfo.headroom,
+                                forwardDistance: coverInfo.forwardDistance,
+                                hardChokeKind: coverInfo.hardChokeKind,
+                                altitude,
+                                forwardY: selfForward.y,
+                                heat: self.heat,
+                                energyCritical,
+                                lowEnergyEscape,
+                                side: urbanAvoidSide,
+                                awaySide: this.getAwayFromMeshSide(coverInfo, selfForward),
+                                selfForward,
+                                aiMapClearAbove: aiMapCtx.clearAbove,
+                                aiMapSkyOpen: aiMapCtx.skyOpen,
+                                hardContact: hardBuildingContact,
+                                deepEmbed,
+                                underRoof: underRoofNow
+                            });
+                            this.stripProvisionalUndercroftSkimTag(escStick);
+                            // P0: undercroft — keep glue-lock bank even if AABB momentarily flips.
+                            {
+                                const glHold = this.getGlueEscapeLock(teamId, turnNo);
+                                const slabNow = this.isSlabClimbBlocked({
+                                    coverInfo,
+                                    roofClearance: coverInfo.roofClearance,
+                                    coverDistance: coverInfo.distance,
+                                    hardChokeKind: coverInfo.hardChokeKind,
+                                    underRoof: underRoofNow,
+                                    deepEmbed
+                                });
+                                if (slabNow && glHold.active && glHold.side) {
+                                    const cur = Math.sign(Number(escStick.joyX) || 0);
+                                    if (cur && cur !== glHold.side) {
+                                        escStick.joyX = this.clamp(
+                                            glHold.side * Math.max(0.64, Math.abs(Number(escStick.joyX) || 0.64)),
+                                            -0.78,
+                                            0.78
+                                        );
+                                        tree.push(`glueEscapeLock: enforceSide=${glHold.side} was=${cur}`);
+                                    }
+                                    // Knife 5/2: do not flatten dirt-arrest / owned pitch joyY under low table nest.
+                                    const altNow = Number(altitude);
+                                    const dirtNest =
+                                        Number.isFinite(altNow) &&
+                                        altNow < 16 &&
+                                        (!!escStick.dirtPullFloor || !!escStick.diveLevelPull || Number(escStick.joyY) >= 0.28);
+                                    if (this.shouldPreserveEscapePitch(escStick) || this.hasEscapePitchOwner(escStick)) {
+                                        // Keep owned pitch.
+                                    } else if (!dirtNest && Number(escStick.joyY) > 0.22) {
+                                        escStick.joyY = 0.16;
+                                    } else if (dirtNest) {
+                                        escStick.dirtPullFloor = true;
+                                    }
+                                }
+                                // Glue lock must not undo table stick owner (away-from-mesh / skim caps).
+                                this.applyTableEscapeStickOwner(escStick, {
+                                    teamId,
+                                    turnNo,
+                                    coverInfo,
+                                    coverDistance: coverInfo.distance,
+                                    roofClearance: coverInfo.roofClearance,
+                                    headroom: coverInfo.headroom,
+                                    hardChokeKind: coverInfo.hardChokeKind,
+                                    altitude,
+                                    forwardY: selfForward.y,
+                                    heat: self.heat,
+                                    energyCritical,
+                                    lowEnergyEscape,
+                                    side: Math.sign(Number(escStick.joyX) || urbanAvoidSide || 1) || 1,
+                                    awaySide: this.getAwayFromMeshSide(coverInfo, selfForward),
+                                    selfForward,
+                                    aiMapClearAbove: aiMapCtx.clearAbove,
+                                    aiMapSkyOpen: aiMapCtx.skyOpen,
+                                    hardContact: hardBuildingContact,
+                                    deepEmbed,
+                                    underRoof: underRoofNow
+                                });
+                                this.stripProvisionalUndercroftSkimTag(escStick);
+                            }
                             // Phase 1: bake clearAbove — never label/select obstacleEnergyClimb soft burn.
                             const banEnergyClimb = this.shouldSuppressSoftUrbanBurn(aiMapCtx, {
-                                hardContact: hardBuildingContact
+                                hardContact: hardBuildingContact,
+                                coverInfo,
+                                roofClearance: coverInfo.roofClearance,
+                                coverDistance: coverInfo.distance,
+                                hardChokeKind: coverInfo.hardChokeKind,
+                                underRoof: underRoofNow,
+                                deepEmbed
                             });
-                            const escState = flareWhileEscape
-                                ? 'defensiveFlare'
+                            const escState = escapeCm
+                                ? escapeCm.state
                                 : ((escStick.mode === 'energyClimb' || lowEnergyEscape) && !banEnergyClimb
                                     ? 'obstacleEnergyClimb'
                                     : 'obstacleEmergencyEscape');
                             if (
                                 escStick.mode === 'noseUnload' ||
                                 escStick.mode === 'embedPush' ||
+                                escStick.mode === 'diveGlueBreak' ||
                                 escStick.mode === 'mandatoryClimb' ||
                                 hardBuildingContact ||
                                 deepEmbed
                             ) {
+                                const gluePrev = this.getGlueEscapeLock(teamId, turnNo);
+                                const stickSide = Math.sign(Number(escStick.joyX) || urbanAvoidSide) || 0;
                                 this.armGlueEscapeLock(teamId, {
                                     turnNo,
-                                    side: Math.sign(Number(escStick.joyX) || urbanAvoidSide) || 0,
+                                    side: stickSide,
                                     holdTurns: 5,
                                     source: `t38-${escStick.mode}`
                                 });
-                                tree.push(`glueEscapeLock: arm=1 src=t38-${escStick.mode}`);
+                                tree.push(
+                                    `glueEscapeLock: arm=1 src=t38-${escStick.mode}${gluePrev.active && gluePrev.side && stickSide && gluePrev.side !== stickSide ? ' flipBlocked=1' : ''}`
+                                );
                             }
                             return this.withDebug({
                                 state: escState,
-                                statusText: flareWhileEscape
-                                    ? `NPC: 避撞熱焰 ${debugBase.coverDistance}m`
+                                statusText: escapeCm
+                                    ? `NPC: ${escapeCm.statusPrefix} ${debugBase.coverDistance}m`
                                     : escStick.statusText,
                                 throttle: escStick.throttle,
                                 joyX: escStick.joyX,
@@ -10953,12 +18224,13 @@ window.AirArenaAI = {
                                 pitchCmd: -maxPitchCmd * escStick.pitchScale,
                                 roll: this.clamp(urbanAvoidSide * escStick.rollAuth, -Math.PI / 6, Math.PI / 6),
                                 weapon: 'gun',
-                                queueAction: flareWhileEscape ? 'flare' : 'none',
+                                queueAction: escapeCm ? escapeCm.queueAction : 'none',
                                 ready: true,
+                                navMode: escStick.mode,
                                 diveLevelPull: !!escStick.diveLevelPull,
                                 dirtPullFloor: !!escStick.dirtPullFloor,
-                                reason: flareWhileEscape
-                                    ? 'Actual missile threat: flare while obstacle-escaping'
+                                reason: escapeCm
+                                    ? `Actual missile threat: ${escapeCm.reasonSuffix.replace('building-escaping', 'obstacle-escaping')}`
                                     : escStick.reason
                             }, debugBase, [...tree, `selected: ${escState}-${escStick.mode} hardContact=${hardBuildingContact ? 1 : 0} embed=${embedNow ? 1 : 0} flip=${embedFlip} bakeClear=${banEnergyClimb ? 1 : 0} joyX=${Number(escStick.joyX).toFixed(2)} thr=${escStick.throttle}`], escState);
                         }
@@ -10970,9 +18242,27 @@ window.AirArenaAI = {
                     (Number.isFinite(Number(coverInfo.roofClearance)) && Number(coverInfo.roofClearance) < 2) ||
                     !!altitudeLane.underRoof;
                 // T70: after dive-level / below canyon floor — lock climb before dirt-lateral thrash.
+                // T150 A: do not seize hard climb while still near facade (roof briefly +3, cov≈13).
+                const facadeUnsafeGE = this.isNavClimbOutFacadeUnsafe(coverInfo, {
+                    altitude,
+                    forwardY: selfForward.y,
+                    underRoof: underRoofGE,
+                    deepEmbed: !!altitudeLane.embedded,
+                    aiMapClearAbove: !!(aiMapCtx && aiMapCtx.clearAbove),
+                    aiMapSkyOpen: !!(aiMapCtx && aiMapCtx.skyOpen)
+                });
+                // Bowl / open courtyard: allow climb-out even when beside-tall looks like underRoof.
+                const bowlExitGE = this.isFacadeBowlOpen(coverInfo, {
+                    altitude,
+                    aiMapClearAbove: !!(aiMapCtx && aiMapCtx.clearAbove),
+                    aiMapSkyOpen: !!(aiMapCtx && aiMapCtx.skyOpen),
+                    hardContact: !!hardBuildingContact,
+                    deepEmbed: !!altitudeLane.embedded
+                });
                 if (
                     altitude < climbFloorGE &&
-                    !underRoofGE &&
+                    (!underRoofGE || bowlExitGE) &&
+                    !facadeUnsafeGE &&
                     selfForward.y > -0.55 &&
                     !(selfForward.y > 0.35 && hardBuildingContact) &&
                     (
@@ -10997,18 +18287,25 @@ window.AirArenaAI = {
                     });
                     return this.withDebug(
                         this.buildNavClimbOutAction({
-                            altitude,
+altitude,
                             forwardY: selfForward.y,
                             heat: (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(self.heat) : (self.heat || 0)),
                             side: climbSide,
                             targetAlt: climbTarget,
                             maxPitchCmd,
                             source: 'mandatoryClimb',
-                            coverInfo
+                            coverInfo,
+                            teamId,
+                            turnNo
                         }),
                         debugBase,
                         [...tree, `selected: postGroundClimbOut-mandatoryAfterDiveLevel alt=${altitude.toFixed(1)} fwdY=${selfForward.y.toFixed(2)}`],
                         'postGroundClimbOut'
+                    );
+                }
+                if (facadeUnsafeGE && altitude < climbFloorGE && Array.isArray(tree)) {
+                    tree.push(
+                        `mandatoryClimb: deferNearFacade=1 cov=${Number.isFinite(Number(coverInfo.distance)) ? Number(coverInfo.distance).toFixed(1) : 'n/a'} roof=${Number.isFinite(Number(coverInfo.roofClearance)) ? Number(coverInfo.roofClearance).toFixed(1) : 'n/a'}`
                     );
                 }
                 if (altitude < climbFloorGE || (altitude < 48 && selfForward.y < -0.18)) {
@@ -11045,6 +18342,15 @@ window.AirArenaAI = {
                             if (urbanEnvelope && (!extremeLow || embedOrHardLow) && !canyonDiveAbort) {
                                 this.updateUrbanAvoidMemory(teamId, urbanAvoidSide, turnNo, 5);
                                 const roofExitLow = (altitudeLane.preferRoofExit || mandClimbLow) && !noseHigh && (!embedOrHardLow || mandClimbLow);
+                                const slabLow = this.isSlabClimbBlocked({
+                                    coverInfo,
+                                    roofClearance: coverInfo.roofClearance,
+                                    coverDistance: coverInfo.distance,
+                                    headroom: coverInfo.headroom,
+                                    hardChokeKind: coverInfo.hardChokeKind,
+                                    underRoof: underRoofGE,
+                                    deepEmbed: !!altitudeLane.embedded
+                                });
                                 const routedLow = this.pickUrbanRoute(teamId, {
                                     ...urbanRouteCtx,
                                     energyLow: energyLow || energyCritical || (!roofExitLow && (stalledNow || altitude < 22))
@@ -11056,7 +18362,17 @@ window.AirArenaAI = {
                                     } else if (noseHigh && Number(routedLow.joyY) > 0.18) {
                                         routedLow.joyY = 0.1;
                                     }
-                                    if (embedOrHardLow && steepDive && !noseHigh) {
+                                    if (slabLow && embedOrHardLow && !mandClimbLow) {
+                                        // Table undercroft: never force dirt-pull climb into slab.
+                                        const maxSlabY = altitude < 6 ? 0.28 : 0.18;
+                                        if (Number(routedLow.joyY) > maxSlabY) routedLow.joyY = maxSlabY;
+                                        if (Number(routedLow.joyY) < 0.12) routedLow.joyY = 0.12;
+                                        const side = Math.sign(Number(routedLow.joyX) || urbanAvoidSide) || urbanAvoidSide || 1;
+                                        routedLow.joyX = this.clamp(side * 0.62, -0.72, 0.72);
+                                        routedLow.diveLevelPull = false;
+                                        routedLow.dirtPullFloor = true;
+                                        if ((routedLow.throttle || 0) >= 4) routedLow.throttle = 3;
+                                    } else if (embedOrHardLow && steepDive && !noseHigh) {
                                         // T41: steep nose under embed — do not crush pull; soft bank.
                                         const minPull = altitude < 16 ? 0.78 : 0.62;
                                         if (Number(routedLow.joyY) < minPull) routedLow.joyY = minPull;
@@ -11134,7 +18450,38 @@ window.AirArenaAI = {
                                 if (embedOrHardLow && !mandClimbLow) {
                                     // T41: steep dive owns pull; mild bank only until nose near level.
                                     // T51: alt≈2–4 with mild fwdY still used joyY=0.52 and hit dirt — force dirt pull.
-                                    if (steepDive && !noseHigh) {
+                                    // Table slab: lateral skim only (false-open headroom above mesh).
+                                    // Open-sky / wall-close dirt arrest: lateral owns (ban joyY into wall).
+                                    if (slabLow) {
+                                        if (this.wantsSlabDirtArrest(altitude, selfForward.y, {
+                                            hardChokeKind: coverInfo.hardChokeKind,
+                                            roofClearance: coverInfo.roofClearance,
+                                            coverDistance: coverInfo.distance,
+                                            coverInfo
+                                        })) {
+                                            if (this.wantsEmbedDirtLateralArrest(coverInfo, {
+                                                altitude,
+                                                forwardY: selfForward.y,
+                                                coverDistance: coverInfo.distance,
+                                                headroom: coverInfo.headroom,
+                                                coverForwardDistance: coverInfo.forwardDistance,
+                                                aiMapClearAbove: !!(aiMapCtx && aiMapCtx.clearAbove),
+                                                aiMapSkyOpen: !!(aiMapCtx && aiMapCtx.skyOpen)
+                                            })) {
+                                                lowJoyY = this.getEmbedDirtLateralSoftY(altitude, selfForward.y, {
+                                                    coverInfo,
+                                                    roofClearance: coverInfo.roofClearance
+                                                });
+                                            } else {
+                                                lowJoyY = this.getSlabDirtArrestJoyY(altitude, selfForward.y, {
+                                                    roofClearance: coverInfo.roofClearance,
+                                                    coverInfo
+                                                });
+                                            }
+                                        } else {
+                                            lowJoyY = altitude < 6 ? 0.28 : 0.18;
+                                        }
+                                    } else if (steepDive && !noseHigh) {
                                         lowJoyY = altitude < 3 ? 0.92 : (altitude < 12 ? 0.85 : (extremeLow ? 0.78 : 0.62));
                                     } else if (altitude < 8 && !noseHigh && selfForward.y < -0.05) {
                                         lowJoyY = altitude < 3 ? 0.95 : (altitude < 5 ? 0.9 : 0.85);
@@ -11149,9 +18496,120 @@ window.AirArenaAI = {
                                     }
                                 }
                                 // T61: while still diving into dirt, never thrash with |joyX|>0.3.
-                                const lowJoyXClamped = (steepDive || (altitude < 10 && selfForward.y < -0.35))
-                                    ? this.clamp(lowJoyX, -0.28, 0.28)
-                                    : lowJoyX;
+                                // Embed dirt-lateral: bank owns the stick (wall-close open sky).
+                                const embedDirtLateral = !!(
+                                    slabLow &&
+                                    embedOrHardLow &&
+                                    this.wantsSlabDirtArrest(altitude, selfForward.y) &&
+                                    this.wantsEmbedDirtLateralArrest(coverInfo, {
+                                        altitude,
+                                        forwardY: selfForward.y,
+                                        coverDistance: coverInfo.distance,
+                                        headroom: coverInfo.headroom,
+                                        coverForwardDistance: coverInfo.forwardDistance,
+                                        aiMapClearAbove: !!(aiMapCtx && aiMapCtx.clearAbove),
+                                        aiMapSkyOpen: !!(aiMapCtx && aiMapCtx.skyOpen)
+                                    })
+                                );
+                                const lowJoyXClamped = slabLow && embedOrHardLow && !mandClimbLow
+                                    ? (embedDirtLateral
+                                        ? this.getEmbedDirtLateralJoyX(
+                                            Math.sign(lowJoyX) || urbanAvoidSide || 1,
+                                            selfForward.y
+                                        )
+                                        : (this.wantsSlabDirtArrest(altitude, selfForward.y)
+                                            ? this.clamp(lowJoyX, -0.42, 0.42)
+                                            : this.clamp(
+                                                (Math.sign(lowJoyX) || urbanAvoidSide || 1) * 0.62,
+                                                -0.72,
+                                                0.72
+                                            )))
+                                    : ((steepDive || (altitude < 10 && selfForward.y < -0.35))
+                                        ? this.clamp(lowJoyX, -0.28, 0.28)
+                                        : lowJoyX);
+                                let lowReason = (roofExitLow || mandClimbLow)
+                                    ? 'T25 mandatory climb below floor: climb out of canyon (sky clear)'
+                                    : (embedOrHardLow
+                                        ? (slabLow
+                                            ? (embedDirtLateral
+                                                ? 'Low-alt embed: dirt arrest lateral (ban wall-pull) | embedDirtLateral=1'
+                                                : (this.wantsSlabDirtArrest(altitude, selfForward.y)
+                                                    ? 'Low-alt embed undercroft slab: dirt arrest (ban ground smash)'
+                                                    : 'Low-alt embed undercroft slab: lateral skim (ban climb-into-slab)'))
+                                            : (altitude < 8 && !noseHigh && selfForward.y < -0.05
+                                                ? 'Extreme-low embed: dirt pull first (T51)'
+                                                : (steepDive && !noseHigh
+                                                    ? 'Low-alt embed steep dive: level nose before lateral'
+                                                    : (altitude < 3
+                                                        ? 'Extreme-low embed: lateral + dirt pull budget'
+                                                        : 'Low-alt embed/hard contact: lateral push-out before pull thrash'))))
+                                        : 'Low-alt urban: lateral around buildings (no joyY=1 pull thrash)');
+                                let outJoyX = lowJoyXClamped;
+                                let outJoyY = lowJoyY;
+                                let ownedSoftThr = null;
+                                let ownedNavMode = embedDirtLateral ? 'embedDirtLateral' : undefined;
+                                let ownedDirtFloor = altitude < 8 && !!embedOrHardLow && !mandClimbLow;
+                                let ownedDiveLevel = !!(slabLow && this.wantsSlabDirtArrest(altitude, selfForward.y))
+                                    || (!slabLow && (!!(steepDive && !noseHigh) || (altitude < 8 && !noseHigh && selfForward.y < -0.05)));
+                                const wantsTableLow = this.wantsTableEscapeStickOwner(coverInfo, {
+                                    teamId,
+                                    turnNo,
+                                    altitude,
+                                    forwardY: selfForward.y,
+                                    coverDistance: coverInfo.distance,
+                                    roofClearance: coverInfo.roofClearance,
+                                    headroom: coverInfo.headroom,
+                                    hardChokeKind: coverInfo.hardChokeKind,
+                                    underRoof: underRoofGE,
+                                    deepEmbed: !!altitudeLane.embedded,
+                                    aiMapClearAbove: !!(aiMapCtx && aiMapCtx.clearAbove),
+                                    aiMapSkyOpen: !!(aiMapCtx && aiMapCtx.skyOpen)
+                                });
+                                // T150 blue2 T42: Extreme-low dirt pull first jy≈0.88 after roof flicker — soft-cap then own.
+                                if (wantsTableLow && !mandClimbLow && Number(outJoyY) > 0.36) {
+                                    outJoyY = this.getEmbedDirtLateralSoftY(altitude, selfForward.y, {
+                                        coverInfo,
+                                        roofClearance: coverInfo.roofClearance,
+                                        coverDistance: coverInfo.distance
+                                    });
+                                }
+                                if ((slabLow || wantsTableLow) && embedOrHardLow && !mandClimbLow) {
+                                    const ownedLow = this.applyTableEscapeStickOwner({
+                                        joyX: outJoyX,
+                                        joyY: outJoyY,
+                                        reason: lowReason,
+                                        navMode: embedDirtLateral ? 'embedDirtLateral' : undefined
+                                    }, {
+                                        teamId,
+                                        turnNo,
+                                        coverInfo,
+                                        coverDistance: coverInfo.distance,
+                                        roofClearance: coverInfo.roofClearance,
+                                        headroom: coverInfo.headroom,
+                                        hardChokeKind: coverInfo.hardChokeKind,
+                                        altitude,
+                                        forwardY: selfForward.y,
+                                        heat: self.heat,
+                                        energyCritical,
+                                        lowEnergyEscape: !!(energyCritical || (Number(self.ap) < (Number(tuning.lowAp) || 65) + 4)),
+                                        side: Math.sign(outJoyX) || urbanAvoidSide || 1,
+                                        awaySide: this.getAwayFromMeshSide(coverInfo, selfForward),
+                                        selfForward,
+                                        aiMapClearAbove: !!(aiMapCtx && aiMapCtx.clearAbove),
+                                        aiMapSkyOpen: !!(aiMapCtx && aiMapCtx.skyOpen),
+                                        underRoof: underRoofGE,
+                                        deepEmbed: !!altitudeLane.embedded
+                                    });
+                                    outJoyX = Number(ownedLow.joyX);
+                                    outJoyY = Number(ownedLow.joyY);
+                                    if (ownedLow.reason) lowReason = ownedLow.reason;
+                                    if (ownedLow.nestExitSoft || ownedLow.navMode === 'dirtBleedRecover') {
+                                        ownedSoftThr = Math.min(3, Number(ownedLow.throttle) || 3);
+                                    }
+                                    if (ownedLow.navMode) ownedNavMode = ownedLow.navMode;
+                                    if (ownedLow.dirtPullFloor) ownedDirtFloor = true;
+                                    if (ownedLow.diveLevelPull) ownedDiveLevel = true;
+                                }
                                 return this.withDebug({
                                     state: 'obstacleEmergencyEscape',
                                     statusText: (roofExitLow || mandClimbLow)
@@ -11163,36 +18621,33 @@ window.AirArenaAI = {
                                             : `NPC: 近地繞樓脫離 ${altitude.toFixed(1)}m`),
                                     throttle: stalledNow
                                         ? 3
-                                        : (embedOrHardLow && !mandClimbLow
-                                            ? (extremeLow || getEngineHeatLevel(self.heat) > 82 ? 3 : 4)
-                                            : (getEngineHeatLevel(self.heat) > 76 ? 3 : 4)),
-                                    joyX: lowJoyXClamped,
-                                    joyY: lowJoyY,
+                                        : (ownedSoftThr != null
+                                            ? ownedSoftThr
+                                            : (embedOrHardLow && !mandClimbLow
+                                                ? (slabLow || extremeLow || getEngineHeatLevel(self.heat) > 82 ? 3 : 4)
+                                                : (getEngineHeatLevel(self.heat) > 76 ? 3 : 4))),
+                                    joyX: outJoyX,
+                                    joyY: outJoyY,
                                     pitchCmd: noseHigh
                                         ? maxPitchCmd * 0.18
                                         : -maxPitchCmd * ((roofExitLow || mandClimbLow)
                                             ? 0.55
                                             : (embedOrHardLow
-                                                ? (altitude < 3 ? 0.72 : (steepDive ? 0.48 : 0.28))
+                                                ? (slabLow
+                                                    ? (embedDirtLateral || ownedNavMode === 'dirtBleedRecover'
+                                                        ? 0.42
+                                                        : (this.wantsSlabDirtArrest(altitude, selfForward.y) ? 0.55 : 0.2))
+                                                    : (altitude < 3 ? 0.72 : (steepDive ? 0.48 : 0.28)))
                                                 : (steepDive ? 0.35 : 0.18))),
                                     roll: this.clamp(urbanAvoidSide * ((roofExitLow || mandClimbLow || embedOrHardLow) ? Math.PI / 10 : Math.PI / 6), -Math.PI / 6, Math.PI / 6),
                                     weapon: 'gun',
                                     queueAction: 'none',
                                     ready: true,
-                                    dirtPullFloor: altitude < 8 && !!embedOrHardLow && !mandClimbLow,
-                                    diveLevelPull: !!(steepDive && !noseHigh) || (altitude < 8 && !noseHigh && selfForward.y < -0.05),
-                                    reason: (roofExitLow || mandClimbLow)
-                                        ? 'T25 mandatory climb below floor: climb out of canyon (sky clear)'
-                                        : (embedOrHardLow
-                                            ? (altitude < 8 && !noseHigh && selfForward.y < -0.05
-                                                ? 'Extreme-low embed: dirt pull first (T51)'
-                                                : (steepDive && !noseHigh
-                                                    ? 'Low-alt embed steep dive: level nose before lateral'
-                                                    : (altitude < 3
-                                                        ? 'Extreme-low embed: lateral + dirt pull budget'
-                                                        : 'Low-alt embed/hard contact: lateral push-out before pull thrash')))
-                                            : 'Low-alt urban: lateral around buildings (no joyY=1 pull thrash)')
-                                }, debugBase, [...tree, `selected: ${(roofExitLow || mandClimbLow) ? 'obstacleEmergencyEscape-mandatoryClimb' : (embedOrHardLow ? (steepDive && !noseHigh ? 'obstacleEmergencyEscape-lowEmbedDivePull' : (altitude < 3 ? 'obstacleEmergencyEscape-lowEmbedDirt' : 'obstacleEmergencyEscape-lowEmbed')) : 'obstacleEmergencyEscape-lowUrban')} embed=${embedOrHardLow ? 1 : 0}`], 'obstacleEmergencyEscape');
+                                    dirtPullFloor: ownedDirtFloor,
+                                    diveLevelPull: ownedDiveLevel,
+                                    navMode: ownedNavMode,
+                                    reason: lowReason
+                                }, debugBase, [...tree, `selected: ${(roofExitLow || mandClimbLow) ? 'obstacleEmergencyEscape-mandatoryClimb' : (embedOrHardLow ? (slabLow ? (embedDirtLateral ? 'obstacleEmergencyEscape-lowEmbedDirtLateral' : (this.wantsSlabDirtArrest(altitude, selfForward.y) ? 'obstacleEmergencyEscape-lowEmbedSlabDirtArrest' : 'obstacleEmergencyEscape-lowEmbedSlabSkim')) : (steepDive && !noseHigh ? 'obstacleEmergencyEscape-lowEmbedDivePull' : (altitude < 3 ? 'obstacleEmergencyEscape-lowEmbedDirt' : 'obstacleEmergencyEscape-lowEmbed'))) : 'obstacleEmergencyEscape-lowUrban')} embed=${embedOrHardLow ? 1 : 0}`], 'obstacleEmergencyEscape');
                             }
                             if (canyonDiveAbort && urbanArenaMode) {
                                 const side = urbanAvoidSide || breakSide || 1;
@@ -11205,11 +18660,89 @@ window.AirArenaAI = {
                                     altitude,
                                     coverDistance: coverInfo.distance,
                                     roofClearance: coverInfo.roofClearance,
+                                    headroom: coverInfo.headroom,
+                                    hardChokeKind: coverInfo.hardChokeKind,
+                                    coverInfo,
+                                    underRoof: underRoofGE,
                                     climbBias: survivalWpSteer && survivalWpSteer.climbBias,
                                     forwardClimb: !!(survivalWpSteer && survivalWpSteer.forwardClimb),
                                     pathActive: !!(survivalWpSteer && survivalWpSteer.source === 'path'),
                                     gapOpen: this.isFlyableCorridorGap(coverInfo)
                                 });
+                                const canyonSlab = this.isSlabClimbBlocked({
+                                    coverInfo,
+                                    roofClearance: coverInfo.roofClearance,
+                                    coverDistance: coverInfo.distance,
+                                    headroom: coverInfo.headroom,
+                                    hardChokeKind: coverInfo.hardChokeKind,
+                                    underRoof: underRoofGE
+                                });
+                                // T128 blue2 T116: roof flicker +3.4 dropped canyonSlab → open jy=0.78 into dirt.
+                                // Table linger / stick owner must seal canyon open-sky pull.
+                                const canyonTableOpts = {
+                                    teamId,
+                                    turnNo,
+                                    altitude,
+                                    forwardY: selfForward.y,
+                                    coverDistance: coverInfo.distance,
+                                    roofClearance: coverInfo.roofClearance,
+                                    headroom: coverInfo.headroom,
+                                    hardChokeKind: coverInfo.hardChokeKind,
+                                    underRoof: underRoofGE,
+                                    deepEmbed: !!altitudeLane.embedded,
+                                    aiMapClearAbove: !!(aiMapCtx && aiMapCtx.clearAbove),
+                                    aiMapSkyOpen: !!(aiMapCtx && aiMapCtx.skyOpen)
+                                };
+                                const canyonWantsTable = this.wantsTableEscapeStickOwner(coverInfo, canyonTableOpts);
+                                if (canyonWantsTable || canyonSlab) {
+                                    const away = this.getAwayFromMeshSide(coverInfo, selfForward);
+                                    const push = Math.sign(away) || side;
+                                    const ownedCanyon = this.applyTableEscapeStickOwner({
+                                        joyX: this.clamp(push * 0.68, -0.78, 0.78),
+                                        joyY: canyonSlab
+                                            ? Math.min(canyonJoyY, altitude < 8 ? 0.28 : 0.2)
+                                            : (altitude < 8 ? 0.26 : 0.18),
+                                        throttle: Math.min(recoveryThrottle, 3),
+                                        reason: canyonSlab
+                                            ? 'Canyon dive under slab: table stick owner'
+                                            : 'Canyon dive: table stick linger (ban open pull)'
+                                    }, {
+                                        ...canyonTableOpts,
+                                        coverInfo,
+                                        heat: self.heat,
+                                        energyCritical,
+                                        side: push,
+                                        awaySide: away,
+                                        selfForward
+                                    });
+                                    const canyonArrestOwned =
+                                        canyonSlab && this.wantsSlabDirtArrest(altitude, selfForward.y);
+                                    return this.withDebug({
+                                        state: 'emergencyPullUp',
+                                        statusText: canyonArrestOwned
+                                            ? `NPC: 桌下砸地改平 ${altitude.toFixed(1)}m`
+                                            : `NPC: 桌下側推改平 ${altitude.toFixed(1)}m`,
+                                        throttle: Number(ownedCanyon.throttle) || Math.min(recoveryThrottle, 3),
+                                        joyX: Number(ownedCanyon.joyX),
+                                        joyY: Number(ownedCanyon.joyY),
+                                        pitchCmd: -maxPitchCmd * (canyonArrestOwned ? 0.55 : 0.22),
+                                        roll: this.clamp(
+                                            (Math.sign(Number(ownedCanyon.joyX)) || push) * Math.PI / 10,
+                                            -Math.PI / 10,
+                                            Math.PI / 10
+                                        ),
+                                        weapon: 'gun',
+                                        queueAction: 'none',
+                                        ready: true,
+                                        diveLevelPull: !!canyonArrestOwned,
+                                        dirtPullFloor: true,
+                                        reason: ownedCanyon.reason ||
+                                            (canyonArrestOwned
+                                                ? 'Canyon dive under slab: dirt arrest (ban ground smash)'
+                                                : 'Canyon dive under slab: lateral skim (ban climb-into-slab)')
+                                    }, debugBase, [...tree, `selected: emergencyPullUp-canyonDiveTableOwner${canyonArrestOwned ? 'Arrest' : 'Skim'}`], 'emergencyPullUp');
+                                }
+                                // True open canyon (no table linger): pull level before lateral thrash.
                                 return this.withDebug({
                                     state: 'emergencyPullUp',
                                     statusText: `NPC: 街谷俯衝改平 ${altitude.toFixed(1)}m`,
@@ -11217,11 +18750,12 @@ window.AirArenaAI = {
                                     joyX: this.clamp(side * 0.28, -0.32, 0.32),
                                     joyY: canyonJoyY,
                                     pitchCmd: -maxPitchCmd * (steepDive ? 0.78 : 0.62),
-                                    roll: this.clamp(side * Math.PI / 12, -Math.PI / 12, Math.PI / 12),
+                                    roll: this.clamp(side * Math.PI / 12, -Math.PI / 10, Math.PI / 10),
                                     weapon: 'gun',
                                     queueAction: 'none',
                                     ready: true,
                                     diveLevelPull: true,
+                                    dirtPullFloor: false,
                                     reason: 'Canyon steep/moderate dive: pull level before building lateral thrash'
                                 }, debugBase, [...tree, 'selected: emergencyPullUp-canyonDive'], 'emergencyPullUp');
                             }
@@ -11267,7 +18801,40 @@ window.AirArenaAI = {
                                 );
                             }
                             // Building-first safety net if urban path did not fire: never slab-climb while hard contact.
-                            if (embedOrHardLow) {
+                            const slabPull = this.isSlabClimbBlocked({
+                                coverInfo,
+                                roofClearance: coverInfo.roofClearance,
+                                coverDistance: coverInfo.distance,
+                                headroom: coverInfo.headroom,
+                                hardChokeKind: coverInfo.hardChokeKind,
+                                underRoof: underRoofGE,
+                                deepEmbed: !!altitudeLane.embedded
+                            });
+                            if (slabPull) {
+                                // Knife 6: near dirt under slab → arrest floor, not hard-cap 0.28 skim smash.
+                                if (
+                                    this.wantsSlabDirtArrest(altitude, selfForward.y, {
+                                        hardChokeKind: coverInfo.hardChokeKind,
+                                        roofClearance: coverInfo.roofClearance,
+                                        coverDistance: coverInfo.distance,
+                                        coverInfo,
+                                        underRoof: underRoofGE
+                                    }) ||
+                                    (Number.isFinite(altitude) && altitude < 8 && selfForward.y < 0.1)
+                                ) {
+                                    const push = Math.sign(joyX) || side;
+                                    joyX = this.clamp(push * 0.48, -0.55, 0.55);
+                                    joyY = this.getSlabDirtArrestJoyY(altitude, selfForward.y, {
+                                        roofClearance: coverInfo.roofClearance,
+                                        coverInfo
+                                    });
+                                } else {
+                                    // T113: emergencyPullUp under deep neg roof was joyY=0.78–0.9 with sky=1.
+                                    const push = Math.sign(joyX) || side;
+                                    joyX = this.clamp(push * 0.62, -0.72, 0.72);
+                                    joyY = altitude < 8 ? Math.min(Math.max(joyY, 0.16), 0.28) : Math.min(joyY, 0.2);
+                                }
+                            } else if (embedOrHardLow) {
                                 const push = Math.sign(joyX) || side;
                                 const roofN = Number(coverInfo.roofClearance);
                                 const coverDistN = Number(coverInfo.distance);
@@ -11315,11 +18882,38 @@ window.AirArenaAI = {
                                 altitude,
                                 coverDistance: coverInfo.distance,
                                 roofClearance: coverInfo.roofClearance,
+                                headroom: coverInfo.headroom,
+                                hardChokeKind: coverInfo.hardChokeKind,
+                                coverInfo,
+                                underRoof: underRoofGE,
+                                slabBlocked: slabPull,
                                 climbBias: survivalWpSteer && survivalWpSteer.climbBias,
                                 forwardClimb: !!(survivalWpSteer && survivalWpSteer.forwardClimb),
                                 pathActive: !!(survivalWpSteer && survivalWpSteer.source === 'path'),
                                 gapOpen: this.isFlyableCorridorGap(coverInfo, { underRoof: underRoofGE })
                             });
+                            const slabDirtArrestPull = slabPull && this.wantsSlabDirtArrest(altitude, selfForward.y, {
+                                hardChokeKind: coverInfo.hardChokeKind,
+                                roofClearance: coverInfo.roofClearance,
+                                coverDistance: coverInfo.distance,
+                                coverInfo
+                            });
+                            if (slabDirtArrestPull) {
+                                // Under deep-neg table: SET arrest (do not Math.max with pull-up smash jy).
+                                // Open dirt: still raise floor so skim cannot keep joyY≈0.2 while sinking.
+                                const arrestY = this.getSlabDirtArrestJoyY(altitude, selfForward.y, {
+                                    roofClearance: coverInfo.roofClearance,
+                                    coverInfo
+                                });
+                                const roofNeg = Number(coverInfo.roofClearance);
+                                const deepNegPull = Number.isFinite(roofNeg) && roofNeg < -8;
+                                joyY = deepNegPull
+                                    ? arrestY
+                                    : Math.max(Number(joyY) || 0, arrestY);
+                                joyX = this.clamp(joyX, -0.42, 0.42);
+                            } else if (slabPull && Number(joyY) > (altitude < 8 ? 0.28 : 0.2)) {
+                                joyY = altitude < 8 ? 0.28 : 0.2;
+                            }
                             const flareDuringPull =
                                 actualMissileThreat &&
                                 canUseFlare &&
@@ -11329,50 +18923,149 @@ window.AirArenaAI = {
                                 !extremeLow;
                             if (flareDuringPull) {
                                 const breakJoyX = joyX || this.clamp((-horizontalBias * 0.55) + (0.4 * side), -0.9, 0.9);
+                                const flareY = slabDirtArrestPull
+                                    ? Math.max(joyY, this.getSlabDirtArrestJoyY(altitude, selfForward.y, {
+                                        roofClearance: coverInfo.roofClearance,
+                                        coverInfo
+                                    }))
+                                    : (slabPull
+                                        ? Math.min(Math.max(joyY, 0.14), 0.22)
+                                        : Math.max(0.28, Math.min(0.62, joyY)));
                                 return this.withDebug({
                                     state: 'defensiveFlare',
                                     statusText: `NPC: 低空熱焰+改平 ${altitude.toFixed(1)}m`,
                                     throttle: recoveryThrottle,
-                                    joyX: breakJoyX,
-                                    joyY: Math.max(0.28, Math.min(0.62, joyY)),
-                                    pitchCmd: noseHigh ? maxPitchCmd * 0.15 : -maxPitchCmd * 0.55,
+                                    joyX: slabDirtArrestPull
+                                        ? this.clamp((Math.sign(breakJoyX) || side) * 0.38, -0.42, 0.42)
+                                        : (slabPull ? this.clamp((Math.sign(breakJoyX) || side) * 0.58, -0.7, 0.7) : breakJoyX),
+                                    joyY: flareY,
+                                    pitchCmd: noseHigh ? maxPitchCmd * 0.15 : -maxPitchCmd * (slabDirtArrestPull ? 0.55 : (slabPull ? 0.22 : 0.55)),
                                     roll: this.clamp(breakJoyX * Math.PI / 5, -Math.PI / 5, Math.PI / 5),
                                     weapon: 'gun',
                                     queueAction: 'flare',
                                     ready: true,
-                                    reason: 'Actual missile threat: flare while recovering from dive'
-                                }, debugBase, [...tree, `selected: defensiveFlare-pullUp lateral=${lateral.active || forceLat ? 1 : 0}`], 'defensiveFlare');
+                                    dirtPullFloor: !!slabPull,
+                                    diveLevelPull: !slabPull || !!slabDirtArrestPull,
+                                    reason: slabDirtArrestPull
+                                        ? 'Actual missile threat: flare while slab dirt arrest'
+                                        : (slabPull
+                                            ? 'Actual missile threat: flare while slab-skim lateral exit'
+                                            : 'Actual missile threat: flare while recovering from dive')
+                                }, debugBase, [...tree, `selected: defensiveFlare-pullUp lateral=${lateral.active || forceLat ? 1 : 0}${slabDirtArrestPull ? ' slabDirtArrest=1' : (slabPull ? ' slabSkim=1' : '')}`], 'defensiveFlare');
+                            }
+                            let slabOwnedReason = null;
+                            const wantsTablePull = this.wantsTableEscapeStickOwner(coverInfo, {
+                                teamId,
+                                turnNo,
+                                altitude,
+                                forwardY: selfForward.y,
+                                coverDistance: coverInfo.distance,
+                                roofClearance: coverInfo.roofClearance,
+                                headroom: coverInfo.headroom,
+                                hardChokeKind: coverInfo.hardChokeKind,
+                                underRoof: underRoofGE,
+                                deepEmbed: !!altitudeLane.embedded,
+                                aiMapClearAbove: aiMapCtx.clearAbove,
+                                aiMapSkyOpen: aiMapCtx.skyOpen
+                            });
+                            // T150 blue2: roof flicker dropped slabPull → open lateral break jy≈0.82 into dirt.
+                            if (wantsTablePull && !slabPull) {
+                                const push = Math.sign(joyX) || side;
+                                joyX = this.clamp(push * 0.62, -0.72, 0.72);
+                                if (Number(joyY) > 0.28) joyY = altitude < 8 ? 0.26 : 0.2;
+                            }
+                            if (slabPull || wantsTablePull) {
+                                const owned = this.applyTableEscapeStickOwner({
+                                    joyX,
+                                    joyY,
+                                    throttle: recoveryThrottle,
+                                    reason: slabDirtArrestPull
+                                        ? 'Low-altitude recovery under slab: dirt arrest (ban ground smash)'
+                                        : (slabPull
+                                            ? 'Low-altitude recovery under slab: lateral skim (ban climb-into-slab)'
+                                            : 'Low-altitude recovery: table stick linger (ban dirt thrash)')
+                                }, {
+                                    teamId,
+                                    turnNo,
+                                    coverInfo,
+                                    coverDistance: coverInfo.distance,
+                                    roofClearance: coverInfo.roofClearance,
+                                    headroom: coverInfo.headroom,
+                                    hardChokeKind: coverInfo.hardChokeKind,
+                                    altitude,
+                                    forwardY: selfForward.y,
+                                    heat: self.heat,
+                                    energyCritical,
+                                    side: Math.sign(joyX) || side,
+                                    awaySide: this.getAwayFromMeshSide(coverInfo, selfForward),
+                                    selfForward,
+                                    aiMapClearAbove: aiMapCtx.clearAbove,
+                                    aiMapSkyOpen: aiMapCtx.skyOpen,
+                                    underRoof: underRoofGE,
+                                    deepEmbed: !!altitudeLane.embedded
+                                });
+                                joyX = Number(owned.joyX);
+                                joyY = Number(owned.joyY);
+                                if (owned.reason) slabOwnedReason = owned.reason;
                             }
                             return this.withDebug({
                                 state: 'emergencyPullUp',
-                                statusText: (lateral.active || forceLat)
-                                    ? `NPC: 緊急改平脫離 ${altitude.toFixed(1)}m`
-                                    : `NPC: 緊急改平 ${altitude.toFixed(1)}m`,
-                                throttle: (stalledNow && !steepDive) ? Math.min(recoveryThrottle, 3) : recoveryThrottle,
+                                statusText: slabDirtArrestPull
+                                    ? `NPC: 桌下砸地改平 ${altitude.toFixed(1)}m`
+                                    : (slabPull
+                                        ? `NPC: 桌下側推改平 ${altitude.toFixed(1)}m`
+                                        : ((lateral.active || forceLat)
+                                            ? `NPC: 緊急改平脫離 ${altitude.toFixed(1)}m`
+                                            : `NPC: 緊急改平 ${altitude.toFixed(1)}m`)),
+                                throttle: (() => {
+                                    // Knife 7: near-dirt under slab — punch thr (ban thr3 stall at alt~1–2).
+                                    if (slabDirtArrestPull && Number.isFinite(altitude) && altitude < 3.5) {
+                                        return Math.max(5, Math.min(5, recoveryThrottle || 5));
+                                    }
+                                    if (slabDirtArrestPull && Number.isFinite(altitude) && altitude < 6) {
+                                        return Math.max(4, Math.min(5, recoveryThrottle || 4));
+                                    }
+                                    if (slabPull && !slabDirtArrestPull) {
+                                        return Math.min(recoveryThrottle, 3);
+                                    }
+                                    return (stalledNow && !steepDive)
+                                        ? Math.min(recoveryThrottle, 3)
+                                        : recoveryThrottle;
+                                })(),
                                 joyX,
                                 joyY,
                                 pitchCmd: noseHigh
                                     ? maxPitchCmd * 0.2
-                                    : -maxPitchCmd * (steepDive ? (altitude < 12 ? 0.9 : 0.75) : (extremeLow ? 0.6 : 0.4)),
+                                    : -maxPitchCmd * (slabDirtArrestPull
+                                        ? 0.55
+                                        : (slabPull
+                                            ? 0.22
+                                            : (steepDive ? (altitude < 12 ? 0.9 : 0.75) : (extremeLow ? 0.6 : 0.4)))),
                                 roll: this.clamp(joyX * Math.PI / 5.5, -Math.PI / 5.5, Math.PI / 5.5),
                                 weapon: 'gun',
                                 queueAction: 'none',
                                 ready: true,
-                                diveLevelPull: !!steepDive,
-                                dirtPullFloor: !!(extremeLow && steepDive),
+                                diveLevelPull: (!slabPull && !!steepDive) || !!slabDirtArrestPull,
+                                dirtPullFloor: !!slabPull || !!(extremeLow && steepDive),
+                                dirtPunchThrottle: (slabDirtArrestPull && Number.isFinite(altitude) && altitude < 6) ? 1 : undefined,
+                                _softThrAlt: (slabDirtArrestPull && Number.isFinite(altitude)) ? altitude : undefined,
                                 // P1 dumps: do not label healthy AP nose-high as "stall" (false stall alarm).
-                                reason: !!self.stalled
-                                    ? 'Low-alt stall: unload + lateral (no vertical thrash)'
-                                    : (energyCritical
-                                        ? 'Low-alt energy-critical: unload + lateral (no vertical thrash)'
-                                        : (noseHigh
-                                            ? 'Low-alt nose-high: unload + lateral (no vertical thrash)'
-                                            : (lateral.active || forceLat
-                                                ? 'Low-altitude recovery with lateral break'
-                                                : (steepDive
-                                                    ? 'Steep dive recovery with capped pull'
-                                                    : 'Low altitude level recovery'))))
-                            }, debugBase, [...tree, `selected: emergencyPullUp lateral=${lateral.active || forceLat ? 1 : 0} noseHigh=${noseHigh ? 1 : 0} stall=${self.stalled ? 1 : 0} energyCrit=${energyCritical ? 1 : 0}`], 'emergencyPullUp');
+                                reason: slabOwnedReason || (slabDirtArrestPull
+                                    ? 'Low-altitude recovery under slab: dirt arrest (ban ground smash)'
+                                    : (slabPull
+                                        ? 'Low-altitude recovery under slab: lateral skim (ban climb-into-slab)'
+                                        : (!!self.stalled
+                                            ? 'Low-alt stall: unload + lateral (no vertical thrash)'
+                                            : (energyCritical
+                                                ? 'Low-alt energy-critical: unload + lateral (no vertical thrash)'
+                                                : (noseHigh
+                                                    ? 'Low-alt nose-high: unload + lateral (no vertical thrash)'
+                                                    : (lateral.active || forceLat
+                                                        ? 'Low-altitude recovery with lateral break'
+                                                        : (steepDive
+                                                            ? 'Steep dive recovery with capped pull'
+                                                            : 'Low altitude level recovery')))))))
+                            }, debugBase, [...tree, `selected: emergencyPullUp lateral=${lateral.active || forceLat ? 1 : 0} noseHigh=${noseHigh ? 1 : 0} stall=${self.stalled ? 1 : 0} energyCrit=${energyCritical ? 1 : 0}${slabDirtArrestPull ? ' slabDirtArrest=1' : (slabPull ? ' slabSkim=1' : '')}`], 'emergencyPullUp');
                         }
 
                         if (lowAltRecoverLock.active) {
@@ -11528,15 +19221,19 @@ window.AirArenaAI = {
                                 });
                                 return this.withDebug(
                                     this.buildNavClimbOutAction({
-                                        altitude,
+altitude,
                                         forwardY: selfForward.y,
                                         heat: (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(self.heat) : (self.heat || 0)),
                                         side: climbSide,
                                         targetAlt: climbTarget,
                                         maxPitchCmd,
                                         source: navClimbOut.source || 'postGround',
-                                        coverInfo
-                                    }),
+                                        coverInfo,
+                                        aiMapClearAbove: !!(aiMapCtx && aiMapCtx.clearAbove),
+                                        aiMapSkyOpen: !!(aiMapCtx && aiMapCtx.skyOpen),
+                            teamId,
+                            turnNo
+                        }),
                                     debugBase,
                                     [...tree, 'selected: postGroundClimbOut navCommit=1'],
                                     'postGroundClimbOut'
@@ -11559,58 +19256,221 @@ window.AirArenaAI = {
                     tree.push(`airspaceGate: clear r=${pressure.radial.toFixed(1)} soft=${pressure.airspace.softRadius}`);
                     return null;
                 }
-                // T103: buildings always beat AO rim steer (blue died: AA at cov=15 roof=-20).
-                if (this.hasBuildingPressureForAirspaceYield(coverInfo, {
-                    hardContact: hardBuildingContact || deepEmbedContact,
-                    deepEmbed: deepEmbedContact
-                })) {
-                    tree.push(
-                        `airspaceGate: yieldBuilding r=${pressure.radial.toFixed(1)} cov=${Number.isFinite(Number(coverInfo.distance)) ? Number(coverInfo.distance).toFixed(1) : 'n/a'} roof=${Number.isFinite(Number(coverInfo.roofClearance)) ? Number(coverInfo.roofClearance).toFixed(1) : 'n/a'} risk=${coverInfo.collisionRisk || 'n/a'}`
-                    );
-                    return null;
-                }
-                // Hard outside is resolved in combat-resolution; here only soft steer-in.
+                // Sample rim before building yield — near-hard must keep AO ownership (T78).
                 const rim = this.sampleAirspaceRimGeometry(selfPos, selfForward, pressure);
                 const outboundDot = rim.outboundDot;
                 const hardClearance = rim.hardClearance;
+                const nearHardEarly =
+                    pressure.band === 'outside' ||
+                    pressure.t > 0.72 ||
+                    hardClearance < 55;
+                // T103: close mesh beats AO; T78: distant negative roof at tape does not.
+                // P0/T150: NEVER yield rim while outside / negative clearance (search then flew to kill).
+                if (
+                    pressure.band !== 'outside' &&
+                    !(Number.isFinite(hardClearance) && hardClearance < 20) &&
+                    this.hasBuildingPressureForAirspaceYield(coverInfo, {
+                    hardContact: hardBuildingContact || deepEmbedContact,
+                    deepEmbed: deepEmbedContact,
+                    nearHardRim: nearHardEarly || hardClearance < 80,
+                    hardClearance,
+                    pressureBand: pressure.band
+                })) {
+                    tree.push(
+                        `airspaceGate: yieldBuilding r=${pressure.radial.toFixed(1)} cov=${Number.isFinite(Number(coverInfo.distance)) ? Number(coverInfo.distance).toFixed(1) : 'n/a'} roof=${Number.isFinite(Number(coverInfo.roofClearance)) ? Number(coverInfo.roofClearance).toFixed(1) : 'n/a'} risk=${coverInfo.collisionRisk || 'n/a'} clear=${Number.isFinite(hardClearance) ? hardClearance.toFixed(0) : 'n/a'}`
+                    );
+                    return null;
+                }
+                if (
+                    (pressure.band === 'outside' || (Number.isFinite(hardClearance) && hardClearance < 20)) &&
+                    this.hasBuildingPressureForAirspaceYield(coverInfo, {
+                        hardContact: hardBuildingContact || deepEmbedContact,
+                        deepEmbed: deepEmbedContact,
+                        nearHardRim: true,
+                        hardClearance,
+                        pressureBand: pressure.band
+                    })
+                ) {
+                    tree.push(
+                        `airspaceGate: keepRimOutside vsBuilding r=${pressure.radial.toFixed(1)} clear=${Number.isFinite(hardClearance) ? hardClearance.toFixed(0) : 'n/a'} cov=${Number.isFinite(Number(coverInfo.distance)) ? Number(coverInfo.distance).toFixed(1) : 'n/a'}`
+                    );
+                }
+                if (nearHardEarly && Number.isFinite(Number(coverInfo.distance)) && Number(coverInfo.distance) > 40) {
+                    tree.push(
+                        `airspaceGate: keepRim vsBuilding r=${pressure.radial.toFixed(1)} clear=${hardClearance.toFixed(0)} cov=${Number(coverInfo.distance).toFixed(1)} roof=${Number.isFinite(Number(coverInfo.roofClearance)) ? Number(coverInfo.roofClearance).toFixed(1) : 'n/a'}`
+                    );
+                }
+                // Hard outside is resolved in combat-resolution; here only soft steer-in.
                 const urgency = pressure.band === 'outside'
                     ? 1
                     : (pressure.band === 'warn'
                         ? 0.55 + 0.45 * pressure.t
                         : 0.25 + 0.45 * pressure.t);
-                const nearHard = pressure.band === 'outside' || pressure.t > 0.72 || hardClearance < 55;
+                // T137: once heading inward with room, drop nearHard lock — was thrashing climb at hardHigh forever.
+                const recoveringIn =
+                    pressure.band === 'warn' &&
+                    outboundDot < 0.08 &&
+                    hardClearance > 55;
+                const nearHard =
+                    pressure.band === 'outside' ||
+                    (!recoveringIn && nearHardEarly);
+                // P0/T150: hard rim owns stick — do not soft-blend / warn-yield to far lead (flew 380→450).
+                const forceHardRim =
+                    pressure.band === 'outside' ||
+                    (Number.isFinite(hardClearance) && hardClearance < 40) ||
+                    (Number.isFinite(hardClearance) && hardClearance < 70 && outboundDot > 0.55) ||
+                    (Number.isFinite(hardClearance) && hardClearance < 90 && outboundDot > 0.72);
                 // Soft: skip when already inward / early soft — never when on the tape (T69).
-                if (pressure.band === 'soft' && outboundDot < 0.2 && pressure.t < 0.5 && !nearHard && hardClearance > 80) {
+                if (
+                    !forceHardRim &&
+                    pressure.band === 'soft' &&
+                    outboundDot < 0.2 &&
+                    pressure.t < 0.5 &&
+                    !nearHard &&
+                    hardClearance > 80
+                ) {
                     tree.push(
                         `airspaceGate: softSkip r=${pressure.radial.toFixed(1)} outDot=${outboundDot.toFixed(2)} clear=${hardClearance.toFixed(0)}`
                     );
                     return null;
                 }
-                // Warn: yield when heading inward with room — keep hold near hard.
-                if (pressure.band === 'warn' && !nearHard) {
+                // Warn: yield when heading inward with room — NEVER while still outbound (T100 farWarn hole).
+                if (!forceHardRim && pressure.band === 'warn' && !nearHard) {
                     const headingIn = outboundDot < 0.08;
-                    const farWarn = hardClearance > 110 && outboundDot < 0.55;
-                    const midInward = hardClearance > 80 && outboundDot < 0.2;
-                    if ((headingIn && hardClearance > 70) || farWarn || midInward) {
+                    // Was outDot<0.55 — still radial-out; level-out then slid to hard kill.
+                    const farWarn = hardClearance > 110 && outboundDot < 0.15;
+                    const midInward = hardClearance > 80 && outboundDot < 0.12;
+                    // T137 recover: clear of tape + nose in → release stick (even if still high).
+                    const recoverRelease =
+                        recoveringIn &&
+                        hardClearance > 60 &&
+                        outboundDot < 0.05;
+                    if ((headingIn && hardClearance > 70) || farWarn || midInward || recoverRelease) {
+                        // Still dump altitude via soft hint if above combat band.
+                        const bandMaxRec = Number(tuning.combatBandMax) || 92;
+                        if (altitude >= bandMaxRec - 2) {
+                            decideSoftHints.airspaceBlend = {
+                                joyX: this.clamp(
+                                    this.resolveAirspaceInwardSide(teamId, rim.crossY, turnNo, 8, { outboundDot }) * 0.22,
+                                    -0.35,
+                                    0.35
+                                ),
+                                joyY: this.clamp(altitude >= (Number(tuning.combatBandHardMax) || 108) - 6 ? -0.42 : -0.28, -0.5, -0.1),
+                                weight: 0.4,
+                                clear: Math.round(hardClearance)
+                            };
+                        }
                         tree.push(
-                            `airspaceGate: warnYield r=${pressure.radial.toFixed(1)} outDot=${outboundDot.toFixed(2)} clear=${hardClearance.toFixed(0)} t=${pressure.t.toFixed(2)}`
+                            `airspaceGate: warnYield r=${pressure.radial.toFixed(1)} outDot=${outboundDot.toFixed(2)} clear=${hardClearance.toFixed(0)} t=${pressure.t.toFixed(2)}${recoverRelease ? ' recover=1' : ''}`
                         );
                         return null;
                     }
                 }
-                const inwardSide = this.resolveAirspaceInwardSide(teamId, rim.crossY, turnNo, 12, {
-                    outboundDot
-                });
+                // Soft-yield: warn + (weapon contact OR far fight OR radial bleed) → blend rim into combat stick.
+                {
+                    const softBlendOn = Number(tuning.airspaceSoftBlend) > 0;
+                    const farBlendOn = Number(tuning.airspaceFarBlend) > 0;
+                    const radialBlendOn = Number(tuning.airspaceRadialBlend) > 0;
+                    const combatContactAir = this.isCombatContactForEngageHandoff({
+                        hasContact: !!(sensor && sensor.hasContact),
+                        enemyDistance: distance,
+                        missileMaxRange
+                    });
+                    const farFightAir =
+                        farBlendOn &&
+                        Number.isFinite(distance) &&
+                        distance >= (Number(tuning.farReengageDist) || 150) &&
+                        !!(sensor && (sensor.hasContact || sensor.hasMemory || passiveSearchBearing));
+                    const clearMin = Number(tuning.airspaceSoftBlendClearMin);
+                    const clearOk = hardClearance >= (Number.isFinite(clearMin) ? clearMin : 70);
+                    const bandMaxSoft = Number(tuning.combatBandMax) || 92;
+                    const highAltRimSoft = altitude >= bandMaxSoft - 4;
+                    // Far+warn+outbound: blend even when high — prevents cruise-off-map (T83/T76).
+                    const farRimBlend =
+                        farFightAir &&
+                        (pressure.band === 'warn' || pressure.band === 'soft') &&
+                        outboundDot > 0.35 &&
+                        !nearHard;
+                    // Close fight + radial outbound (T100): blend inward even at high alt — do not wait for dist≥180.
+                    const radialRimBlend =
+                        radialBlendOn &&
+                        (pressure.band === 'warn' || pressure.band === 'soft') &&
+                        outboundDot > 0.42 &&
+                        !nearHard &&
+                        clearOk &&
+                        (combatContactAir || !!(sensor && (sensor.hasContact || sensor.hasMemory || passiveSearchBearing)));
+                    if (
+                        !forceHardRim &&
+                        softBlendOn &&
+                        (
+                            (
+                                pressure.band === 'warn' &&
+                                !nearHard &&
+                                clearOk &&
+                                combatContactAir &&
+                                !highAltRimSoft
+                            ) ||
+                            farRimBlend ||
+                            radialRimBlend
+                        )
+                    ) {
+                        const inwardSideSoft = this.resolveAirspaceInwardSide(teamId, rim.crossY, turnNo, 12, {
+                            outboundDot
+                        });
+                        const punchSoft = outboundDot > 0.65;
+                        const rimBoost = farRimBlend || radialRimBlend;
+                        const authSoft = rimBoost
+                            ? (punchSoft ? 0.52 : 0.42)
+                            : (punchSoft ? 0.36 : 0.28);
+                        decideSoftHints.airspaceBlend = {
+                            joyX: this.clamp(inwardSideSoft * authSoft, -0.58, 0.58),
+                            joyY: rimBoost || highAltRimSoft
+                                ? this.clamp(altitude > bandMaxSoft ? -0.22 : -0.08, -0.35, 0.05)
+                                : (altitude < 28 ? 0.1 : 0.04),
+                            weight: rimBoost ? (punchSoft ? 0.58 : 0.48) : (punchSoft ? 0.42 : 0.32),
+                            clear: Math.round(hardClearance)
+                        };
+                        tree.push(
+                            `airspaceSoftBlend: stash=1 band=${pressure.band} r=${pressure.radial.toFixed(1)} outDot=${outboundDot.toFixed(2)} clear=${hardClearance.toFixed(0)} contact=${combatContactAir ? 1 : 0} far=${farRimBlend ? 1 : 0} radial=${radialRimBlend ? 1 : 0}`
+                        );
+                        return null;
+                    }
+                }
+                const inwardSide = this.resolveAirspaceInwardSide(
+                    teamId,
+                    rim.crossY,
+                    turnNo,
+                    forceHardRim || pressure.band === 'outside' ? 20 : 12,
+                    {
+                        outboundDot,
+                        freezeOutside:
+                            pressure.band === 'outside' ||
+                            (Number.isFinite(hardClearance) && hardClearance < 15) ||
+                            (forceHardRim && outboundDot > 0.25)
+                    }
+                );
                 // Auth scales with outbound punch: gentle when tangent/inward, firm when outDot≈1 (T100).
                 const punchOut = outboundDot > 0.65;
-                const tangentHold = outboundDot < 0.18;
+                const outsideBand = pressure.band === 'outside';
+                // T147: forceHard but outDot 0.4–0.62 dropped punchOut → weak commit (jx≈−0.5 thr4 jy=+0.12)
+                // while radial kept growing. Sustain hard punch until nose is clearly inward.
+                const stillOutbound = outboundDot > 0.35;
+                const sustainHardPunch =
+                    forceHardRim && (punchOut || stillOutbound || outsideBand);
+                const tangentHold = outboundDot < 0.18 && !forceHardRim && !outsideBand;
                 const bandMax = Number(tuning.combatBandMax) || 92;
                 const bandHard = Number(tuning.combatBandHardMax) || 108;
                 const highAltRim = altitude >= bandMax - 4;
                 const hardHighRim = altitude >= bandHard - 6;
                 let auth;
                 let reasonTag;
-                if (highAltRim && (nearHard || punchOut || hardClearance < 90)) {
+                if (sustainHardPunch && !outsideBand) {
+                    auth = 0.62 + 0.16 * urgency;
+                    reasonTag = 'forceHard punch-in';
+                } else if (forceHardRim && !outsideBand && punchOut) {
+                    auth = 0.58 + 0.14 * urgency;
+                    reasonTag = 'forceHard punch-in';
+                } else if (highAltRim && (nearHard || punchOut || hardClearance < 90) && !sustainHardPunch) {
                     // T69: high/hardHigh on rim — inward bank + controlled descend (not punch-out thrash).
                     auth = nearHard ? 0.52 + 0.12 * urgency : 0.42 + 0.12 * urgency;
                     reasonTag = hardHighRim
@@ -11626,58 +19486,134 @@ window.AirArenaAI = {
                 } else if (punchOut) {
                     auth = 0.40 + 0.14 * urgency;
                     reasonTag = 'punch-out committed';
-                } else if (nearHard) {
+                } else if (nearHard && !forceHardRim) {
                     auth = 0.38 + 0.14 * urgency;
                     reasonTag = 'commit inward near hard';
+                } else if (nearHard && forceHardRim) {
+                    // forceHard but outDot soft — still punch, never weak commit (T147 oscillation).
+                    auth = 0.58 + 0.14 * urgency;
+                    reasonTag = 'forceHard punch-in';
                 } else {
                     auth = 0.30 + 0.12 * urgency;
                     reasonTag = 'gentle committed inward';
                 }
-                const joyCap = (punchOut && nearHard) || (highAltRim && nearHard) ? 0.68 : 0.58;
-                const joyX = this.clamp(inwardSide * auth, -joyCap, joyCap);
+                const joyCap = (punchOut && nearHard) || outsideBand || forceHardRim || (highAltRim && nearHard) ? 0.72 : 0.58;
+                let joyX = this.clamp(inwardSide * auth, -joyCap, joyCap);
+                // T128 blue: forceHard/outside punch-in held jx≈−0.7 thr4 while radial 390→493 (outDot≈1).
+                // Need max bank + energy dump for a real U-turn — shallow roll PI/8 cannot arrest outbound.
+                // T147: sustain whenever forceHard + still outbound (not only outDot>0.65).
+                const hardPunchIn =
+                    outsideBand ||
+                    sustainHardPunch ||
+                    (forceHardRim && punchOut) ||
+                    (punchOut && nearHard && outboundDot > 0.85);
+                // T150b: outside/punch at combat alt used climb joyY≈0.12 and kept drifting out.
+                if (outsideBand) {
+                    auth = Math.max(auth, punchOut || stillOutbound ? 0.92 : 0.78);
+                    reasonTag = punchOut || stillOutbound ? 'outside punch-in' : 'outside commit inward';
+                    joyX = this.clamp(inwardSide * auth, -0.95, 0.95);
+                } else if (sustainHardPunch || (forceHardRim && punchOut)) {
+                    auth = Math.max(auth, outboundDot > 0.55 ? 0.9 : 0.82);
+                    reasonTag = 'forceHard punch-in';
+                    joyX = this.clamp(inwardSide * auth, -0.92, 0.92);
+                } else if (punchOut && nearHard && !highAltRim) {
+                    auth = Math.max(auth, outboundDot > 0.85 ? 0.82 : 0.62);
+                    reasonTag = 'punch-out near hard';
+                    joyX = this.clamp(inwardSide * auth, -0.88, 0.88);
+                }
                 let joyY;
-                if (highAltRim && (nearHard || hardClearance < 100)) {
-                    // Bleed altitude back toward combat band while turning in (T69 joyY was safety-stolen).
+                if (hardPunchIn || outsideBand || (forceHardRim && stillOutbound)) {
+                    // Never climb while hard-punching (T147 jy=+0.12 + fy>0.5 while r↑).
                     joyY = this.clamp(
-                        hardHighRim ? -0.38 : (altitude > bandMax + 20 ? -0.32 : -0.22),
-                        -0.48,
-                        -0.12
+                        altitude < 32 ? 0.1 : (altitude > bandMax ? -0.28 : -0.08),
+                        -0.42,
+                        0.12
+                    );
+                    if (highAltRim || hardHighRim) {
+                        joyY = this.clamp(
+                            outsideBand || hardHighRim ? -0.52 : -0.32,
+                            -0.58,
+                            -0.16
+                        );
+                    }
+                } else if (highAltRim && (nearHard || punchOut || hardClearance < 100)) {
+                    // T137: actually descend — prior pitchCmd sign fought joyY and climbed to ~173.
+                    const dive =
+                        hardHighRim
+                            ? -0.52
+                            : (altitude > bandMax + 30 ? -0.42 : -0.28);
+                    joyY = this.clamp(dive, -0.58, -0.16);
+                } else if (punchOut && nearHard) {
+                    // Combat-band punch-out: level / slight descend, never climb while punching out.
+                    joyY = this.clamp(
+                        altitude < 32 ? 0.14 : (altitude > bandMax ? -0.18 : -0.04),
+                        -0.28,
+                        0.18
                     );
                 } else {
                     joyY = this.clamp(0.08 + (altitude < 28 ? 0.18 : 0.04), -0.2, 0.45);
                 }
+                // T112 blue2: rim kept jy=-0.2 while fy→-0.9 into city — level once already steep.
+                const fyRim = Number(selfForward && selfForward.y);
+                if (Number.isFinite(fyRim) && fyRim < -0.45) {
+                    joyY = Math.max(Number(joyY) || 0, fyRim < -0.7 ? 0.52 : 0.36);
+                    reasonTag = `${reasonTag}+diveLevel`;
+                }
                 const heatLvl = typeof getEngineHeatLevel === 'function' ? getEngineHeatLevel(self.heat) : Number(self.heat || 0);
-                // Punch-out: prefer MIL (4) for turn rate; tangent: thr5 to drive inward.
+                // Hard punch-in: thr2–3 for turn radius; high-alt outside still dumps energy.
                 const thr = heatLvl > 86
                     ? 3
-                    : (heatLvl > 78
-                        ? 4
-                        : (tangentHold && !highAltRim ? 5 : (punchOut || nearHard || highAltRim ? 4 : 5)));
+                    : (hardPunchIn
+                        ? (outboundDot > 0.85 ? 2 : 3)
+                        : ((outsideBand || hardHighRim) && highAltRim
+                            ? 3
+                            : (outsideBand
+                                ? 4
+                                : (heatLvl > 78
+                                    ? 4
+                                    : (tangentHold && !highAltRim ? 5 : (punchOut || nearHard || highAltRim ? 4 : 5))))));
+                // pitchCmd: negative = nose-down in chain convention (see non-high path).
+                let pitchCmdRim = highAltRim
+                    ? -maxPitchCmd * (outsideBand || hardHighRim ? 0.45 : 0.32)
+                    : (outsideBand || (punchOut && nearHard)
+                        ? -maxPitchCmd * 0.2
+                        : -maxPitchCmd * 0.08);
+                if (Number.isFinite(fyRim) && fyRim < -0.45) {
+                    pitchCmdRim = -maxPitchCmd * (fyRim < -0.7 ? 0.48 : 0.32);
+                }
+                const rollAuth = hardPunchIn
+                    ? (outboundDot > 0.85 ? Math.PI / 3.2 : Math.PI / 4)
+                    : (tangentHold && !highAltRim
+                        ? Math.PI / 16
+                        : (punchOut || nearHard ? Math.PI / 8 : Math.PI / 10));
                 tree.push(
-                    `airspaceGate: band=${pressure.band} r=${pressure.radial.toFixed(1)} soft=${pressure.airspace.softRadius.toFixed(0)} hard=${pressure.airspace.radius.toFixed(0)} outDot=${outboundDot.toFixed(2)} side=${inwardSide} clear=${hardClearance.toFixed(0)} auth=${auth.toFixed(2)} highAlt=${highAltRim ? 1 : 0}`
+                    `airspaceGate: band=${pressure.band} r=${pressure.radial.toFixed(1)} soft=${pressure.airspace.softRadius.toFixed(0)} hard=${pressure.airspace.radius.toFixed(0)} outDot=${outboundDot.toFixed(2)} side=${inwardSide} clear=${hardClearance.toFixed(0)} auth=${auth.toFixed(2)} highAlt=${highAltRim ? 1 : 0}${recoveringIn ? ' recover=1' : ''}${hardPunchIn ? ' hardPunch=1' : ''}`
                 );
                 return this.withDebug({
                     state: 'airspaceAvoid',
-                    statusText: pressure.band === 'warn' || pressure.band === 'outside'
-                        ? `NPC: 空域邊界迴避 ${Math.floor(pressure.radial)}m`
-                        : `NPC: 空域軟限制 ${Math.floor(pressure.radial)}m`,
+                    statusText: pressure.band === 'outside'
+                        ? `NPC: 空域越界回場 ${Math.floor(pressure.radial)}m`
+                        : (pressure.band === 'warn'
+                            ? `NPC: 空域邊界迴避 ${Math.floor(pressure.radial)}m`
+                            : `NPC: 空域軟限制 ${Math.floor(pressure.radial)}m`),
                     throttle: thr,
                     joyX,
                     joyY,
-                    pitchCmd: highAltRim
-                        ? maxPitchCmd * (hardHighRim ? 0.28 : 0.18)
-                        : -maxPitchCmd * 0.08,
-                    roll: this.clamp(
-                        inwardSide * (tangentHold && !highAltRim ? Math.PI / 16 : (punchOut || nearHard ? Math.PI / 8 : Math.PI / 10)),
-                        -Math.PI / 6,
-                        Math.PI / 6
-                    ),
+                    pitchCmd: pitchCmdRim,
+                    roll: this.clamp(inwardSide * rollAuth, -Math.PI / 3, Math.PI / 3),
                     weapon: 'gun',
                     queueAction: 'none',
                     ready: true,
-                    airspaceRimProtect: !!(nearHard || hardClearance < 70 || highAltRim),
+                    // T137: do not rim-protect forever while recovering inward at absurd altitude.
+                    // P0: forceHardRim / outside always protect so search/safety cannot steal.
+                    airspaceRimProtect: !!(
+                        forceHardRim ||
+                        outsideBand ||
+                        ((nearHard || hardClearance < 70 || (highAltRim && !recoveringIn)) &&
+                            !recoveringIn)
+                    ),
                     reason: `Soft combat-airspace rim: ${reasonTag}`
-                }, debugBase, [...tree, 'selected: airspaceAvoid'], 'airspaceAvoid');
+                }, debugBase, [...tree, `selected: airspaceAvoid joyY=${joyY.toFixed(2)} thr=${thr}${forceHardRim ? ' forceHard=1' : ''}${hardPunchIn ? ' hardPunch=1' : ''}`], 'airspaceAvoid');
             }],
             ['fox2Opening', () => {
                 // Prefer planner/emergency while urban pressure remains (少強制、優選路 — T76).
@@ -11843,6 +19779,11 @@ window.AirArenaAI = {
                         });
                         // Phase 3a: soft-yield align when bake route prefers lateral/climb (score, not hard block).
                         const fox1BakeYieldLockNow = this.getFox1BakeYieldLock(teamId, turnNo);
+                        const weaponWindowOpen = this.isWeaponWindowOpen({
+                            distance,
+                            angleDeg: angleToTargetDeg,
+                            localZ: localToEnemy.z
+                        }, tuning);
                         const softYieldAlign = alignBeforeAccel && this.shouldSoftYieldCombatForBakeRoute(coverInfo, {
                             forwardY: selfForward.y,
                             altitude,
@@ -11854,6 +19795,7 @@ window.AirArenaAI = {
                             hardContact: hardBuildingContact,
                             aiMapClearAbove: aiMapCtx.clearAbove,
                             aiMapSkyOpen: aiMapCtx.skyOpen,
+                            weaponWindowOpen,
                             combatContact: this.isCombatContactForEngageHandoff({
                                 hasContact: !!(sensor && sensor.hasContact),
                                 enemyDistance: distance,
@@ -11861,7 +19803,7 @@ window.AirArenaAI = {
                             })
                         });
                         tree.push(
-                            `alignFirstGate: need=${alignBeforeAccel ? 1 : 0} softYield=${softYieldAlign ? 1 : 0} yieldLock=${fox1BakeYieldLockNow.active ? 1 : 0} losClear=${lineOfSightBlocked ? 0 : 1} seen=${sensor.seenNow ? 1 : 0} ang=${angleToTargetDeg.toFixed(1)} lz=${localToEnemy.z.toFixed(2)} fwdY=${selfForward.y.toFixed(2)}`
+                            `alignFirstGate: need=${alignBeforeAccel ? 1 : 0} softYield=${softYieldAlign ? 1 : 0} yieldLock=${fox1BakeYieldLockNow.active ? 1 : 0} weaponWin=${weaponWindowOpen ? 1 : 0} losClear=${lineOfSightBlocked ? 0 : 1} seen=${sensor.seenNow ? 1 : 0} ang=${angleToTargetDeg.toFixed(1)} lz=${localToEnemy.z.toFixed(2)} fwdY=${selfForward.y.toFixed(2)}`
                         );
                         if (softYieldAlign) {
                             tree.push('alignFirstGate: deferred=bakeRouteScore');
@@ -11883,13 +19825,13 @@ window.AirArenaAI = {
                             !actualMissileThreat;
                         // Opening shot/align also refuse knife midair (belt after early break).
                         const openingTooClose = distance <= 18 || predictedSeparation <= 12;
+                        // Opening: require true seeker/support lock — ang<48 / z>0.52 was spraying misses.
                         const openingShotReady =
                             openingEnvelope &&
                             hasArmedMissile &&
+                            !!missileLock &&
                             distance >= missileMinRange &&
-                            distance <= Math.max(missileLockRange + 8, missileMaxRange) &&
-                            angleToTargetDeg < 48 &&
-                            localToEnemy.z > 0.52;
+                            distance <= Math.max(missileLockRange, missileMaxRange);
                         if (openingShotReady && !openingTooClose) {
                             const shootJoyX = this.resolveTurnJoyX(
                                 baseHorizontalBias * 0.4,
@@ -11915,6 +19857,17 @@ window.AirArenaAI = {
                         }
 
                         if (alignBeforeAccel && !softYieldAlign && !(openingFox2Rush || fox2PerchWindow) && !openingTooClose) {
+                            const extremeAng = Number(tuning.alignExtremeYieldAng);
+                            const extremeYield =
+                                Number.isFinite(angleToTargetDeg) &&
+                                angleToTargetDeg > (Number.isFinite(extremeAng) ? extremeAng : 95) &&
+                                coverInfo.collisionRisk !== 'high' &&
+                                !hardBuildingContact;
+                            if (extremeYield) {
+                                tree.push(
+                                    `alignFirstGate: deferred=extremeAspect ang=${angleToTargetDeg.toFixed(1)} lookW=${lookaheadWeight.toFixed(2)}`
+                                );
+                            } else {
                             const alignCtrl = this.buildAlignBeforeAccelControls({
                                 angleDeg: angleToTargetDeg,
                                 localToEnemy,
@@ -11924,23 +19877,48 @@ window.AirArenaAI = {
                                 baseHorizontalBias,
                                 collisionRisk: coverInfo.collisionRisk,
                                 coverForwardDistance: coverInfo.forwardDistance,
-                                openSkyAlign: coverInfo.collisionRisk === 'low' || !!coverInfo.corridorClear
+                                openSkyAlign: coverInfo.collisionRisk === 'low' || !!coverInfo.corridorClear,
+                                leadHx: horizontalBias,
+                                leadHy: verticalBias,
+                                leadWeight: lookaheadWeight * 0.45
                             });
                             const preferMsl = hasAnyMissile && (rangeMode === 'missile' || policyMode === 'fox2-first' || policyMode === 'fox1-first' || openingFox2Rush);
+                            const softFire = this.resolveAlignSoftFire({
+                                distance,
+                                angleDeg: angleToTargetDeg,
+                                localZ: localToEnemy.z,
+                                rangeMode,
+                                preferMissile: preferMsl,
+                                hasArmedMissile,
+                                hasAnyMissile,
+                                lineOfSightBlocked,
+                                openingTooClose
+                            }, tuning);
+                            const queueAction = softFire.queueAction || 'none';
+                            const weapon = softFire.weapon || (preferMsl ? 'missile' : 'gun');
                             return this.withDebug({
                                 state: 'alignFirst',
-                                statusText: `NPC: 先對準再加速 ${Math.floor(angleToTargetDeg)}°`,
+                                statusText: queueAction !== 'none'
+                                    ? `NPC: 對準開火 ${Math.floor(angleToTargetDeg)}°`
+                                    : `NPC: 先對準再加速 ${Math.floor(angleToTargetDeg)}°`,
                                 throttle: alignCtrl.throttle,
                                 joyX: alignCtrl.joyX,
                                 joyY: alignCtrl.joyY,
                                 pitchCmd: selfForward.y > 0.45 ? maxPitchCmd * 0.35 : undefined,
                                 roll: alignCtrl.roll,
-                                weapon: preferMsl ? 'missile' : 'gun',
-                                powerPylons: preferMsl && !hasArmedMissile,
-                                queueAction: 'none',
+                                weapon,
+                                powerPylons: !!(softFire.powerPylons || (preferMsl && !hasArmedMissile && queueAction === 'none')),
+                                queueAction,
                                 ready: true,
-                                reason: 'Clear LOS contact: align nose before accelerate'
-                            }, debugBase, [...tree, `selected: alignFirst thr=${alignCtrl.throttle} fwdY=${selfForward.y.toFixed(2)}`], 'alignFirst');
+                                reason: queueAction !== 'none'
+                                    ? `Clear LOS contact: align+fire (${softFire.note})`
+                                    : 'Clear LOS contact: align nose before accelerate'
+                            }, debugBase, [
+                                ...tree,
+                                `alignSoftFire: q=${queueAction} note=${softFire.note} ang=${angleToTargetDeg.toFixed(1)} dist=${distance.toFixed(1)} leadW=${(lookaheadWeight * 0.45).toFixed(2)}`,
+                                `selected: alignFirst thr=${alignCtrl.throttle} fwdY=${selfForward.y.toFixed(2)}`
+                            ], 'alignFirst');
+                            }
                         }
                         // During fox2 opening, still align if badly off — but keep missile powered.
                         if (alignBeforeAccel && !softYieldAlign && (openingFox2Rush || fox2PerchWindow) && !openingShotReady && !openingTooClose) {
@@ -11953,11 +19931,28 @@ window.AirArenaAI = {
                                 baseHorizontalBias,
                                 collisionRisk: coverInfo.collisionRisk,
                                 coverForwardDistance: coverInfo.forwardDistance,
-                                openSkyAlign: coverInfo.collisionRisk === 'low' || !!coverInfo.corridorClear
+                                openSkyAlign: coverInfo.collisionRisk === 'low' || !!coverInfo.corridorClear,
+                                leadHx: horizontalBias,
+                                leadHy: verticalBias,
+                                leadWeight: lookaheadWeight * 0.4
                             });
+                            const softFireOpen = this.resolveAlignSoftFire({
+                                distance,
+                                angleDeg: angleToTargetDeg,
+                                localZ: localToEnemy.z,
+                                rangeMode: 'missile',
+                                preferMissile: true,
+                                hasArmedMissile,
+                                hasAnyMissile,
+                                lineOfSightBlocked,
+                                openingTooClose
+                            }, tuning);
+                            const openQ = softFireOpen.queueAction === 'missile' ? 'missile' : 'none';
                             return this.withDebug({
                                 state: 'alignFirst',
-                                statusText: `NPC: 開局對準搶射 ${Math.floor(angleToTargetDeg)}°`,
+                                statusText: openQ === 'missile'
+                                    ? `NPC: 開局對準開火 ${Math.floor(angleToTargetDeg)}°`
+                                    : `NPC: 開局對準搶射 ${Math.floor(angleToTargetDeg)}°`,
                                 throttle: alignCtrl.throttle,
                                 joyX: alignCtrl.joyX,
                                 joyY: alignCtrl.joyY,
@@ -11966,10 +19961,16 @@ window.AirArenaAI = {
                                 weapon: 'missile',
                                 powerPylons: !hasArmedMissile,
                                 missileType: aiMissileType,
-                                queueAction: 'none',
+                                queueAction: openQ,
                                 ready: true,
-                                reason: 'Opening fox2-first: align then shoot next'
-                            }, debugBase, [...tree, `selected: alignFirst-opening thr=${alignCtrl.throttle}`], 'alignFirst');
+                                reason: openQ === 'missile'
+                                    ? `Opening align+fire (${softFireOpen.note})`
+                                    : 'Opening fox2: align while seekers power'
+                            }, debugBase, [
+                                ...tree,
+                                `alignSoftFire: q=${openQ} note=${softFireOpen.note} opening=1 ang=${angleToTargetDeg.toFixed(1)}`,
+                                `selected: alignFirst-opening thr=${alignCtrl.throttle}`
+                            ], 'alignFirst');
                         }
 
                         // Opening fox2-first: spawn is already at perch — only climb if still well below rooftops.
@@ -11984,13 +19985,14 @@ window.AirArenaAI = {
                             const turnThrottle = 3;
                             const rushThrottle = noseSeeking ? turnThrottle : abThrottle;
                             const missileAngleRadRush = (tuning.missileAngle * Math.PI / 180);
+                            // Aim-before-fire: rush must match seeker lock (was 1.45× ang / z>0.55 → spray).
                             const rushLock =
                                 aspectOk &&
                                 hasArmedMissile &&
                                 distance >= missileMinRange &&
-                                distance <= Math.max(missileLockRange + 8, missileMaxRange) &&
-                                angleToTarget <= Math.max(missileLockAngle * 1.45, missileAngleRadRush * 1.45) &&
-                                localToEnemy.z > 0.55 &&
+                                distance <= Math.max(missileLockRange, missileMaxRange) &&
+                                angleToTarget <= Math.max(missileLockAngle, missileAngleRadRush) * 1.08 &&
+                                localToEnemy.z > Math.max(0.78, missileLockNoseDot - 0.04) &&
                                 !lineOfSightBlocked;
                             const dashJoyX = this.resolveTurnJoyX(
                                 openingTurnBias * (rushLock ? 0.38 : (noseSeeking ? 1.45 : 1.2)),
@@ -12088,19 +20090,106 @@ window.AirArenaAI = {
                                 `altitudeBandGate: deferred=fox1ClosePrefer dist=${distance.toFixed(1)} max=${missileMaxRange} clear=${aiMapCtx.clearAbove ? 1 : 0}`
                             );
                         }
+                        // Soft-yield: in-envelope combat window → mild descend blended into fight, not whole gate.
+                        const bandSoftOn = Number(tuning.bandSoftCombat) > 0;
+                        const bandSoftDist = Number(tuning.bandSoftCombatDist);
+                        const bandSoftAng = Number(tuning.bandSoftCombatAngMax);
+                        const bandFarDist = Number(tuning.bandSoftCombatFarDist);
+                        const bandFarAng = Number(tuning.bandSoftCombatFarAngMax);
+                        const bandCombatWindow =
+                            bandSoftOn &&
+                            Number.isFinite(distance) &&
+                            distance > 0 &&
+                            distance <= (Number.isFinite(bandSoftDist) ? bandSoftDist : 120) &&
+                            Number.isFinite(angleToTargetDeg) &&
+                            angleToTargetDeg <= (Number.isFinite(bandSoftAng) ? bandSoftAng : 55) &&
+                            !lineOfSightBlocked &&
+                            coverInfo.collisionRisk !== 'high' &&
+                            !groundRisk &&
+                            !(Number.isFinite(selfForward.y) && selfForward.y > 0.55);
+                        // Far/high: still yield band thrash — descend while turning toward contact (T83/T76).
+                        const bandFarContact =
+                            !!(sensor && (sensor.hasContact || sensor.hasMemory)) || !!passiveSearchBearing;
+                        const bandFarReengage =
+                            bandSoftOn &&
+                            Number.isFinite(distance) &&
+                            distance > (Number.isFinite(bandSoftDist) ? bandSoftDist : 120) &&
+                            distance <= (Number.isFinite(bandFarDist) ? bandFarDist : 480) &&
+                            Number.isFinite(angleToTargetDeg) &&
+                            angleToTargetDeg <= (Number.isFinite(bandFarAng) ? bandFarAng : 155) &&
+                            bandFarContact &&
+                            coverInfo.collisionRisk !== 'high' &&
+                            !groundRisk &&
+                            !(Number.isFinite(selfForward.y) && selfForward.y > 0.62);
+                        const bandFarHigh =
+                            bandFarReengage &&
+                            (
+                                altitudeBand.needsLevelOut ||
+                                altitude >= (Number(tuning.combatBandMax) || 92) - 2
+                            );
+                        // Radial bleed + level-out: soft-yield with inward bank (T100 band thrash outDot→1).
+                        let radialBleedBand = null;
+                        if (Number(tuning.bandSoftRadialBleed) > 0 && selfPos && selfForward) {
+                            radialBleedBand = this.sampleRadialBleed(selfPos, selfForward, {
+                                tuning,
+                                teamId,
+                                turnNo
+                            });
+                        }
+                        const bandRadialBleed =
+                            radialBleedBand &&
+                            radialBleedBand.active &&
+                            altitudeBand.needsLevelOut &&
+                            coverInfo.collisionRisk !== 'high' &&
+                            !groundRisk &&
+                            !(Number.isFinite(selfForward.y) && selfForward.y > 0.62);
+                        if ((bandCombatWindow || bandFarHigh || bandRadialBleed) && (altitudeBand.needsLevelOut || bandFarHigh || bandRadialBleed)) {
+                            const inwardJx = bandRadialBleed && radialBleedBand.inwardSide
+                                ? this.clamp(
+                                    radialBleedBand.inwardSide * (radialBleedBand.deep ? 0.55 : 0.42),
+                                    -0.68,
+                                    0.68
+                                )
+                                : (bandFarReengage ? this.clamp(horizontalBias * 0.9, -0.75, 0.75) : undefined);
+                            decideSoftHints.bandSoftCombat = {
+                                joyY: altitudeBand.needsLevelOut
+                                    ? altitudeBand.levelOutJoyY
+                                    : -0.16,
+                                joyX: inwardJx,
+                                weight: bandRadialBleed ? 0.58 : (bandFarReengage ? 0.52 : 0.42),
+                                excess: Number(altitudeBand.excess.toFixed(1)),
+                                far: bandFarReengage ? 1 : 0,
+                                radial: bandRadialBleed ? 1 : 0
+                            };
+                            tree.push(
+                                `bandSoftCombat: defer=1${bandFarReengage ? ' far=1' : ''}${bandRadialBleed ? ' radial=1' : ''} dist=${distance.toFixed(1)} ang=${angleToTargetDeg.toFixed(1)} excess=${altitudeBand.excess.toFixed(1)}${bandRadialBleed ? ` rFrac=${radialBleedBand.radialFrac.toFixed(2)} od=${radialBleedBand.outDot.toFixed(2)}` : ''}`
+                            );
+                        }
                         if (
                             altitudeBand.needsLevelOut &&
                             !fox1ClosePrefer &&
+                            !bandCombatWindow &&
+                            !bandFarHigh &&
+                            !bandRadialBleed &&
                             !groundRisk &&
                             coverInfo.collisionRisk !== 'high' &&
                             !offenseAssist.deferLevelOut &&
                             !openingFox2Rush
                         ) {
+                            // Defense-in-depth: if somehow still hard level-out while outbound, bank inward.
+                            let levelJoyX = this.clamp(horizontalBias * 0.18, -0.28, 0.28);
+                            if (radialBleedBand && radialBleedBand.active && radialBleedBand.inwardSide) {
+                                levelJoyX = this.clamp(
+                                    radialBleedBand.inwardSide * (radialBleedBand.deep ? 0.48 : 0.34),
+                                    -0.58,
+                                    0.58
+                                );
+                            }
                             return this.withDebug({
                                 state: 'altitudeBandLevelOut',
                                 statusText: `NPC: 作戰高度回收 ${altitude.toFixed(1)}m`,
                                 throttle: getEngineHeatLevel(self.heat) > 78 ? 3 : (altitudeBand.levelOutThrottle || 4),
-                                joyX: this.clamp(horizontalBias * 0.18, -0.28, 0.28),
+                                joyX: levelJoyX,
                                 joyY: altitudeBand.levelOutJoyY,
                                 pitchCmd: maxPitchCmd * altitudeBand.levelOutPitch,
                                 roll: 0,
@@ -12236,6 +20325,11 @@ window.AirArenaAI = {
                             hardContact: hardBuildingContact,
                             aiMapClearAbove: aiMapCtx.clearAbove,
                             aiMapSkyOpen: aiMapCtx.skyOpen,
+                            weaponWindowOpen: this.isWeaponWindowOpen({
+                                distance,
+                                angleDeg: angleToTargetDeg,
+                                localZ: localToEnemy.z
+                            }, tuning),
                             combatContact: this.isCombatContactForEngageHandoff({
                                 hasContact: !!(sensor && sensor.hasContact),
                                 enemyDistance: distance,
@@ -12257,36 +20351,61 @@ window.AirArenaAI = {
                         if (shallowDiveLevel && !offenseAssist.deferLevelOut && !deferShallowForOpening && !actualMissileThreat && !softYieldShallow) {
                             // Soft nose-up only; keep turning toward target instead of freezing joyX=0.
                             const preferMissile = rangeMode === 'missile' && hasAnyMissile && distance > tuning.gunRange + 8;
-                            const nearMissileLock =
+                            const missileAngleRadShallow = (tuning.missileAngle * Math.PI / 180);
+                            // Aim-before-fire: true seeker lock only (was 1.35× ang / z>0.7 → fake Attack).
+                            const shallowShootLock =
                                 preferMissile &&
                                 hasArmedMissile &&
-                                distance <= missileLockRange + 8 &&
-                                angleToTarget <= Math.max(missileLockAngle * 1.35, (tuning.missileAngle * Math.PI / 180)) &&
-                                localToEnemy.z > 0.7 &&
+                                !!missileLock &&
+                                distance >= missileMinRange &&
+                                distance <= Math.min(missileMaxRange, missileLockRange + 4) &&
+                                angleToTarget <= Math.max(missileLockAngle, missileAngleRadShallow) &&
+                                localToEnemy.z > missileLockNoseDot &&
                                 !lineOfSightBlocked;
                             const divePullY = selfForward.y < -0.45
                                 ? this.clamp(0.42 + Math.min(0.28, Math.abs(selfForward.y) * 0.4), 0.42, 0.7)
                                 : this.clamp(0.18 + Math.min(0.22, Math.abs(selfForward.y) * 0.35), 0.12, 0.4);
                             const diveBankCap = selfForward.y < -0.45 ? 0.32 : 0.7;
-                            return this.withDebug({
-                                state: nearMissileLock ? 'missileAttack' : 'shallowDiveLevel',
-                                statusText: nearMissileLock
-                                    ? `NPC: 改平 FOX-2 ${Math.floor(distance)}m`
+                            let shallowAction = this.withDebug({
+                                state: shallowShootLock ? 'missileAttack' : 'shallowDiveLevel',
+                                statusText: shallowShootLock
+                                    ? `NPC: 改平鎖定 ${Math.floor(distance)}m`
                                     : `NPC: 淺俯衝改平 ${altitude.toFixed(1)}m`,
                                 throttle: getEngineHeatLevel(self.heat) > 78 ? 3 : 4,
-                                joyX: this.clamp(horizontalBias * (nearMissileLock ? 0.35 : (selfForward.y < -0.45 ? 0.28 : 0.55)), -diveBankCap, diveBankCap),
+                                joyX: this.clamp(horizontalBias * (shallowShootLock ? 0.35 : (selfForward.y < -0.45 ? 0.28 : 0.55)), -diveBankCap, diveBankCap),
                                 joyY: divePullY,
                                 pitchCmd: -maxPitchCmd * (selfForward.y < -0.45 ? 0.55 : 0.28),
                                 roll: this.clamp(horizontalBias * Math.PI / (selfForward.y < -0.45 ? 10 : 6), -Math.PI / 6, Math.PI / 6),
                                 weapon: preferMissile ? 'missile' : 'gun',
                                 powerPylons: preferMissile && !hasArmedMissile,
-                                queueAction: nearMissileLock ? 'missile' : 'none',
-                                singleMissile: nearMissileLock,
+                                missileType: aiMissileType,
+                                queueAction: shallowShootLock ? 'missile' : 'none',
+                                singleMissile: !!shallowShootLock,
                                 ready: true,
-                                reason: nearMissileLock
-                                    ? 'Shallow level-out with missile lock opportunity'
+                                reason: shallowShootLock
+                                    ? 'Shallow level-out with true missile lock (aim-before-fire)'
                                     : 'Mild dive inside combat band; level while continuing intercept'
-                            }, debugBase, [...tree, `selected: ${nearMissileLock ? 'missileAttack-shallow' : 'shallowDiveLevel'}`], nearMissileLock ? 'missileAttack' : 'shallowDiveLevel');
+                            }, debugBase, [...tree, `selected: ${shallowShootLock ? 'missileAttack-shallow' : 'shallowDiveLevel'}`], shallowShootLock ? 'missileAttack' : 'shallowDiveLevel');
+                            if (shallowShootLock && aiMissileType === 'fox1') {
+                                shallowAction = this.gateFox1MissileShoot(teamId, liveSelf || self, shallowAction, {
+                                    altitude: selfPos.y,
+                                    angleDeg: angleToTargetDeg,
+                                    distance,
+                                    lineOfSightBlocked,
+                                    localToEnemy,
+                                    enemyPos: trackedEnemyPos,
+                                    enemyForward: trackedEnemyForward,
+                                    enemyAp: enemy.ap || enemy.speed || 120,
+                                    selfForward,
+                                    assistedVelocity,
+                                    arenaMode,
+                                    urbanArenaMode,
+                                    aiMapSkyOpen: aiMapCtx.skyOpen,
+                                    aiMapSarhPerch: aiMapCtx.sarhPerch,
+                                    aiMapClearAbove: aiMapCtx.clearAbove
+                                });
+                            }
+                            return shallowAction;
                         }
                 return null;
             }],
@@ -12317,7 +20436,34 @@ window.AirArenaAI = {
                         coverDistStall >= 14
                     );
                 if (softUrbanEnergyBleed) {
-                    const recoverJoyX = this.clamp(horizontalBias * 0.12, -0.22, 0.22);
+                    const expandRecover = this.allowsExpandedStallAttitude(coverInfo, {
+                        stalled: !!self.stalled,
+                        energyCritical: true,
+                        altitude,
+                        forwardY: selfForward.y,
+                        coverDistance: coverDistStall,
+                        roofClearance: coverInfo.roofClearance,
+                        hardChokeKind: coverInfo.hardChokeKind,
+                        aiMapClearAbove: aiMapCtx.clearAbove,
+                        aiMapSkyOpen: aiMapCtx.skyOpen,
+                        hardContact: hardBuildingContact
+                    });
+                    const recoverJoyX = expandRecover
+                        ? this.clamp(
+                            (Number.isFinite(urbanAvoidSide) ? urbanAvoidSide : Math.sign(horizontalBias) || 1) * 0.36 +
+                                horizontalBias * 0.12,
+                            -0.48,
+                            0.48
+                        )
+                        : this.clamp(horizontalBias * 0.12, -0.22, 0.22);
+                    let recoverJoyY = selfForward.y > 0.2
+                        ? (expandRecover ? -0.32 : -0.22)
+                        : (Number(tuning.recoverPitchBias) || -0.2);
+                    if (expandRecover && altitude < 28 && selfForward.y < -0.1) {
+                        recoverJoyY = Math.max(recoverJoyY, 0.28);
+                    } else if (expandRecover && altitude < 36) {
+                        recoverJoyY = Math.max(recoverJoyY, -0.12);
+                    }
                     const recoverThr = this.pickThrottleForTurn(
                         getEngineHeatLevel(self.heat) > 78 ? 3 : 5,
                         recoverJoyX,
@@ -12333,14 +20479,16 @@ window.AirArenaAI = {
                         statusText: `NPC: 城區能量回收 AP ${Math.floor(self.ap)}`,
                         throttle: Math.min(recoverThr, 5),
                         joyX: recoverJoyX,
-                        joyY: selfForward.y > 0.2 ? -0.22 : (Number(tuning.recoverPitchBias) || -0.2),
-                        pitchCmd: selfForward.y > 0.2 ? maxPitchCmd * 0.18 : -maxPitchCmd * 0.08,
-                        roll: 0,
+                        joyY: recoverJoyY,
+                        pitchCmd: recoverJoyY < 0 ? maxPitchCmd * 0.22 : -maxPitchCmd * 0.12,
+                        roll: this.clamp(recoverJoyX * Math.PI / 10, -Math.PI / 10, Math.PI / 10),
                         weapon: 'gun',
                         queueAction: 'none',
                         ready: true,
-                        reason: 'H7 urban soft pressure: energyRecover before weave spiral'
-                    }, debugBase, [...tree, `selected: energyRecover-urbanSoft clear=${bakeClearStall ? 1 : 0} stalled=${self.stalled ? 1 : 0} ap=${Math.floor(self.ap)}`], 'energyRecover');
+                        reason: expandRecover
+                            ? 'H7 urban soft pressure: energyRecover expand attitude (off-table)'
+                            : 'H7 urban soft pressure: energyRecover before weave spiral'
+                    }, debugBase, [...tree, `selected: energyRecover-urbanSoft clear=${bakeClearStall ? 1 : 0} expand=${expandRecover ? 1 : 0} stalled=${self.stalled ? 1 : 0} ap=${Math.floor(self.ap)}`], 'energyRecover');
                 }
                 // When stalled/low-energy with real building pressure, route around — but ECO thr/stick.
                 if (urbanBuildingEscape && (stallTrap || self.stalled || energyCritical)) {
@@ -12370,6 +20518,18 @@ window.AirArenaAI = {
                         );
                     }
                     const diveDirt = altitude < 18 && selfForward.y < -0.12;
+                    const expandStall = this.allowsExpandedStallAttitude(coverInfo, {
+                        stalled: true,
+                        energyCritical: true,
+                        altitude,
+                        forwardY: selfForward.y,
+                        coverDistance: coverDistStall,
+                        roofClearance: coverInfo.roofClearance,
+                        hardChokeKind: coverInfo.hardChokeKind,
+                        aiMapClearAbove: aiMapCtx.clearAbove,
+                        aiMapSkyOpen: aiMapCtx.skyOpen,
+                        hardContact: hardBuildingContact
+                    });
                     return this.withDebug({
                         state: 'stallRecoverNoRoll',
                         statusText: `NPC: 失速繞樓脫離 AP ${Math.floor(self.ap)} ALT ${altitude.toFixed(1)}`,
@@ -12379,23 +20539,49 @@ window.AirArenaAI = {
                             stalled: true,
                             energyCritical: true
                         }),
-                        joyX: this.clamp(urbanAvoidSide * (diveDirt ? 0.42 : 0.4), -0.48, 0.48),
-                        joyY: diveDirt ? 0.35 : (selfForward.y > 0.18 ? -0.18 : 0.12),
-                        pitchCmd: diveDirt ? -maxPitchCmd * 0.35 : (selfForward.y > 0.18 ? maxPitchCmd * 0.22 : -maxPitchCmd * 0.12),
+                        joyX: this.clamp(
+                            urbanAvoidSide * (diveDirt ? (expandStall ? 0.52 : 0.42) : (expandStall ? 0.5 : 0.4)),
+                            expandStall ? -0.58 : -0.48,
+                            expandStall ? 0.58 : 0.48
+                        ),
+                        joyY: diveDirt
+                            ? (expandStall ? 0.48 : 0.35)
+                            : (selfForward.y > 0.18 ? (expandStall ? -0.28 : -0.18) : (expandStall ? 0.2 : 0.12)),
+                        pitchCmd: diveDirt
+                            ? -maxPitchCmd * (expandStall ? 0.45 : 0.35)
+                            : (selfForward.y > 0.18 ? maxPitchCmd * (expandStall ? 0.3 : 0.22) : -maxPitchCmd * 0.12),
                         roll: this.clamp(urbanAvoidSide * Math.PI / 9, -Math.PI / 9, Math.PI / 9),
                         weapon: 'gun',
                         queueAction: 'none',
                         ready: true,
-                        reason: 'Urban stall: mild lateral around buildings (ECO, not thrash)'
-                    }, debugBase, [...tree, 'selected: stallRecover-aroundBuildings'], 'stallRecoverNoRoll');
+                        reason: expandStall
+                            ? 'Urban stall: expand lateral around buildings (off-table)'
+                            : 'Urban stall: mild lateral around buildings (ECO, not thrash)'
+                    }, debugBase, [...tree, `selected: stallRecover-aroundBuildings expand=${expandStall ? 1 : 0}`], 'stallRecoverNoRoll');
                 }
 
                 if (stallTrap && coverInfo.collisionRisk !== 'high') {
                             // Pull only when diving into open dirt; nose-high stall unloads.
                             const divingIntoDirt = altitude < 22 && selfForward.y < -0.1;
                             const noseHighStall = selfForward.y > 0.18;
+                            const expandStall = this.allowsExpandedStallAttitude(coverInfo, {
+                                stalled: true,
+                                energyCritical: true,
+                                altitude,
+                                forwardY: selfForward.y,
+                                coverDistance: coverDistStall,
+                                roofClearance: coverInfo.roofClearance,
+                                hardChokeKind: coverInfo.hardChokeKind,
+                                aiMapClearAbove: aiMapCtx.clearAbove,
+                                aiMapSkyOpen: aiMapCtx.skyOpen,
+                                hardContact: hardBuildingContact
+                            });
                             const unloadPitch = divingIntoDirt ? 0.08 : (altitude > 40 ? 0.4 : 0.18);
-                            const breakJoyX = this.clamp(horizontalBias * (divingIntoDirt ? 0.12 : 0.28), -0.28, 0.28);
+                            const breakJoyX = this.clamp(
+                                horizontalBias * (divingIntoDirt ? (expandStall ? 0.22 : 0.12) : (expandStall ? 0.42 : 0.28)),
+                                expandStall ? -0.48 : -0.28,
+                                expandStall ? 0.48 : 0.28
+                            );
                             const breakThr = divingIntoDirt
                                 ? (getEngineHeatLevel(self.heat) > 86 ? 4 : 5)
                                 : this.pickThrottleForTurn(
@@ -12410,16 +20596,22 @@ window.AirArenaAI = {
                                     : `NPC: 失速改出 AP ${Math.floor(self.ap)} FWDY ${selfForward.y.toFixed(2)}`,
                                 throttle: breakThr,
                                 joyX: breakJoyX,
-                                joyY: divingIntoDirt ? 0.42 : (noseHighStall || altitude > 40 ? -0.4 : -0.08),
-                                pitchCmd: divingIntoDirt ? -maxPitchCmd * 0.4 : maxPitchCmd * unloadPitch,
-                                roll: 0,
+                                joyY: divingIntoDirt
+                                    ? (expandStall ? 0.55 : 0.42)
+                                    : (noseHighStall || altitude > 40 ? (expandStall ? -0.48 : -0.4) : (expandStall ? -0.18 : -0.08)),
+                                pitchCmd: divingIntoDirt ? -maxPitchCmd * (expandStall ? 0.5 : 0.4) : maxPitchCmd * unloadPitch,
+                                roll: expandStall ? this.clamp(breakJoyX * Math.PI / 10, -Math.PI / 10, Math.PI / 10) : 0,
                                 weapon: 'gun',
                                 queueAction: 'none',
                                 ready: true,
                                 reason: divingIntoDirt
-                                    ? 'Open-ground dive stall: level before impact'
-                                    : 'Break stall by unloading nose and rebuilding airflow'
-                            }, debugBase, [...tree, `selected: stallBreakout diveDirt=${divingIntoDirt ? 1 : 0}`], 'stallBreakout');
+                                    ? (expandStall
+                                        ? 'Open-ground dive stall: expand attitude level (off-table)'
+                                        : 'Open-ground dive stall: level before impact')
+                                    : (expandStall
+                                        ? 'Break stall with expanded unload authority (off-table)'
+                                        : 'Break stall by unloading nose and rebuilding airflow')
+                            }, debugBase, [...tree, `selected: stallBreakout diveDirt=${divingIntoDirt ? 1 : 0} expand=${expandStall ? 1 : 0}`], 'stallBreakout');
                         }
 
                         if (self.stalled && coverInfo.collisionRisk !== 'high') {
@@ -12427,24 +20619,36 @@ window.AirArenaAI = {
                             const lowAltRecover = altitude < 26;
                             const divingStall = selfForward.y < -0.12;
                             const noseHigh = selfForward.y > 0.22;
+                            const expandStall = this.allowsExpandedStallAttitude(coverInfo, {
+                                stalled: true,
+                                energyCritical: true,
+                                altitude,
+                                forwardY: selfForward.y,
+                                coverDistance: coverDistStall,
+                                roofClearance: coverInfo.roofClearance,
+                                hardChokeKind: coverInfo.hardChokeKind,
+                                aiMapClearAbove: aiMapCtx.clearAbove,
+                                aiMapSkyOpen: aiMapCtx.skyOpen,
+                                hardContact: hardBuildingContact
+                            });
                             const recoverPitchCmd = divingIntoDirt
-                                ? -maxPitchCmd * 0.45
+                                ? -maxPitchCmd * (expandStall ? 0.55 : 0.45)
                                 : (noseHigh && altitude >= 20
-                                    ? maxPitchCmd * 0.28
+                                    ? maxPitchCmd * (expandStall ? 0.36 : 0.28)
                                     : (lowAltRecover && divingStall
-                                        ? -maxPitchCmd * 0.28
+                                        ? -maxPitchCmd * (expandStall ? 0.36 : 0.28)
                                         : maxPitchCmd * 0.26));
                             const recoveryThrottle = divingIntoDirt
                                 ? this.getEmergencyRecoveryThrottle(altitude, selfForward.y, (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(self.heat) : (self.heat || 0)))
                                 : this.pickThrottleForTurn(3, 0.45, { heat: (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(self.heat) : (self.heat || 0)), ap: self.ap, stalled: true, energyCritical: true });
                             const recoverJoyX = divingIntoDirt
-                                ? this.clamp(horizontalBias * 0.18, -0.24, 0.24)
-                                : this.clamp(horizontalBias * 0.42, -0.48, 0.48);
+                                ? this.clamp(horizontalBias * (expandStall ? 0.32 : 0.18), expandStall ? -0.42 : -0.24, expandStall ? 0.42 : 0.24)
+                                : this.clamp(horizontalBias * (expandStall ? 0.55 : 0.42), expandStall ? -0.58 : -0.48, expandStall ? 0.58 : 0.48);
                             const recoverJoyY = divingIntoDirt
-                                ? 0.42
+                                ? (expandStall ? 0.55 : 0.42)
                                 : (noseHigh
-                                    ? -0.22
-                                    : (lowAltRecover && divingStall ? 0.28 : -0.34));
+                                    ? (expandStall ? -0.36 : -0.22)
+                                    : (lowAltRecover && divingStall ? (expandStall ? 0.38 : 0.28) : (expandStall ? -0.42 : -0.34)));
                             return this.withDebug({
                                 state: 'stallRecoverNoRoll',
                                 statusText: divingIntoDirt
@@ -12461,11 +20665,17 @@ window.AirArenaAI = {
                                 queueAction: 'none',
                                 ready: true,
                                 reason: divingIntoDirt
-                                    ? 'Open-ground dive stall: level, do not vertical-thrash'
+                                    ? (expandStall
+                                        ? 'Open-ground dive stall: expand level authority (off-table)'
+                                        : 'Open-ground dive stall: level, do not vertical-thrash')
                                     : (noseHigh
-                                        ? 'Stall recovery: unload steep nose with ECO turn'
-                                        : 'Stall recovery with ECO turn authority (Phase A)')
-                            }, debugBase, [...tree, `selected: stallRecoverNoRoll diveDirt=${divingIntoDirt ? 1 : 0} noseHigh=${noseHigh ? 1 : 0}`], 'stallRecoverNoRoll');
+                                        ? (expandStall
+                                            ? 'Stall recovery: expand unload authority (off-table)'
+                                            : 'Stall recovery: unload steep nose with ECO turn')
+                                        : (expandStall
+                                            ? 'Stall recovery with expanded ECO turn authority (off-table)'
+                                            : 'Stall recovery with ECO turn authority (Phase A)'))
+                            }, debugBase, [...tree, `selected: stallRecoverNoRoll diveDirt=${divingIntoDirt ? 1 : 0} noseHigh=${noseHigh ? 1 : 0} expand=${expandStall ? 1 : 0}`], 'stallRecoverNoRoll');
                         }
 
                         if (energyCritical && altitude > 18 && coverInfo.collisionRisk !== 'high') {
@@ -12569,7 +20779,7 @@ window.AirArenaAI = {
                                 coverInfo.collisionRisk === 'high'
                             );
                             if (
-                                this.shouldHandoffEscapeToEngage(coverInfo, {
+                                this.resolveEngageHandoffDefer(coverInfo, {
                                     altitude,
                                     forwardY: selfForward.y,
                                     hardContact: hardBuildingContact,
@@ -12579,8 +20789,10 @@ window.AirArenaAI = {
                                         hasContact: !!(sensor && sensor.hasContact),
                                         enemyDistance: distance,
                                         missileMaxRange
-                                    })
-                                }) ||
+                                    }),
+                                    altitudeLane,
+                                    tuning
+                                }, tree).ok ||
                                 aiMapUrbanClear
                             ) {
                                 const contactHandoff = this.isCombatContactForEngageHandoff({
@@ -12636,17 +20848,22 @@ window.AirArenaAI = {
                                 ? this.clamp(urbanAvoidSide * (lowAltitude ? 0.22 : 0.42), -0.5, 0.5)
                                 : this.clamp(urbanAvoidSide * 0.68, -0.75, 0.75);
                             const escapeJoyY = lowAltitude ? 0.52 : (disengage ? 0.34 : (energyLow ? 0.24 : 0.18));
-                            const flareWhileEscape =
-                                actualMissileThreat &&
-                                canUseFlare &&
-                                flareCooldownReady &&
-                                !shouldSaveFlare &&
-                                !lineOfSightBlocked &&
-                                altitude >= 14;
+                            const escapeCm = this.resolveEscapeCountermeasure({
+                                altitude,
+                                actualMissileThreat,
+                                canUseFlare,
+                                flareCooldownReady,
+                                shouldSaveFlare,
+                                canUseChaff,
+                                chaffCooldownReady,
+                                shouldSaveChaff,
+                                shouldChaffNow,
+                                lineOfSightBlocked
+                            });
                             return this.withDebug({
-                                state: flareWhileEscape ? 'defensiveFlare' : (disengage ? 'obstacleDisengage' : 'collisionAvoid'),
-                                statusText: flareWhileEscape
-                                    ? `NPC: 避撞熱焰 ${debugBase.coverForwardDistance}m`
+                                state: escapeCm ? escapeCm.state : (disengage ? 'obstacleDisengage' : 'collisionAvoid'),
+                                statusText: escapeCm
+                                    ? `NPC: ${escapeCm.statusPrefix} ${debugBase.coverForwardDistance}m`
                                     : (disengage ? `NPC: 建築脫離 AP ${Math.floor(self.ap)}` : `NPC: 建築物避撞 ${debugBase.coverForwardDistance}m`),
                                 throttle: getEngineHeatLevel(self.heat) > 78 ? 3 : (lowAltitude || energyLow ? 5 : 4),
                                 joyX: escapeJoyX,
@@ -12654,12 +20871,12 @@ window.AirArenaAI = {
                                 pitchCmd: -maxPitchCmd * (lowAltitude ? 0.55 : 0.34),
                                 roll: this.clamp(escapeJoyX * Math.PI / 6, -Math.PI / 9, Math.PI / 9),
                                 weapon: 'gun',
-                                queueAction: flareWhileEscape ? 'flare' : 'none',
+                                queueAction: escapeCm ? escapeCm.queueAction : 'none',
                                 ready: true,
-                                reason: flareWhileEscape
-                                    ? 'Actual missile threat: flare while collision-avoiding'
+                                reason: escapeCm
+                                    ? `Actual missile threat: ${escapeCm.reasonSuffix.replace('building-escaping', 'collision-avoiding')}`
                                     : (disengage ? 'Disengage from obstacle instead of circling into stall' : 'Immediate building collision risk')
-                            }, debugBase, [...tree, `selected: ${flareWhileEscape ? 'defensiveFlare-collisionEscape' : (disengage ? 'obstacleDisengage' : 'collisionAvoid')}`], flareWhileEscape ? 'defensiveFlare' : (disengage ? 'obstacleDisengage' : 'collisionAvoid'));
+                            }, debugBase, [...tree, `selected: ${escapeCm ? `${escapeCm.state}-collisionEscape` : (disengage ? 'obstacleDisengage' : 'collisionAvoid')}`], escapeCm ? escapeCm.state : (disengage ? 'obstacleDisengage' : 'collisionAvoid'));
                         }
 
                         if (overrideMode === 'evade' && (self.ap < 85 || self.stalled || altitude < 12)) {
@@ -12810,15 +21027,17 @@ window.AirArenaAI = {
                             const climbSide = navClimbOut.side || urbanAvoidSide || breakSide || 0;
                             return this.withDebug(
                                 this.buildNavClimbOutAction({
-                                    altitude,
+altitude,
                                     forwardY: selfForward.y,
                                     heat: (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(self.heat) : (self.heat || 0)),
                                     side: climbSide,
                                     targetAlt: navClimbOut.targetAlt || tuning.combatBandMin || 35,
                                     maxPitchCmd,
                                     source: navClimbOut.source || 'engagementSafety',
-                                    coverInfo
-                                }),
+                                    coverInfo,
+                            teamId,
+                            turnNo
+                        }),
                                 debugBase,
                                 [...tree, 'selected: postGroundClimbOut-engagementSafety'],
                                 'postGroundClimbOut'
@@ -12843,19 +21062,35 @@ window.AirArenaAI = {
                             const routedSurvive = this.pickUrbanRoute(teamId, urbanRouteCtx, debugBase, tree);
                             if (routedSurvive) return routedSurvive;
                             const climbSide = urbanAvoidSide || breakSide || 1;
+                            const tableSkim =
+                                /table/i.test(String(engageBuildingBlock || '')) ||
+                                this.shouldYieldClimbOutToTableEscape(coverInfo, {
+                                    altitude,
+                                    forwardY: selfForward.y,
+                                    hardChokeKind: coverInfo.hardChokeKind,
+                                    roofClearance: coverInfo.roofClearance,
+                                    coverDistance: coverInfo.distance,
+                                    headroom: coverInfo.headroom,
+                                    aiMapClearAbove: aiMapCtx.clearAbove,
+                                    aiMapSkyOpen: aiMapCtx.skyOpen
+                                });
+                            // Soft skim under table — climb joyY=0.36 smashed into underside then dirt.
+                            const surviveJoyY = tableSkim
+                                ? (altitude < 16 ? 0.18 : (altitude < 36 ? 0.1 : 0.06))
+                                : (altitude < 36 ? 0.36 : 0.22);
                             return this.withDebug({
                                 state: 'urbanRouteEscape',
                                 statusText: `NPC: 建築生存讓路 ${debugBase.coverDistance}m`,
                                 throttle: getEngineHeatLevel(self.heat) > 78 ? 3 : 4,
-                                joyX: this.clamp(climbSide * 0.42, -0.55, 0.55),
-                                joyY: altitude < 36 ? 0.36 : 0.22,
-                                pitchCmd: -maxPitchCmd * 0.28,
+                                joyX: this.clamp(climbSide * (tableSkim ? 0.55 : 0.42), -0.65, 0.65),
+                                joyY: surviveJoyY,
+                                pitchCmd: -maxPitchCmd * (tableSkim ? 0.12 : 0.28),
                                 roll: this.clamp(climbSide * Math.PI / 10, -Math.PI / 10, Math.PI / 10),
                                 weapon: 'gun',
                                 queueAction: 'none',
                                 ready: true,
                                 reason: `Engagement deferred for building survival (${engageBuildingBlock})`
-                            }, debugBase, [...tree, 'selected: urbanRouteEscape-buildingSurvival'], 'urbanRouteEscape');
+                            }, debugBase, [...tree, `selected: urbanRouteEscape-buildingSurvival${tableSkim ? ' tableSkim=1' : ''}`], 'urbanRouteEscape');
                         }
                 const imminentMerge = distance < 42 && closureSpeed > 0.12;
                         const riskyHeadOn = distance < 95 && headOnFactor > 0.46 && predictedSeparation < 32;
@@ -12871,9 +21106,9 @@ window.AirArenaAI = {
                             coverInfo.collisionRisk !== 'high' &&
                             (
                                 knifeMidair ||
-                                (distance < 38 && predictedSeparation < 26) ||
-                                (distance < 28 && closureSpeed > 0.1) ||
-                                (headOnFactor > 0.55 && predictedSeparation < 22)
+                                (distance < 44 && predictedSeparation < 28) ||
+                                (distance < 32 && closureSpeed > 0.08) ||
+                                (headOnFactor > 0.52 && predictedSeparation < 24)
                             );
                         const forwardCommitWindow =
                             !lineOfSightBlocked &&
@@ -12909,26 +21144,62 @@ window.AirArenaAI = {
                         // Missile envelope comes before orbit cut-in so FOX-2 can arm/lock instead of gun-only circling.
                         const missileAngleRadEarly = (tuning.missileAngle * Math.PI / 180);
                         const forceMissileOverride = overrideMode === 'missile' && hasAnyMissile;
-                        const inMissileEnvelope =
+                        // Prep may own wider aspect than shoot — T21 live ang~108 fell to cruise outside PI*0.55.
+                        const inMissileRangeBand =
                             hasAnyMissile &&
                             (forceMissileOverride || rangeMode === 'missile') &&
                             distance >= missileMinRange &&
                             distance <= Math.max(missileMaxRange, missileLockRange + 8) &&
-                            angleToTarget < Math.PI * 0.55 &&
                             !lineOfSightBlocked &&
                             coverInfo.collisionRisk !== 'high' &&
                             !groundRisk &&
                             !energyCritical;
-                        const earlyMissileLock =
+                        const inMissileEnvelope =
+                            inMissileRangeBand &&
+                            angleToTarget < Math.PI * 0.55;
+                        const inMissilePrepAspect =
+                            inMissileRangeBand &&
+                            angleToTarget < Math.PI * 0.72;
+                        const fox2Seeker =
+                            aiMissileType !== 'fox1';
+                        // Aim-before-fire: early nose nearer true seeker lock (was FOX-2 0.66 → spray).
+                        const earlyNoseDot = fox2Seeker ? 0.78 : 0.74;
+                        const earlyMissileLockRaw =
                             hasArmedMissile &&
                             distance > 25 &&
                             distance <= missileLockRange &&
                             angleToTarget <= Math.max(missileLockAngle, missileAngleRadEarly) &&
-                            localToEnemy.z > 0.72 &&
+                            localToEnemy.z > earlyNoseDot &&
                             !lineOfSightBlocked;
-                        // Front-aspect FOX-2 is weak, but do not ban all head-on shots outside knife-fight merge.
-                        const frontAspectHardBan = headOnFactor > 0.62 && predictedSeparation < 28;
-                        if (inMissileEnvelope && !frontAspectHardBan && (overrideMode === 'missile' || overrideMode === 'auto')) {
+                        // Hold Prep↔Attack queue after lock (T21/T82) — do NOT widen shoot cone.
+                        const lockHoldPrev = this.missileLockHoldMemory[teamId] || null;
+                        const lockHoldActive =
+                            !!(lockHoldPrev && Number(lockHoldPrev.untilTurn) >= turnNo);
+                        const earlyMissileLockHold =
+                            lockHoldActive &&
+                            hasArmedMissile &&
+                            distance > 25 &&
+                            distance <= missileLockRange + 8 &&
+                            angleToTarget <= Math.max(missileLockAngle, missileAngleRadEarly) * 1.12 &&
+                            localToEnemy.z > (fox2Seeker ? 0.7 : 0.66) &&
+                            !lineOfSightBlocked;
+                        // Shoot needs raw lock or hold-with-aim; fat hold alone no longer authorizes fire.
+                        const earlyShootLock =
+                            earlyMissileLockRaw ||
+                            (
+                                earlyMissileLockHold &&
+                                angleToTarget <= Math.max(missileLockAngle, missileAngleRadEarly) &&
+                                localToEnemy.z > earlyNoseDot
+                            );
+                        const earlyMissileLock = earlyMissileLockRaw || earlyMissileLockHold;
+                        if (earlyMissileLockRaw) {
+                            this.missileLockHoldMemory[teamId] = { untilTurn: turnNo + 2 };
+                        }
+                        // Front-aspect FOX-2 is weak; widen ban slightly vs FOX-1 (weapon knife).
+                        const frontAspectHardBan = fox2Seeker
+                            ? (headOnFactor > 0.55 && predictedSeparation < 36)
+                            : (headOnFactor > 0.62 && predictedSeparation < 28);
+                        if ((inMissileEnvelope || inMissilePrepAspect) && !frontAspectHardBan && (overrideMode === 'missile' || overrideMode === 'auto')) {
                             // T109: soft-yield prep/attack dive into urban roofs before canyon.
                             const softYieldMissile = this.shouldSoftYieldCombatForBakeRoute(coverInfo, {
                                 forwardY: selfForward.y,
@@ -12943,6 +21214,11 @@ window.AirArenaAI = {
                                 hardContact: hardBuildingContact,
                                 aiMapClearAbove: aiMapCtx.clearAbove,
                                 aiMapSkyOpen: aiMapCtx.skyOpen,
+                                weaponWindowOpen: this.isWeaponWindowOpen({
+                                    distance,
+                                    angleDeg: angleToTargetDeg,
+                                    localZ: localToEnemy.z
+                                }, tuning),
                                 combatContact: this.isCombatContactForEngageHandoff({
                                     hasContact: !!(sensor && sensor.hasContact),
                                     enemyDistance: distance,
@@ -12952,7 +21228,55 @@ window.AirArenaAI = {
                             if (softYieldMissile) {
                                 tree.push('missileGate: deferred=bakeRouteScore diveUrban');
                             } else {
-                            let shouldShootMissile = earlyMissileLock && !frontAspectHardBan;
+                            // Only shoot inside tight envelope + aim lock (not fat lock-hold alone).
+                            let shouldShootMissile =
+                                inMissileEnvelope && earlyShootLock && !frontAspectHardBan;
+                            // Prep timeout: do not cruise-prep forever (SOFT B / Prep≫Attack).
+                            const prepTimeoutN = Number(tuning.missilePrepTimeoutTurns) || 3;
+                            const prepShootAng = Number(tuning.missilePrepTimeoutShootAng) || 34;
+                            const prepGunPad = Number(tuning.missilePrepTimeoutGunDistPad) || 28;
+                            let prepTimeoutYield = false;
+                            if (shouldShootMissile) {
+                                this.missilePrepStreakMemory[teamId] = { streak: 0, turnNo };
+                            } else if (inMissilePrepAspect || inMissileEnvelope) {
+                                const prevPrep = this.missilePrepStreakMemory[teamId] || { streak: 0 };
+                                const streak = (Number(prevPrep.streak) || 0) + 1;
+                                this.missilePrepStreakMemory[teamId] = { streak, turnNo };
+                                if (
+                                    streak >= prepTimeoutN &&
+                                    hasArmedMissile &&
+                                    distance <= missileLockRange + 4 &&
+                                    angleToTargetDeg <= Math.min(prepShootAng, fox2Seeker ? 24 : 22) &&
+                                    localToEnemy.z > (fox2Seeker ? 0.78 : 0.74) &&
+                                    !lineOfSightBlocked
+                                ) {
+                                    shouldShootMissile = true;
+                                    tree.push(`missileGate: prepTimeoutShoot=1 streak=${streak} ang=${angleToTargetDeg.toFixed(1)}`);
+                                } else if (
+                                    streak >= prepTimeoutN &&
+                                    distance < this.gunRangeOr(tuning) + prepGunPad
+                                ) {
+                                    // Prefer gun sooner when aspect still soft (aim-before-fire).
+                                    prepTimeoutYield = true;
+                                    tree.push(`missileGate: deferred=prepTimeoutGun streak=${streak} dist=${distance.toFixed(1)}`);
+                                }
+                            } else if (this.missilePrepStreakMemory[teamId]) {
+                                delete this.missilePrepStreakMemory[teamId];
+                            }
+                            if (prepTimeoutYield) {
+                                // Fall through to gun/tactical instead of another prep cruise.
+                            } else {
+                            if (earlyMissileLockRaw) {
+                                tree.push(`missileGate: lock=1 holdUntil=${turnNo + 2}`);
+                            } else if (earlyShootLock && earlyMissileLockHold) {
+                                tree.push(`missileGate: lockHoldAim=1 until=${lockHoldPrev.untilTurn}`);
+                            } else if (earlyMissileLockHold) {
+                                tree.push(`missileGate: lockHold=1 prepOnly until=${lockHoldPrev.untilTurn}`);
+                            } else if (inMissilePrepAspect && !inMissileEnvelope) {
+                                tree.push(
+                                    `missileGate: prepAspect ang=${angleToTargetDeg.toFixed(1)} (wide reclaim)`
+                                );
+                            }
                             const fox1Prep = aiMissileType === 'fox1';
                             let prepJoyX;
                             let prepJoyY;
@@ -12982,12 +21306,14 @@ window.AirArenaAI = {
                                     prepJoyY = Math.max(prepJoyY, 0.4);
                                 }
                             } else {
+                                // Wide-aspect reclaim: commit harder turn-in so Prep is not a cruise substitute.
+                                const wideReclaim = inMissilePrepAspect && !inMissileEnvelope;
                                 prepJoyX = this.resolveTurnJoyX(
-                                    horizontalBias * (shouldShootMissile ? 0.35 : 1.1),
+                                    horizontalBias * (shouldShootMissile ? 0.35 : (wideReclaim ? 1.35 : 1.1)),
                                     localToEnemy,
                                     angleToTargetDeg,
                                     urbanAvoidSide || breakSide,
-                                    shouldShootMissile ? 0.28 : 0.7
+                                    shouldShootMissile ? 0.28 : (wideReclaim ? 0.85 : 0.7)
                                 );
                                 prepJoyY = this.clamp(
                                     shouldShootMissile
@@ -13015,7 +21341,9 @@ window.AirArenaAI = {
                                 ready: true,
                                 reason: shouldShootMissile
                                     ? 'Missile seeker lock in envelope'
-                                    : 'Power pylons and nose toward target before orbit/gun logic'
+                                    : (inMissilePrepAspect && !inMissileEnvelope
+                                        ? 'Power pylons and reclaim aspect before orbit/gun logic'
+                                        : 'Power pylons and nose toward target before orbit/gun logic')
                             }, debugBase, [...tree, `selected: ${shouldShootMissile ? 'missileAttack-early' : 'missilePrep-early'}`], shouldShootMissile ? 'missileAttack' : 'missilePrep');
                             if (fox1Prep && shouldShootMissile) {
                                 earlyAction = this.gateFox1MissileShoot(teamId, liveSelf || self, earlyAction, {
@@ -13038,6 +21366,7 @@ window.AirArenaAI = {
                             }
                             return earlyAction;
                             }
+                            }
                         }
 
                         // 平时战术接近（n-step）：无紧急时取代裸 orbit/reacquire/searchIntercept。
@@ -13055,10 +21384,37 @@ window.AirArenaAI = {
                             knifeMidair ||
                             coverInfo.collisionRisk === 'high' ||
                             reliableGunWindow ||
-                            (earlyMissileLock && !frontAspectHardBan);
+                            (earlyMissileLock && !frontAspectHardBan) ||
+                            // T133: belt — steep dive never lag-pursues even if groundRisk edge-misses.
+                            (Number.isFinite(selfForward.y) && selfForward.y < -0.55 && altitude < 72);
                         const tapEligible =
                             sensor.hasContact || sensor.hasMemory || !!passiveSearchBearing;
-                        const buildTapCtx = () => ({
+                        const buildTapCtx = () => {
+                            let airspaceOutbound = false;
+                            let airspaceWarn = false;
+                            let radialBleed = null;
+                            try {
+                                if (typeof getAirspacePressure === 'function') {
+                                    const ap = getAirspacePressure(selfPos);
+                                    if (ap && ap.airspace && ap.airspace.enabled && ap.band !== 'clear') {
+                                        airspaceWarn = ap.band === 'warn' || ap.band === 'outside';
+                                        const rim = this.sampleAirspaceRimGeometry(selfPos, selfForward, ap);
+                                        airspaceOutbound = Number(rim.outboundDot) > 0.45;
+                                    }
+                                }
+                                radialBleed = this.sampleRadialBleed(selfPos, selfForward, {
+                                    tuning,
+                                    teamId,
+                                    turnNo
+                                });
+                                if (radialBleed && radialBleed.active) {
+                                    airspaceOutbound = airspaceOutbound || radialBleed.outDot > 0.45;
+                                    airspaceWarn = airspaceWarn ||
+                                        radialBleed.band === 'warn' ||
+                                        radialBleed.band === 'outside';
+                                }
+                            } catch (_) { /* ignore */ }
+                            return {
                             sensorContact: !!sensor.hasContact,
                             sensorMemory: !!(sensor.hasMemory && !sensor.seenNow),
                             passiveSearch: !!passiveSearchBearing,
@@ -13098,8 +21454,14 @@ window.AirArenaAI = {
                             envelopeSample: urbanRouteCtx.envelopeSample,
                             hardContact: !!hardBuildingContact,
                             hardBuilding: !!hardBuildingContact,
+                            airspaceOutbound,
+                            airspaceWarn,
+                            radialBleed,
+                            hasAnyMissile: !!hasAnyMissile,
+                            policyMode,
                             debugTree: tree
-                        });
+                        };
+                        };
                         if (!skipTacticalApproach && tapEligible) {
                             const tap = this.pickTacticalApproach(teamId, buildTapCtx(), debugBase, tree);
                             if (tap) return tap;
@@ -13109,7 +21471,14 @@ window.AirArenaAI = {
                             );
                         }
 
-                        if (orbitStalemate && coverInfo.collisionRisk !== 'high' && !groundRisk && !navClimbOut.active) {
+                        if (
+                            orbitStalemate &&
+                            coverInfo.collisionRisk !== 'high' &&
+                            !groundRisk &&
+                            !navClimbOut.active &&
+                            // T112 blue2: orbitCutIn while fy≈-0.85–0.94 into facade bowl.
+                            !(Number.isFinite(selfForward.y) && selfForward.y < -0.45)
+                        ) {
                             const openSkyOrbitBoost = !urbanArenaMode && coverInfo.collisionRisk === 'low' ? 1.25 : 1.0;
                             const cutGain = (1.08 + tuning.interceptTurnGain * 0.35) * openSkyOrbitBoost;
                             const preferMissileCut = rangeMode === 'missile' && hasAnyMissile && distance > tuning.gunRange + 8;
@@ -13229,7 +21598,10 @@ window.AirArenaAI = {
                                 energyBad: energyLow || energyCritical,
                                 stalled: !!self.stalled,
                                 ap: self.ap,
-                                denseUrban: this.isDenseUrbanContext(arenaMode, this.getObstacles())
+                                denseUrban: this.isDenseUrbanContext(arenaMode, this.getObstacles()),
+                                forwardY: selfForward.y,
+                                aiMapClearAbove: !!(aiMapCtx && aiMapCtx.clearAbove),
+                                aiMapSkyOpen: !!(aiMapCtx && aiMapCtx.skyOpen)
                             });
                             // Soft fallback only when planner null and climb is not the score preference.
                             if (
@@ -13268,17 +21640,22 @@ window.AirArenaAI = {
                                 !shouldSaveFlare &&
                                 altitude >= 14 &&
                                 distance > 10;
-                            const mergeSide = this.getMidairDivergeSide({
+                            // Prefer shared builder so dive+facade uses level-out / away-from-mesh (T150 00:47).
+                            const mergeBuilt = this.buildCloseMidairBreakAction({
+                                distance,
+                                altitude,
+                                forwardY: selfForward.y,
                                 localToEnemy,
                                 breakSide: urbanAvoidSide || breakSide,
-                                teamId
+                                teamId,
+                                turnNo,
+                                heat: (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(self.heat) : (self.heat || 0)),
+                                ap: self.ap,
+                                lowAp: tuning.lowAp,
+                                faction: GameContext.getFaction && GameContext.getFaction(teamId),
+                                coverInfo,
+                                selfForward
                             });
-                            const mergeJoyX = this.clamp(mergeSide * (hardBreak ? 0.95 : 0.72), -1, 1);
-                            const mergeThr = this.pickThrottleForTurn(
-                                getEngineHeatLevel(self.heat) > 76 ? 3 : 4,
-                                mergeJoyX,
-                                { heat: (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(self.heat) : (self.heat || 0)), ap: self.ap, lowAp: tuning.lowAp }
-                            );
                             return this.withDebug({
                                 state: flareOnMerge ? 'defensiveFlare' : (hardBreak ? 'mandatoryMergeBreak' : 'mergeBreak'),
                                 statusText: flareOnMerge
@@ -13286,17 +21663,18 @@ window.AirArenaAI = {
                                     : (knifeMidair
                                         ? `NPC: 近距避撞 ${Math.floor(distance)}m`
                                         : `NPC: 迎頭避撞 ${Math.floor(distance)}m`),
-                                throttle: mergeThr,
-                                joyX: mergeJoyX,
-                                joyY: altitude < 24 ? 0.34 : (hardBreak ? 0.12 : 0.04),
-                                roll: this.clamp(mergeSide * (hardBreak ? Math.PI / 4 : Math.PI / 5), -Math.PI / 4, Math.PI / 5),
+                                throttle: mergeBuilt.throttle,
+                                joyX: mergeBuilt.joyX,
+                                joyY: mergeBuilt.joyY,
+                                roll: mergeBuilt.roll,
                                 weapon: 'gun',
                                 queueAction: flareOnMerge ? 'flare' : 'none',
                                 ready: true,
+                                diveLevelPull: !!mergeBuilt.diveLevelPull,
                                 reason: flareOnMerge
                                     ? 'Merge break with flare under actual missile threat'
-                                    : (hardBreak ? 'Mandatory deconfliction before head-on collision' : 'Break merge before missile tactics')
-                            }, debugBase, [...tree, `selected: ${flareOnMerge ? 'defensiveFlare-merge' : (hardBreak ? 'mandatoryMergeBreak' : 'mergeBreak')} thr=${mergeThr} side=${mergeSide}`], flareOnMerge ? 'defensiveFlare' : (hardBreak ? 'mandatoryMergeBreak' : 'mergeBreak'));
+                                    : (mergeBuilt.reason || (hardBreak ? 'Mandatory deconfliction before head-on collision' : 'Break merge before missile tactics'))
+                            }, debugBase, [...tree, `selected: ${flareOnMerge ? 'defensiveFlare-merge' : (hardBreak ? 'mandatoryMergeBreak' : 'mergeBreak')} thr=${mergeBuilt.throttle} side=${Math.sign(mergeBuilt.joyX) || 0}`], flareOnMerge ? 'defensiveFlare' : (hardBreak ? 'mandatoryMergeBreak' : 'mergeBreak'));
                         }
 
                         // Survival first — Phase A: ECO turn while rebuilding energy (no AB + joyX freeze).
@@ -13505,7 +21883,21 @@ window.AirArenaAI = {
                         tree.push(`missileThreat: active=${enemyMissileInFlight} queued=${enemyMissileQueued} ready=${enemyMissileReady} LOS=${lineOfSightBlocked} level=${threatLevel} score=${threatScore.toFixed(2)} evade=${missileThreatEvade} flare=${flareAmmoNow} chaff=${chaffAmmoNow} flareNow=${shouldFlareNow ? 1 : 0} chaffNow=${shouldChaffNow ? 1 : 0} paint=${underSarhPaintNow ? 1 : 0} inF1=${inboundFox1 ? 1 : 0} inF2=${inboundFox2 ? 1 : 0} commit=${canOffensiveCommit}`);
                         if ((missileThreatEvade || shouldChaffNow || underSarhPaintNow) && !canOffensiveCommit) {
                             const cmNow = shouldChaffNow || shouldFlareNow;
-                            const useMaskPoint = maskUsable && !cmNow && (flareAmmoNow > 0 || chaffAmmoNow > 0);
+                            // T80: trigger hard break on paint/queued — waiting for d<115 was too late.
+                            const inboundTooClose =
+                                Number.isFinite(distance) &&
+                                (
+                                    (actualMissileThreat && distance < 145) ||
+                                    (underSarhPaintNow && (inboundFox1 || actualMissileThreat) && distance < 165) ||
+                                    (enemyMissileQueued && fox1CmThreat && distance < 150) ||
+                                    (underSarhPaintNow && threatLevel === 'high' && distance < 130)
+                                );
+                            const useMaskPoint =
+                                maskUsable &&
+                                !cmNow &&
+                                !inboundTooClose &&
+                                !(inboundFox1 && (actualMissileThreat || underSarhPaintNow)) &&
+                                (flareAmmoNow > 0 || chaffAmmoNow > 0);
                             const maskState = maskInfo.masked ? 'maskedHold' : maskInfo.state;
                             const maskDirection = maskInfo.direction;
                             const maskJoyX = maskDirection ? this.clamp(maskDirection.x * (maskState === 'maskIngress' ? 0.95 : 0.55), -0.8, 0.8) : this.clamp(horizontalBias * 0.2, -0.35, 0.35);
@@ -13514,22 +21906,36 @@ window.AirArenaAI = {
                             const emptyCmPanic = actualMissileThreat && !canUseFlare && !canUseChaff;
                             const panicSide = urbanAvoidSide || breakSide;
                             const beamForSarh = shouldChaffNow || inboundFox1 || underSarhPaintNow;
+                            const hardInboundBreak =
+                                inboundTooClose ||
+                                ((inboundFox1 || underSarhPaintNow) && (actualMissileThreat || enemyMissileQueued) && !cmNow);
                             const evadeJoyX = useMaskPoint
                                 ? maskJoyX
-                                : (emptyCmPanic
-                                    ? this.clamp((-horizontalBias * 0.25) + (0.95 * panicSide), -1, 1)
+                                : (emptyCmPanic || hardInboundBreak
+                                    ? this.clamp((-horizontalBias * 0.2) + (0.98 * panicSide), -1, 1)
                                     : (beamForSarh
-                                        ? this.clamp((-horizontalBias * 0.35) + (0.72 * (urbanAvoidSide || breakSide)), -1, 1)
+                                        ? this.clamp((-horizontalBias * 0.35) + (0.78 * (urbanAvoidSide || breakSide)), -1, 1)
                                         : this.clamp((-horizontalBias * 0.85) + (0.45 * breakSide), -1, 1)));
                             const evadeJoyY = useMaskPoint
                                 ? maskJoyY
-                                : (emptyCmPanic
+                                : (emptyCmPanic || hardInboundBreak
                                     ? (steepClimb || selfForward.y > 0.35
                                         ? -0.22
-                                        : (altitude < 20 ? 0.42 : 0.12))
+                                        : (altitude < 20 ? 0.42 : 0.18))
                                     : (altitude < 14 ? 0.6 : this.clamp(verticalBias * 0.2 + 0.25, -0.25, 0.55)));
-                            const cmState = shouldChaffNow ? 'defensiveChaff' : (shouldFlareNow ? 'defensiveFlare' : (useMaskPoint ? maskState : 'evade'));
+                            const cmState = shouldChaffNow
+                                ? 'defensiveChaff'
+                                : (shouldFlareNow
+                                    ? 'defensiveFlare'
+                                    : (useMaskPoint
+                                        ? maskState
+                                        : (hardInboundBreak ? 'mandatoryMergeBreak' : 'evade')));
                             const cmQueue = shouldChaffNow ? 'chaff' : (shouldFlareNow ? 'flare' : 'none');
+                            if (hardInboundBreak && !cmNow) {
+                                tree.push(
+                                    `missileThreat: hardInboundBreak=1 dist=${distance.toFixed(1)} maskSkip=1 f1=${inboundFox1 ? 1 : 0}`
+                                );
+                            }
                             return this.withDebug({
                                 state: cmState,
                                 statusText: shouldChaffNow
@@ -13538,10 +21944,14 @@ window.AirArenaAI = {
                                         ? `NPC: 飛彈威脅，釋放熱焰`
                                         : (useMaskPoint
                                             ? (maskState === 'maskIngress' ? 'NPC: 前往遮蔽點' : (maskState === 'maskedHold' ? 'NPC: 保持遮蔽' : 'NPC: 轉入遮蔽點'))
-                                            : (emptyCmPanic ? 'NPC: 無干擾硬脫離' : 'NPC: 飛彈威脅，急轉規避'))),
+                                            : (hardInboundBreak
+                                                ? 'NPC: 來彈硬切離'
+                                                : (emptyCmPanic ? 'NPC: 無干擾硬脫離' : 'NPC: 飛彈威脅，急轉規避')))),
                                 throttle: useMaskPoint
                                     ? (maskState === 'maskIngress' ? 4 : 3)
-                                    : (emptyCmPanic ? (getEngineHeatLevel(self.heat) > 78 ? 3 : 4) : (getEngineHeatLevel(self.heat) > 70 ? 3 : 4)),
+                                    : (emptyCmPanic || hardInboundBreak
+                                        ? (getEngineHeatLevel(self.heat) > 78 ? 3 : 4)
+                                        : (getEngineHeatLevel(self.heat) > 70 ? 3 : 4)),
                                 joyX: evadeJoyX,
                                 joyY: evadeJoyY,
                                 roll: useMaskPoint
@@ -13550,17 +21960,23 @@ window.AirArenaAI = {
                                 weapon: hasArmedMissile ? 'missile' : 'gun',
                                 queueAction: cmQueue,
                                 ready: true,
-                                reason: emptyCmPanic
-                                    ? 'No CM left: hard break away from inbound missile'
-                                    : (shouldChaffNow
-                                        ? 'Inbound SARH / radar paint: chaff + beam'
-                                        : (shouldFlareNow ? 'Inbound IR: flare break' : 'Likely incoming missile'))
-                            }, debugBase, [...tree, `selected: ${shouldChaffNow ? 'defensiveChaff' : (shouldFlareNow ? 'defensiveFlare' : (useMaskPoint ? maskState : (emptyCmPanic ? 'evadeEmptyCm' : 'evadeNoCm')))}`], shouldChaffNow ? 'defensiveChaff' : (shouldFlareNow ? 'defensiveFlare' : (useMaskPoint ? maskState : 'evade')));
+                                reason: hardInboundBreak && !cmNow
+                                    ? 'Inbound missile too close: hard break (no maskedHold)'
+                                    : (emptyCmPanic
+                                        ? 'No CM left: hard break away from inbound missile'
+                                        : (shouldChaffNow
+                                            ? 'Inbound SARH / radar paint: chaff + beam'
+                                            : (shouldFlareNow ? 'Inbound IR: flare break' : 'Likely incoming missile')))
+                            }, debugBase, [...tree, `selected: ${shouldChaffNow ? 'defensiveChaff' : (shouldFlareNow ? 'defensiveFlare' : (useMaskPoint ? maskState : (hardInboundBreak ? 'hardInboundBreak' : (emptyCmPanic ? 'evadeEmptyCm' : 'evadeNoCm'))))}`], shouldChaffNow ? 'defensiveChaff' : (shouldFlareNow ? 'defensiveFlare' : (useMaskPoint ? maskState : (hardInboundBreak ? 'mandatoryMergeBreak' : 'evade'))));
                         }
 
                         const stealthAdvanceWindow = !openingFox2Rush && enemyMissileReady && maskUsable && maskCoverAllowed && distance > 55 && distance < 160 && !actualMissileThreat;
-                        tree.push(`stealthAdvance: enemyMsl=${enemyMissileReady} maskUsable=${maskUsable} window=${stealthAdvanceWindow}`);
-                        if (stealthAdvanceWindow) {
+                        const roofMaskBan = this.isNegativeRoofCruiseBan(coverInfo, {
+                            forMask: true,
+                            forwardY: selfForward.y
+                        });
+                        tree.push(`stealthAdvance: enemyMsl=${enemyMissileReady} maskUsable=${maskUsable} window=${stealthAdvanceWindow}${roofMaskBan ? ` ban=${roofMaskBan}` : ''}`);
+                        if (stealthAdvanceWindow && !roofMaskBan) {
                             const maskState = maskInfo.masked ? 'maskedHold' : maskInfo.state;
                             const maskJoyX = this.clamp(maskInfo.direction.x * (maskState === 'maskIngress' ? 0.9 : 0.55), -0.75, 0.75);
                             const maskJoyY = this.clamp(maskInfo.direction.y * 0.25, -0.25, 0.25);
@@ -13614,10 +22030,12 @@ window.AirArenaAI = {
                         const openSkyMissileBonus = !urbanArenaMode && coverInfo.collisionRisk === 'low' ? 1.5 : 1.0;
                         const frontAspectPenalty = headOnFactor > 0.82 && predictedSeparation < 28;
                         const missilePrepWindow = hasAnyMissile && !hasArmedMissile && distance >= missileMinRange && distance < (missileMaxRange + (!urbanArenaMode && coverInfo.collisionRisk === 'low' ? 90 : 65)) && angleToTarget < (!urbanArenaMode && coverInfo.collisionRisk === 'low' ? Math.PI * 0.55 : Math.PI / 2) && (forceMissileOverride || rangeMode === 'missile');
+                        // Soft attack cone near doctrine maxLaunch; spawn is nose-only until arm.
+                        // Aim-before-fire: open-sky ext still needs nose (z>0.78) — was 0.7 / 1.2× ang.
                         const extendedMissileAttack = hasArmedMissile && !urbanArenaMode && coverInfo.collisionRisk === 'low' && !frontAspectPenalty &&
-                            distance >= missileMinRange && distance <= Math.min(missileMaxRange, missileLockRange + 28) &&
-                            angleToTarget <= Math.max(missileAngleRad * 1.6, missileLockAngle * 1.25) && localToEnemy.z > 0.55 && !lineOfSightBlocked;
-                        const missileAttackWindow = (hasArmedMissile && missileLock && !frontAspectPenalty && distance >= missileMinRange && distance <= Math.min(missileMaxRange, missileLockRange + 8) && angleToTarget <= Math.max(missileAngleRad * 1.25, missileLockAngle * 1.1)) || extendedMissileAttack;
+                            distance >= missileMinRange && distance <= Math.min(missileMaxRange, missileLockRange + 20) &&
+                            angleToTarget <= Math.max(missileAngleRad, missileLockAngle) * 1.08 && localToEnemy.z > 0.78 && !lineOfSightBlocked;
+                        const missileAttackWindow = (hasArmedMissile && missileLock && !frontAspectPenalty && distance >= missileMinRange && distance <= Math.min(missileMaxRange, missileLockRange + 8) && angleToTarget <= Math.max(missileAngleRad * 1.05, missileLockAngle)) || extendedMissileAttack;
                         const gunAttackActive = (overrideMode === 'gun') || gunWindow || (earlyGunWindow && !missileThreatEvade && !missilePrepWindow);
                         tree.push(`gunGate: window=${gunWindow} close=${closeDogfight} earlyGun=${earlyGunWindow} openSkyBonus=${openSkyGunBonus.toFixed(2)} override=${overrideMode === 'gun'} lead=${gunLead ? gunLead.leadTurns : 'n/a'} active=${gunAttackActive}`);
                         if (overrideMode !== 'missile' && !mandatoryMergeBreak && (rangeMode === 'gun' || gunAttackActive || closeDogfight)) {
@@ -13788,8 +22206,11 @@ window.AirArenaAI = {
                 return null;
             }]
         ]);
-        if (__pipelineAction) return __pipelineAction;
-        return this.finishDecideGate('engagement', this.withDebug({
+        if (__pipelineAction) {
+            this.applyDecideSoftHints(__pipelineAction, decideSoftHints, tree);
+            return __pipelineAction;
+        }
+        const fallback = this.finishDecideGate('engagement', this.withDebug({
             state: 'intercept',
             statusText: 'NPC: 管線後備攔截',
             throttle: 3,
@@ -13801,6 +22222,8 @@ window.AirArenaAI = {
             ready: true,
             reason: 'Decide pipeline fallback'
         }, debugBase, [...tree, 'selected: intercept-fallback'], 'intercept'));
+        this.applyDecideSoftHints(fallback, decideSoftHints, tree);
+        return fallback;
     },
 
     normalizePolicyMode(mode) {
@@ -14010,7 +22433,10 @@ window.AirArenaAI = {
             'openingRoofDash',
             'safetyStallBreakout',
             'safetyUnclimb',
-            'safetyLevelOut'
+            'safetyLevelOut',
+            // FOX-1 SARH: hybrid must never wipe illuminate nose-hold mid-flight.
+            'fox1Illuminate',
+            'fox1IlluminateBreak'
         ]);
         if (hardSafetyStates.has(action.state)) {
             action.debug = {
@@ -14023,6 +22449,29 @@ window.AirArenaAI = {
                     overridden: false,
                     lockedBySafety: true
                 }
+            };
+            return action;
+        }
+
+        // Own FOX-1 in flight: keep FSM stick — hybridPress / soft combat must not steal illuminate.
+        const fox1Team = (typeof GameContext !== 'undefined' && GameContext.getTeam)
+            ? GameContext.getTeam(teamId)
+            : null;
+        if (fox1Team && this.hasOwnFox1InFlight(fox1Team)) {
+            action.debug = {
+                ...(action.debug || {}),
+                policy: {
+                    mode,
+                    selectedState: action.state || 'unknown',
+                    baseState: action.state || 'unknown',
+                    selectedScore: null,
+                    overridden: false,
+                    lockedByFox1Illuminate: true
+                },
+                tree: [
+                    ...((action.debug && Array.isArray(action.debug.tree)) ? action.debug.tree : []),
+                    `policyEval: mode=${mode} lockedByFox1Illuminate=1 keep=${action.state || 'unknown'}`
+                ]
             };
             return action;
         }
@@ -14206,7 +22655,12 @@ window.AirArenaAI = {
                 : this.getOverheadHeadroom(selfPos);
             this.applyHeadroomClimbLimit(safeAction, headroom, {
                 altitude: selfPos.y,
-                defaultSide: (GameContext.getFaction && GameContext.getFaction(teamId)) === 'blue' ? -1 : 1
+                forwardY: selfForward && Number.isFinite(selfForward.y) ? selfForward.y : null,
+                defaultSide: (GameContext.getFaction && GameContext.getFaction(teamId)) === 'blue' ? -1 : 1,
+                coverInfo,
+                roofClearance: coverInfo.roofClearance,
+                coverDistance: coverInfo.distance,
+                hardChokeKind: coverInfo.hardChokeKind
             });
             if (!safeAction.debug) safeAction.debug = {};
             safeAction.debug.headroom = Number(Number(headroom).toFixed(1));
@@ -14348,26 +22802,77 @@ window.AirArenaAI = {
                 streak = Math.max(0, streak - 1);
             }
             const softEsc = this.isSoftObstacleEscapeState(safeAction.state);
+            const tableGlueLock = this.isTableGlueAttitudeLock(
+                {
+                    distance: coverDist,
+                    roofClearance: dbg.roofClearance,
+                    hardChokeKind: dbg.hardChokeKind
+                },
+                {
+                    altitude: altNow,
+                    coverDistance: coverDist,
+                    roofClearance: dbg.roofClearance,
+                    hardChokeKind: dbg.hardChokeKind
+                }
+            );
+            // Deep AP spiral: yield escape → energyRecover when off tableGlue (T150 red2 ap≪0).
+            const deepApSpiral =
+                softEsc &&
+                Number.isFinite(apNow) &&
+                apNow < Number(tuning.energyCriticalAp || 52) &&
+                (apNow < 12 || streak >= 1) &&
+                !tableGlueLock &&
+                !(Number.isFinite(altNow) && altNow < 10 && this.isDiveLevelPullAction(safeAction));
             const abortBleed =
                 softEsc &&
-                streak >= 2 &&
-                Number.isFinite(apNow) &&
-                apNow < Number(tuning.lowAp || 65) &&
-                !trueContact &&
-                !(Number.isFinite(coverDist) && coverDist < 14) &&
-                !(Number.isFinite(altNow) && altNow < 14) &&
-                !this.isDiveLevelPullAction(safeAction);
+                (
+                    deepApSpiral ||
+                    (
+                        streak >= 2 &&
+                        Number.isFinite(apNow) &&
+                        apNow < Number(tuning.lowAp || 65) &&
+                        !trueContact &&
+                        !(Number.isFinite(coverDist) && coverDist < 14) &&
+                        !(Number.isFinite(altNow) && altNow < 14) &&
+                        !this.isDiveLevelPullAction(safeAction)
+                    )
+                );
             if (abortBleed) {
+                const expandRecover = this.allowsExpandedStallAttitude(
+                    {
+                        distance: coverDist,
+                        roofClearance: dbg.roofClearance,
+                        hardChokeKind: dbg.hardChokeKind
+                    },
+                    {
+                        stalled: !!team.stalled,
+                        energyCritical: true,
+                        altitude: altNow,
+                        coverDistance: coverDist,
+                        roofClearance: dbg.roofClearance
+                    }
+                );
+                const side = Math.sign(Number(safeAction.joyX) || 0) || 1;
                 safeAction.state = 'energyRecover';
                 safeAction.statusText = `NPC: 逃生卸力回收 AP ${Math.floor(apNow)}`;
-                safeAction.throttle = 5;
-                safeAction.joyX = this.clamp(Number(safeAction.joyX) || 0, -0.16, 0.16);
-                safeAction.joyY = Number(tuning.recoverPitchBias) || -0.2;
+                safeAction.throttle = Math.min(5, Math.max(3, Number(safeAction.throttle) || 4));
+                safeAction.joyX = expandRecover
+                    ? this.clamp(side * 0.36, -0.48, 0.48)
+                    : this.clamp(Number(safeAction.joyX) || 0, -0.16, 0.16);
+                safeAction.joyY = expandRecover
+                    ? (Number.isFinite(altNow) && altNow < 28 ? 0.22 : (Number(tuning.recoverPitchBias) || -0.2))
+                    : (Number(tuning.recoverPitchBias) || -0.2);
                 safeAction.queueAction = 'none';
-                safeAction.reason = 'H7 escape bleed abort: energyRecover after AP-losing urban sticks';
+                safeAction.reason = deepApSpiral
+                    ? (expandRecover
+                        ? 'H7 deep-AP spiral abort: energyRecover expand attitude (off-table)'
+                        : 'H7 deep-AP spiral abort: energyRecover after urban escape bleed')
+                    : 'H7 escape bleed abort: energyRecover after AP-losing urban sticks';
                 if (!safeAction.debug) safeAction.debug = {};
                 if (Array.isArray(safeAction.debug.tree)) {
-                    safeAction.debug.tree.push(`escapeBleedAbort: streak=${streak} ap=${apNow}`);
+                    safeAction.debug.tree.push(
+                        `escapeBleedAbort: streak=${streak} ap=${apNow} deep=${deepApSpiral ? 1 : 0} expand=${expandRecover ? 1 : 0}`
+                    );
                 }
                 streak = 0;
             }
@@ -14378,14 +22883,59 @@ window.AirArenaAI = {
             };
         }
 
+        // Typed munition: always carry missileType on power/shoot so SMS dropConflicting can switch.
+        if (safeAction) {
+            const dbgType = safeAction.debug && safeAction.debug.aiMissileType;
+            const typed = safeAction.missileType || dbgType;
+            if (typed === 'fox1' || typed === 'fox2') {
+                safeAction.missileType = typed;
+            }
+            if (safeAction.powerPylons && !safeAction.missileType && dbgType) {
+                safeAction.missileType = dbgType;
+            }
+            // After a live-type switch, wrong-type may no longer be armed — do not queue a dead shot.
+            if (safeAction.queueAction === 'missile' && team && safeAction.missileType) {
+                const typeOf = (p) => (typeof pylonWeaponType === 'function' ? pylonWeaponType(p) : (p.weaponType || 'fox2'));
+                const armedWant = (team.pylons || []).some(
+                    (p) => p && p.state === 'armed' && typeOf(p) === safeAction.missileType
+                );
+                if (!armedWant) {
+                    safeAction.queueAction = 'none';
+                    safeAction.singleMissile = false;
+                    if (safeAction.powerPylons !== true && (team.pylons || []).some((p) => p && p.state === 'standby' && typeOf(p) === safeAction.missileType)) {
+                        safeAction.powerPylons = true;
+                    }
+                    if (!safeAction.debug) safeAction.debug = {};
+                    if (Array.isArray(safeAction.debug.tree)) {
+                        safeAction.debug.tree.push(
+                            `missileTypeSwitch: holdQueue want=${safeAction.missileType} (await arm)`
+                        );
+                    }
+                }
+            }
+        }
+
         // FOX-1 illuminate / reattack LAST so energy/flare/soft-urban sticks cannot wipe nose-hold.
         if (safeAction && team) {
             const dbg = safeAction.debug || {};
-            const ownMissileType = dbg.aiMissileType || safeAction.missileType || 'fox2';
+            // A3: prefer explicit fox1 on action/queue; never default away from in-flight / committing fox1.
+            let ownMissileType = dbg.aiMissileType || safeAction.missileType || null;
+            const committingNow =
+                safeAction.queueAction === 'missile' &&
+                (safeAction.missileType === 'fox1' || dbg.aiMissileType === 'fox1');
+            if (!ownMissileType && committingNow) ownMissileType = 'fox1';
+            if (!ownMissileType && this.hasOwnFox1InFlight(team)) ownMissileType = 'fox1';
+            if (!ownMissileType) ownMissileType = 'fox2';
+            if (ownMissileType === 'fox1') {
+                safeAction.missileType = 'fox1';
+                if (!safeAction.debug) safeAction.debug = {};
+                safeAction.debug.aiMissileType = 'fox1';
+            }
             const sequelActive = !!(this.fox1SequelByTeam[teamId] && this.fox1SequelByTeam[teamId].active);
             // Include wasInFlight so the frame a FOX-1 dies still enters overlay → sequel setup.
             if (
                 ownMissileType === 'fox1' ||
+                committingNow ||
                 this.hasOwnFox1InFlight(team) ||
                 sequelActive ||
                 !!this.fox1WasInFlightByTeam[teamId]
@@ -14480,7 +23030,29 @@ window.AirArenaAI = {
             }
         }
 
+        // Honest label: Attack without a queued shot reads as "firing without aiming".
+        if (safeAction && safeAction.state === 'missileAttack' && safeAction.queueAction !== 'missile') {
+            safeAction.state = 'missilePrep';
+            if (!safeAction.debug) safeAction.debug = {};
+            safeAction.debug.missileLabelDemote = 1;
+            if (Array.isArray(safeAction.debug.tree)) {
+                safeAction.debug.tree.push('missileLabel: demote=attackWithoutQueue');
+            }
+            if (safeAction.reason && String(safeAction.reason).indexOf('no queue') < 0) {
+                safeAction.reason = `${safeAction.reason} (demoted: no missile queue)`;
+            }
+        }
+
+        // Late headroom / combat-band seals must not undo soft nest |jx|/thr (T150).
+        if (safeAction) this.clampSoftUrbanStick(safeAction);
+
         GameContext.stateMachine.applyPilotAction(teamId, safeAction);
         return safeAction;
     }
 };
+
+// Live working brain — match-setup label test_01 (control baseline is Rei_03).
+window.AirArenaAIModels = window.AirArenaAIModels || {};
+window.AirArenaAIModels.test_01 = window.AirArenaAI;
+window.AirArenaAI.modelId = 'test_01';
+window.AirArenaAI.modelLabel = 'test_01';

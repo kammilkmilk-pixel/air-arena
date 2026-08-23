@@ -99,6 +99,10 @@ function uiForceHumanControlView() {
         return null;
     }
     const next = uiPickControlTeamAfterSettle(GameContext.getActiveTeamId());
+    // Save combat multi-view BEFORE selectTeam focuses a single seat.
+    if (window.AirArenaMultiView && typeof window.AirArenaMultiView.collapseForHumanPlanning === 'function') {
+        window.AirArenaMultiView.collapseForHumanPlanning(next);
+    }
     if (typeof selectTeam === 'function') {
         selectTeam(next);
     } else {
@@ -183,10 +187,10 @@ let uiMatchSetupState = {
     spawnAltitude: 45,
     spawnSeparation: 100,
     seats: {
-        'red-1': { control: 'human', loadout: 'standard', pylons: ['fox1', 'fox2', 'fox2', 'fox1'] },
-        'red-2': { control: 'ai', loadout: 'standard', pylons: ['fox1', 'fox2', 'fox2', 'fox1'] },
-        'blue-1': { control: 'ai', loadout: 'standard', pylons: ['fox1', 'fox2', 'fox2', 'fox1'] },
-        'blue-2': { control: 'ai', loadout: 'standard', pylons: ['fox1', 'fox2', 'fox2', 'fox1'] }
+        'red-1': { control: 'human', aiModel: null, loadout: 'standard', pylons: ['fox1', 'fox2', 'fox2', 'fox1'] },
+        'red-2': { control: 'ai', aiModel: 'test_01', loadout: 'standard', pylons: ['fox1', 'fox2', 'fox2', 'fox1'] },
+        'blue-1': { control: 'ai', aiModel: 'test_01', loadout: 'standard', pylons: ['fox1', 'fox2', 'fox2', 'fox1'] },
+        'blue-2': { control: 'ai', aiModel: 'test_01', loadout: 'standard', pylons: ['fox1', 'fox2', 'fox2', 'fox1'] }
     }
 };
 let uiMatchSetupBound = false;
@@ -274,21 +278,30 @@ function uiReadMatchSetupFromDom() {
     const spawnAltitude = uiSanitizeSpawnAltitude(altEl ? altEl.value : uiMatchSetupState.spawnAltitude);
     const spawnSeparation = uiSanitizeSpawnSeparation(sepEl ? sepEl.value : uiMatchSetupState.spawnSeparation);
     const seats = {
-        'red-1': { control: 'human', loadout: 'standard', pylons: ['fox1', 'fox2', 'fox2', 'fox1'] },
-        'red-2': { control: 'ai', loadout: 'standard', pylons: ['fox1', 'fox2', 'fox2', 'fox1'] },
-        'blue-1': { control: 'ai', loadout: 'standard', pylons: ['fox1', 'fox2', 'fox2', 'fox1'] },
-        'blue-2': { control: 'ai', loadout: 'standard', pylons: ['fox1', 'fox2', 'fox2', 'fox1'] }
+        'red-1': { control: 'human', aiModel: null, loadout: 'standard', pylons: ['fox1', 'fox2', 'fox2', 'fox1'] },
+        'red-2': { control: 'ai', aiModel: 'test_01', loadout: 'standard', pylons: ['fox1', 'fox2', 'fox2', 'fox1'] },
+        'blue-1': { control: 'ai', aiModel: 'test_01', loadout: 'standard', pylons: ['fox1', 'fox2', 'fox2', 'fox1'] },
+        'blue-2': { control: 'ai', aiModel: 'test_01', loadout: 'standard', pylons: ['fox1', 'fox2', 'fox2', 'fox1'] }
     };
     uiMatchSeatDefs(mode).forEach((def) => {
         const controlEl = document.getElementById(`match-control-${def.id}`);
         const loadoutEl = document.getElementById(`match-loadout-${def.id}`);
+        const parsed = (window.AirArenaAIRegistry && window.AirArenaAIRegistry.normalizeControlValue)
+            ? window.AirArenaAIRegistry.normalizeControlValue(controlEl && controlEl.value)
+            : {
+                control: (controlEl && controlEl.value === 'ai') ? 'ai' : 'human',
+                aiModel: (controlEl && controlEl.value === 'ai') ? 'test_01' : null
+            };
         seats[def.id] = {
-            control: (controlEl && controlEl.value === 'ai') ? 'ai' : 'human',
+            control: parsed.control,
+            aiModel: parsed.aiModel,
             loadout: (loadoutEl && loadoutEl.value) || 'standard',
             pylons: [1, 2, 3, 4].map((n) => {
                 const el = document.getElementById(`match-pylon-${def.id}-${n}`);
-                const v = el && el.value === 'fox1' ? 'fox1' : 'fox2';
-                return v;
+                const raw = el ? el.value : 'fox2';
+                if (raw === 'fox1') return 'fox1';
+                if (raw === 'empty') return 'empty';
+                return 'fox2';
             })
         };
     });
@@ -303,15 +316,25 @@ function uiRenderMatchSeatList() {
     const mode = uiMatchSetupState.mode;
     const defs = uiMatchSeatDefs(mode);
     list.innerHTML = defs.map((def) => {
-        const seat = uiMatchSetupState.seats[def.id] || { control: 'ai', loadout: 'standard', pylons: ['fox1', 'fox2', 'fox2', 'fox1'] };
+        const seat = uiMatchSetupState.seats[def.id] || {
+            control: 'ai',
+            aiModel: 'test_01',
+            loadout: 'standard',
+            pylons: ['fox1', 'fox2', 'fox2', 'fox1']
+        };
         const pylons = (typeof sanitizePylonLoadout === 'function')
             ? sanitizePylonLoadout(seat.pylons)
             : (seat.pylons || ['fox1', 'fox2', 'fox2', 'fox1']);
         const disabled = def.live ? '' : ' is-disabled';
         const note = def.live ? '' : ' title="此座位尚未啟用"';
+        const controlValue = (window.AirArenaAIRegistry && window.AirArenaAIRegistry.controlSelectValue)
+            ? window.AirArenaAIRegistry.controlSelectValue(seat)
+            : (seat.control === 'ai' ? (seat.aiModel || 'test_01') : 'human');
         const pylonSelects = [0, 1, 2, 3].map((i) => {
-            const w = pylons[i] === 'fox1' ? 'fox1' : 'fox2';
+            const raw = pylons[i];
+            const w = raw === 'fox1' ? 'fox1' : (raw === 'empty' ? 'empty' : 'fox2');
             return `<select id="match-pylon-${def.id}-${i + 1}" class="match-pylon-select" aria-label="${def.label} pylon ${i + 1}"${def.live ? '' : ' disabled'}>
+                <option value="empty"${w === 'empty' ? ' selected' : ''}>P${i + 1} 空</option>
                 <option value="fox2"${w === 'fox2' ? ' selected' : ''}>P${i + 1} FOX-2</option>
                 <option value="fox1"${w === 'fox1' ? ' selected' : ''}>P${i + 1} FOX-1</option>
             </select>`;
@@ -319,15 +342,18 @@ function uiRenderMatchSeatList() {
         return `
             <div class="match-seat-row${disabled}" data-seat="${def.id}"${note}>
                 <div class="match-seat-name ${def.faction}">${def.label}</div>
-                <select id="match-control-${def.id}" aria-label="${def.label} control"${def.live ? '' : ' disabled'}>
-                    <option value="human"${seat.control === 'human' ? ' selected' : ''}>人工</option>
-                    <option value="ai"${seat.control === 'ai' ? ' selected' : ''}>AI</option>
+                <select id="match-control-${def.id}" class="match-control-select" aria-label="${def.label} control"${def.live ? '' : ' disabled'}>
+                    <option value="human"${controlValue === 'human' ? ' selected' : ''}>人工</option>
+                    <option value="Rei_03"${controlValue === 'Rei_03' ? ' selected' : ''}>Rei_03</option>
+                    <option value="Rei_02"${controlValue === 'Rei_02' ? ' selected' : ''}>Rei_02</option>
+                    <option value="Rei_01"${controlValue === 'Rei_01' ? ' selected' : ''}>Rei_01</option>
+                    <option value="test_01"${controlValue === 'test_01' ? ' selected' : ''}>test_01</option>
                 </select>
                 <select id="match-loadout-${def.id}" aria-label="${def.label} loadout"${def.live ? '' : ' disabled'}>
-                    <option value="standard"${seat.loadout === 'standard' ? ' selected' : ''}>標準 (2×F1+2×F2+Gun)</option>
-                    <option value="gun-priority"${seat.loadout === 'gun-priority' ? ' selected' : ''}>機砲優先</option>
-                    <option value="fox2-priority"${seat.loadout === 'fox2-priority' ? ' selected' : ''}>FOX-2 優先</option>
-                    <option value="fox1-priority"${seat.loadout === 'fox1-priority' ? ' selected' : ''}>FOX-1 優先</option>
+                    <option value="standard"${seat.loadout === 'standard' ? ' selected' : ''}>標準</option>
+                    <option value="gun-priority"${seat.loadout === 'gun-priority' ? ' selected' : ''}>機砲</option>
+                    <option value="fox2-priority"${seat.loadout === 'fox2-priority' ? ' selected' : ''}>FOX-2</option>
+                    <option value="fox1-priority"${seat.loadout === 'fox1-priority' ? ' selected' : ''}>FOX-1</option>
                 </select>
                 <div class="match-pylon-row">${pylonSelects}</div>
             </div>
@@ -338,10 +364,10 @@ function uiRenderMatchSeatList() {
         hint.classList.remove('is-hidden');
         if (mode === '2v2') {
             hint.textContent =
-                '2v2：紅藍各兩架（RED-1/2、BLUE-1/2）。翼機可收僚機令——跟隨、攻擊我的目標、主動進攻、掩護、脫離。建議 RED-1 人工、RED-2 AI 測編隊；兩席皆可設 AI 對打。';
+                '2v2：紅藍各兩架（RED-1/2、BLUE-1/2）。控制可選人工／Rei_03（對照）／Rei_02（舊對照）／Rei_01（更早）／test_01（現行）。翼機可收僚機令。';
         } else {
             hint.textContent =
-                '1v1：紅藍各一架，適合單挑與練習武器／箔條。僅 RED-1 與 BLUE-1 參戰。';
+                '1v1：紅藍各一架。控制：人工／Rei_03（對照基準）／Rei_02（舊對照）／Rei_01（更早）／test_01（現行測試腦）。僅 RED-1 與 BLUE-1 參戰。';
         }
     }
 }
@@ -392,18 +418,12 @@ function uiBindMatchSetupOnce() {
                         ? defaultPylonLoadout()
                         : ['fox1', 'fox2', 'fox2', 'fox1']
                 );
+            } else if (preset === 'gun-priority') {
+                applyPylons(['empty', 'empty', 'empty', 'empty']);
             } else if (preset === 'fox1-priority') {
-                const vals = [1, 2, 3, 4].map((n) => {
-                    const el = document.getElementById(`match-pylon-${seatId}-${n}`);
-                    return el ? el.value : 'fox2';
-                });
-                if (vals.every((v) => v !== 'fox1')) applyPylons(['fox1', 'fox1', 'fox1', 'fox1']);
+                applyPylons(['fox1', 'fox1', 'fox1', 'fox1']);
             } else if (preset === 'fox2-priority') {
-                const vals = [1, 2, 3, 4].map((n) => {
-                    const el = document.getElementById(`match-pylon-${seatId}-${n}`);
-                    return el ? el.value : 'fox2';
-                });
-                if (vals.every((v) => v !== 'fox2')) applyPylons(['fox2', 'fox2', 'fox2', 'fox2']);
+                applyPylons(['fox2', 'fox2', 'fox2', 'fox2']);
             }
         }
         uiReadMatchSetupFromDom();
@@ -477,10 +497,10 @@ function uiShowMatchSetup() {
             spawnAltitude: 45,
             spawnSeparation: 100,
             seats: {
-                'red-1': { control: 'human', loadout: 'standard' },
-                'red-2': { control: 'ai', loadout: 'standard' },
-                'blue-1': { control: 'ai', loadout: 'standard' },
-                'blue-2': { control: 'ai', loadout: 'standard' }
+                'red-1': { control: 'human', aiModel: null, loadout: 'standard' },
+                'red-2': { control: 'ai', aiModel: 'test_01', loadout: 'standard' },
+                'blue-1': { control: 'ai', aiModel: 'test_01', loadout: 'standard' },
+                'blue-2': { control: 'ai', aiModel: 'test_01', loadout: 'standard' }
             }
         };
     }
@@ -955,7 +975,14 @@ function uiTeamLabel(teamId) {
     const t = teams[teamId];
     const seat = teamId === 'red2' ? 'RED-2' : teamId === 'blue2' ? 'BLUE-2'
         : teamId === 'blue' ? 'BLUE-1' : 'RED-1';
-    return `${seat} [${t && t.aiEnabled ? 'AI' : 'P'}]`;
+    let tag = 'P';
+    if (t && t.aiEnabled) {
+        tag = t.aiModel === 'Rei_03' ? 'Rei_03'
+            : (t.aiModel === 'Rei_02' ? 'Rei_02'
+                : (t.aiModel === 'Rei_01' ? 'Rei_01'
+                    : (t.aiModel === 'test_01' ? 'test_01' : 'AI')));
+    }
+    return `${seat} [${tag}]`;
 }
 function uiSeatIds() {
     return ['red', 'red2', 'blue', 'blue2'];
@@ -966,9 +993,20 @@ function uiIsSeatLive(teamId) {
 }
 function uiSelectSeat(teamId) {
     if (!uiIsSeatLive(teamId)) return;
-    if (typeof selectTeam === 'function') selectTeam(teamId);
+    const t = teams[teamId];
+    const crashed = !!(t && (t.isDestroyed || (typeof t.hp === 'number' && t.hp <= 0) ||
+        t.wreckPhase === 'falling' || t.wreckPhase === 'gone'));
+    if (crashed) return;
+    if (window.AirArenaMultiView && typeof window.AirArenaMultiView.toggleFromSeatButton === 'function') {
+        window.AirArenaMultiView.toggleFromSeatButton(teamId);
+    } else if (typeof selectTeam === 'function') {
+        selectTeam(teamId);
+    }
     uiRefreshTeamModeButtons();
     uiRenderTempScorePanel();
+    if (window.AirArenaMultiView && typeof window.AirArenaMultiView.syncOverlayLabels === 'function') {
+        window.AirArenaMultiView.syncOverlayLabels();
+    }
 }
 function uiSeatRowEl(teamId) {
     return document.querySelector(`.team-seat-col[data-team-id="${teamId}"], .team-seat-row[data-team-id="${teamId}"]`);
@@ -987,16 +1025,25 @@ function uiRefreshTeamModeButtons() {
         }
         if (!btn) return;
         const faction = (GameContext.getFaction && GameContext.getFaction(id)) || id;
+        const viewOpen = !!(window.AirArenaMultiView && window.AirArenaMultiView.isOpen(id));
         btn.classList.toggle('faction-red', faction === 'red');
         btn.classList.toggle('faction-blue', faction === 'blue');
         btn.classList.toggle('is-active', live && activeId === id);
+        btn.classList.toggle('is-view-open', live && viewOpen);
         btn.innerText = uiTeamLabel(id);
         btn.title = live
-            ? `左鍵選擇 ${id.toUpperCase()}；右鍵或雙擊切換 PLAYER/AI`
+            ? (viewOpen
+                ? (activeId === id
+                    ? (window.AirArenaMultiView && window.AirArenaMultiView.shouldHoldSplitForHuman && window.AirArenaMultiView.shouldHoldSplitForHuman()
+                        ? `規劃中為玩家單視角；交戰時分屏含 ${id.toUpperCase()}。再點可從分屏設定移除`
+                        : `再點一次關閉 ${id.toUpperCase()} 視角（至少保留一窗）；右鍵或雙擊切換 PLAYER/AI`)
+                    : `左鍵聚焦 ${id.toUpperCase()}；再點一次可關閉視角；右鍵或雙擊切換 PLAYER/AI`)
+                : `左鍵加入交戰分屏／打開 ${id.toUpperCase()} 視角；右鍵或雙擊切換 PLAYER/AI`)
             : '座位未啟用';
         btn.disabled = !live;
     });
 }
+window.uiRefreshTeamModeButtons = uiRefreshTeamModeButtons;
 function uiBindSeatControls(teamId) {
     const btnSel = document.getElementById(`btn-sel-${teamId}`);
     const btnEngage = document.getElementById(`btn-engage-${teamId}`);
@@ -1015,7 +1062,9 @@ function uiBindSeatControls(teamId) {
         btnEngage.addEventListener('click', () => {
             if (!uiIsSeatLive(teamId)) return;
             const t = teams[teamId];
-            if (t && t.aiEnabled) uiToggleAIDebugForTeam(teamId);
+            if (!t) return;
+            const destroyed = !!(t.isDestroyed || (typeof t.hp === 'number' && t.hp <= 0));
+            if (t.aiEnabled || destroyed) uiToggleAIDebugForTeam(teamId);
             else toggleReadyState(teamId);
         });
     }
@@ -1053,6 +1102,11 @@ function uiToggleAI(teamId) {
     const t = teams[teamId];
     if (!t || t.ready || GameContext.isAnimating() || GameContext.isReplayMode()) return;
     GameContext.stateMachine.toggleAI(teamId);
+    if (t.aiEnabled) {
+        t.aiModel = t.aiModel || ((window.AirArenaAIRegistry && window.AirArenaAIRegistry.DEFAULT_MODEL) || 'test_01');
+    } else {
+        t.aiModel = null;
+    }
     if (!t.aiEnabled && uiAIDebugExpandedTeam === teamId) uiAIDebugExpandedTeam = null;
     uiClearAutoAIBattleTimer();
     uiRefreshTeamModeButtons();
@@ -1061,8 +1115,9 @@ function uiToggleAI(teamId) {
     uiRefreshPreview(t);
     uiRefreshAIDebugPanel();
     uiRenderTempScorePanel();
+    const modelTag = t.aiEnabled ? (t.aiModel || 'AI') : '玩家';
     showSMSAlert(
-        `${teamId.toUpperCase()} ${t.aiEnabled ? '切換為 NPC AI（已對準對手）' : '切換為玩家控制'}`,
+        `${teamId.toUpperCase()} ${t.aiEnabled ? `切換為 NPC（${modelTag}）` : '切換為玩家控制'}`,
         t.aiEnabled ? '#ffbb00' : '#00ff88'
     );
     if (uiAreBothTeamsAI()) uiScheduleBothAITurn();
@@ -1070,8 +1125,11 @@ function uiToggleAI(teamId) {
 function uiRunAI(teamId) {
     const t = teams[teamId];
     if (!t || !t.aiEnabled || t.ready || t.isDestroyed || GameContext.isAnimating() || GameContext.isReplayMode()) return false;
-    if (!window.AirArenaAI) return false;
-    const action = window.AirArenaAI.run(teamId);
+    const brain = (window.AirArenaAIRegistry && window.AirArenaAIRegistry.getPilotForTeam)
+        ? window.AirArenaAIRegistry.getPilotForTeam(teamId)
+        : window.AirArenaAI;
+    if (!brain || typeof brain.run !== 'function') return false;
+    const action = brain.run(teamId);
     uiAppendAIDecisionTrail(teamId, action);
     uiAppendAIDebugTrace(teamId, action);
     updateDashboardUI(t);
@@ -1278,6 +1336,55 @@ function uiBuildCompactDecisionFrame(teamId, action) {
     };
 }
 
+function uiEmptyWeaponCounters() {
+    return {
+        schema: 'air-arena-weapon-counters-v1',
+        turns: 0,
+        mslQ: 0,
+        gunQ: 0,
+        illum: 0,
+        mslAtk: 0,
+        mslPrep: 0,
+        chaff: 0,
+        flare: 0,
+        chaffEsc: 0,
+        flareEsc: 0
+    };
+}
+
+function uiGetAIWeaponCounters(teamId) {
+    const team = uiGetAIDebugTeam(teamId);
+    if (!team) return uiEmptyWeaponCounters();
+    if (!team.aiWeaponCounters) return uiEmptyWeaponCounters();
+    return { ...team.aiWeaponCounters };
+}
+
+/** Match-long tallies; bumps once per turn (same-turn trail replace does not double-count). */
+function uiBumpWeaponCounters(team, action, frame, isNewTurn) {
+    if (!team || !action || !frame || !isNewTurn) return;
+    if (!team.aiWeaponCounters) team.aiWeaponCounters = uiEmptyWeaponCounters();
+    const c = team.aiWeaponCounters;
+    c.turns += 1;
+    const q = String(frame.queue || action.queueAction || 'none');
+    if (q === 'missile') c.mslQ += 1;
+    if (q === 'gun') c.gunQ += 1;
+    const st = String(frame.state || action.state || '');
+    const reason = String(frame.reason || action.reason || '');
+    if (st === 'fox1Illuminate' || /illuminate/i.test(reason)) c.illum += 1;
+    if (st === 'missileAttack' || /^missileAttack[-_]/i.test(st)) c.mslAtk += 1;
+    if (st === 'missilePrep' || /^missilePrep[-_]/i.test(st)) c.mslPrep += 1;
+    const escaping = /escape|Escape|obstacleEmergency|urbanRouteEscape|building-escaping|chaff while building|flare while building/i
+        .test(`${st} ${reason}`);
+    if (frame.chaff) {
+        c.chaff += 1;
+        if (escaping) c.chaffEsc += 1;
+    }
+    if (frame.flare) {
+        c.flare += 1;
+        if (escaping) c.flareEsc += 1;
+    }
+}
+
 function uiAppendAIDecisionTrail(teamId, action) {
     const team = uiGetAIDebugTeam(teamId);
     if (!team || !team.aiEnabled || !action) return;
@@ -1287,11 +1394,13 @@ function uiAppendAIDecisionTrail(teamId, action) {
     const frame = uiBuildCompactDecisionFrame(teamId, action);
     if (!frame) return;
     const last = team.aiDecisionTrail[team.aiDecisionTrail.length - 1];
-    if (last && last.turn === frame.turn) {
+    const isNewTurn = !(last && last.turn === frame.turn);
+    if (!isNewTurn) {
         team.aiDecisionTrail[team.aiDecisionTrail.length - 1] = frame;
     } else {
         team.aiDecisionTrail.push(frame);
     }
+    uiBumpWeaponCounters(team, action, frame, isNewTurn);
     if (team.aiDecisionTrail.length > AI_DECISION_TRAIL_MAX) {
         team.aiDecisionTrail.splice(0, team.aiDecisionTrail.length - AI_DECISION_TRAIL_MAX);
     }
@@ -1314,7 +1423,7 @@ function uiBuildAIDebugSnapshot(teamId, opts = {}) {
     const matchCfg = (GameContext && GameContext.getMatchConfig) ? GameContext.getMatchConfig() : null;
     const faction = (GameContext.getFaction && GameContext.getFaction(teamId))
         || (String(teamId).startsWith('blue') ? 'blue' : 'red');
-    const control = team.aiEnabled ? 'ai' : 'human';
+    const control = team.aiEnabled ? (team.aiModel || 'ai') : 'human';
     const pos = team.wrapper && team.wrapper.position ? team.wrapper.position : null;
     const fwdInfo = uiGetAircraftForward(team);
     const lockedTargetId = team.lockedTargetId || null;
@@ -1328,11 +1437,14 @@ function uiBuildAIDebugSnapshot(teamId, opts = {}) {
 
     let leadId = null;
     let wingmanOrder = team.wingmanOrder || null;
-    if (typeof window.AirArenaAI !== 'undefined' && window.AirArenaAI.getWingmanLeadId) {
-        leadId = window.AirArenaAI.getWingmanLeadId(teamId);
+    const wingBrain = (window.AirArenaAIRegistry && window.AirArenaAIRegistry.getPilotForTeam)
+        ? window.AirArenaAIRegistry.getPilotForTeam(teamId)
+        : window.AirArenaAI;
+    if (wingBrain && typeof wingBrain.getWingmanLeadId === 'function') {
+        leadId = wingBrain.getWingmanLeadId(teamId);
     }
-    if (typeof window.AirArenaAI !== 'undefined' && window.AirArenaAI.getWingmanOrder) {
-        wingmanOrder = window.AirArenaAI.getWingmanOrder(teamId);
+    if (wingBrain && typeof wingBrain.getWingmanOrder === 'function') {
+        wingmanOrder = wingBrain.getWingmanOrder(teamId);
     }
 
     const allyIds = (GameContext.getAllyIds && GameContext.getAllyIds(teamId)) || [];
@@ -1373,6 +1485,7 @@ function uiBuildAIDebugSnapshot(teamId, opts = {}) {
         teamId,
         faction,
         control,
+        aiModel: team.aiEnabled ? (team.aiModel || null) : null,
         matchMode: matchCfg ? matchCfg.mode : null,
         enemyId,
         targetId,
@@ -1449,6 +1562,7 @@ function uiBuildAIDebugSnapshot(teamId, opts = {}) {
         deathTrail: (team.isDestroyed || (typeof team.hp === 'number' && team.hp <= 0))
             ? uiGetAIDecisionTrail(teamId)
             : null,
+        weaponCounters: uiGetAIWeaponCounters(teamId),
         trailMeta: {
             max: AI_DECISION_TRAIL_MAX,
             frozen: !!team.aiDecisionTrailFrozen,
@@ -1530,6 +1644,13 @@ function uiFormatAIDebugText(teamId, opts = {}) {
         });
     }
     const trail = Array.isArray(snap.decisionTrail) ? snap.decisionTrail : [];
+    if (snap.weaponCounters) {
+        const w = snap.weaponCounters;
+        lines.push(
+            `weaponCounters: turns=${w.turns} mslQ=${w.mslQ} gunQ=${w.gunQ} illum=${w.illum}` +
+            ` atk/prep=${w.mslAtk}/${w.mslPrep} chaff=${w.chaff}(${w.chaffEsc}esc) flare=${w.flare}(${w.flareEsc}esc)`
+        );
+    }
     if (trail.length) {
         const meta = snap.trailMeta || {};
         lines.push(`decisionTrail: count=${trail.length}/${meta.max || AI_DECISION_TRAIL_MAX} frozen=${meta.frozen ? 1 : 0}`);
@@ -1572,6 +1693,7 @@ function uiBuildAIRosterSnapshot() {
             id,
             faction: snap.faction,
             control: snap.control,
+            aiModel: snap.aiModel || null,
             ready: snap.ready,
             isDestroyed: snap.isDestroyed,
             deathCause: snap.deathCause || null,
@@ -1584,7 +1706,8 @@ function uiBuildAIRosterSnapshot() {
             state: snap.action ? snap.action.state : null,
             statusText: snap.statusText,
             trailCount: snap.trailMeta ? snap.trailMeta.count : 0,
-            trailFrozen: snap.trailMeta ? !!snap.trailMeta.frozen : false
+            trailFrozen: snap.trailMeta ? !!snap.trailMeta.frozen : false,
+            weaponCounters: snap.weaponCounters || null
         });
     });
     return {
@@ -1609,6 +1732,10 @@ function uiFormatAIRosterText(roster) {
     lines.push(`turn: ${dump.turn}  mode: ${dump.matchMode || '-'}  arena: ${dump.arenaMode}  trailMax=${dump.trailMax || AI_DECISION_TRAIL_MAX}`);
     lines.push(`## Roster`);
     (dump.rosterSummary || []).forEach((r) => {
+        const w = r.weaponCounters;
+        const wBit = w
+            ? `  wpn=msl${w.mslQ}/gun${w.gunQ}/ill${w.illum}`
+            : '';
         lines.push(
             `- ${String(r.id).toUpperCase()}  ${r.faction}  ${String(r.control).toUpperCase()}` +
             `  ready=${r.ready} destroyed=${r.isDestroyed}` +
@@ -1616,6 +1743,7 @@ function uiFormatAIRosterText(roster) {
             `  order=${r.wingmanOrder || '-'} lead=${r.leadId || '-'}` +
             `  target=${r.targetId || '-'} locked=${r.lockedTargetId || '-'}` +
             `  trail=${r.trailCount ?? 0}${r.trailFrozen ? 'F' : ''}` +
+            wBit +
             `  state=${r.state || '-'}  ${r.statusText || ''}`
         );
     });
@@ -1793,7 +1921,6 @@ function uiThreatLogHtml(team) {
 function uiFormatAIDebug(teamId) {
     const t = teams[teamId];
     if (!t) return `${teamId.toUpperCase()}: N/A`;
-    if (!t.aiEnabled) return `<div>${teamId.toUpperCase()}: PLAYER</div>`;
 
     if (t.isDestroyed || (typeof t.hp === 'number' && t.hp <= 0)) {
         const deadLabel = (t.aiLastAction && t.aiLastAction.statusText) || t.aiStatusText || '被擊墜';
@@ -1802,16 +1929,19 @@ function uiFormatAIDebug(teamId) {
         const lastAlive = (t.aiLastAction && t.aiLastAction.lastAliveState)
             || (t.aiPreDeathAction && t.aiPreDeathAction.state)
             || '-';
+        const control = t.aiEnabled ? 'AI' : 'PLAYER';
         const deadTree = (t.aiLastAction && t.aiLastAction.debug && Array.isArray(t.aiLastAction.debug.tree))
             ? t.aiLastAction.debug.tree
             : ((t.aiPreDeathAction && t.aiPreDeathAction.debug && Array.isArray(t.aiPreDeathAction.debug.tree))
                 ? t.aiPreDeathAction.debug.tree.concat([`--- death ---`, deadLabel, `deathCause=${deadCause}`])
-                : [deadLabel]);
-        return `<div>${teamId.toUpperCase()} | ${deadLabel}</div>` +
+                : [deadLabel, `deathCause=${deadCause}`, `control=${control.toLowerCase()}`]);
+        return `<div>${teamId.toUpperCase()} | ${deadLabel} [${control}]</div>` +
             `<div>HP 0  STATE DESTROYED  CAUSE ${String(deadCause).toUpperCase()}  LAST ${String(lastAlive).toUpperCase()}${deadReason ? `  ${deadReason}` : ''}</div>` +
             `<div>TREE (pre-death preserved):</div><div class="ai-tree">- ${deadTree.join('\n- ')}</div>` +
             uiThreatLogHtml(t);
     }
+
+    if (!t.aiEnabled) return `<div>${teamId.toUpperCase()}: PLAYER</div>`;
 
     const action = t.aiLastAction;
     const dbg = action && action.debug ? action.debug : null;
@@ -1898,7 +2028,9 @@ function uiRefreshAIDebugPanel() {
 
     const teamId = uiAIDebugExpandedTeam;
     const team = teamId ? teams[teamId] : null;
-    const isOpen = !!(teamId && team && team.aiEnabled);
+    const destroyed = !!(team && (team.isDestroyed || (typeof team.hp === 'number' && team.hp <= 0)));
+    // AI always; human only when destroyed (show death cause / tree footer).
+    const isOpen = !!(teamId && team && (team.aiEnabled || destroyed));
 
     panel.style.display = isOpen ? 'flex' : 'none';
     if (!isOpen) {
@@ -1907,14 +2039,18 @@ function uiRefreshAIDebugPanel() {
     }
 
     body.style.display = 'grid';
-    title.innerText = `${teamId.toUpperCase()} NPC 決策樹`;
+    title.innerText = destroyed
+        ? `${teamId.toUpperCase()} 擊墜紀錄`
+        : `${teamId.toUpperCase()} NPC 決策樹`;
     content.innerHTML = uiFormatAIDebug(teamId);
     uiRefreshAIDebugWingmanOrders(teamId);
     uiPositionAIDebugPanel(teamId);
 }
 function uiToggleAIDebugForTeam(teamId) {
     const t = teams[teamId];
-    if (!t || !t.aiEnabled) return;
+    if (!t) return;
+    const destroyed = !!(t.isDestroyed || (typeof t.hp === 'number' && t.hp <= 0));
+    if (!t.aiEnabled && !destroyed) return;
     uiAIDebugExpandedTeam = (uiAIDebugExpandedTeam === teamId) ? null : teamId;
     if (uiAIDebugExpandedTeam && uiIsReplayMainCollapsed()) uiSetReplayMainCollapsed(false);
     uiRefreshAIDebugPanel();
@@ -2166,8 +2302,9 @@ document.addEventListener("DOMContentLoaded", () => {
             const teamId = uiCurrentTeamId();
             if (!uiIsSeatLive(teamId)) return;
             const t = teams[teamId];
-            if (!t || t.isDestroyed || GameContext.isAnimating() || GameContext.isReplayMode()) return;
-            if (t.aiEnabled) {
+            if (!t || GameContext.isAnimating() || GameContext.isReplayMode()) return;
+            const destroyed = !!(t.isDestroyed || (typeof t.hp === 'number' && t.hp <= 0));
+            if (destroyed || t.aiEnabled) {
                 uiToggleAIDebugForTeam(teamId);
                 return;
             }
@@ -2304,9 +2441,14 @@ function updateDashboardUI(teamObj) {
     let currentTeam = uiCurrentTeamId();
     if (!teamObj || teamObj.id !== currentTeam) return;
 
-    const stallScreen = document.getElementById('stall-screen');
-    if (stallScreen) {
-        stallScreen.style.display = teamObj.stalled && !teamObj.isDestroyed ? 'flex' : 'none';
+    // Stall flash is per chase-pane (or active single view), not “any team stalled → full screen”.
+    if (window.AirArenaMultiView && typeof window.AirArenaMultiView.syncStallOverlays === 'function') {
+        window.AirArenaMultiView.syncStallOverlays();
+    } else {
+        const stallScreen = document.getElementById('stall-screen');
+        if (stallScreen) {
+            stallScreen.style.display = teamObj.stalled && !teamObj.isDestroyed ? 'flex' : 'none';
+        }
     }
 
     // 🚀 5 檔磁吸滑動位置
@@ -2512,17 +2654,24 @@ function updateDashboardUI(teamObj) {
         let t = teams[id];
         if (!btnEngage || !t || !uiIsSeatLive(id)) return;
         const faction = (GameContext.getFaction && GameContext.getFaction(id)) || id;
-        if (t.aiEnabled) {
-            if (t.isDestroyed || (typeof t.hp === 'number' && t.hp <= 0)) {
-                btnEngage.innerText = (t.aiLastAction && t.aiLastAction.statusText) || t.aiStatusText || '被擊墜';
-                btnEngage.title = '點擊打開／收合決策卷軸';
-            } else {
-                const action = t.aiLastAction;
-                const detail = action ? ` | THR ${action.throttle || '-'} | ${action.weapon ? action.weapon.toUpperCase() : 'GUN'}` : '';
-                const label = `${uiStripNpcStatusPrefix(t.aiStatusText || '待機中')}${detail}`;
-                btnEngage.innerText = label;
-                btnEngage.title = `${label}\n點擊打開／收合決策卷軸`;
-            }
+        const destroyed = !!(t.isDestroyed || (typeof t.hp === 'number' && t.hp <= 0));
+        if (destroyed) {
+            // All destroyed seats: death-cause label + red decision-tree status.
+            const deadLabel = (t.aiLastAction && t.aiLastAction.statusText)
+                || t.aiStatusText
+                || '被擊墜';
+            btnEngage.innerText = deadLabel;
+            btnEngage.title = `${deadLabel}\n點擊打開／收合擊墜紀錄`;
+            btnEngage.style.borderColor = '#ff3355';
+            btnEngage.style.color = '#ff4455';
+            btnEngage.style.boxShadow = '0 0 10px rgba(255,51,85,0.7), inset 0 0 5px rgba(255,51,85,0.35)';
+            btnEngage.style.cursor = 'pointer';
+        } else if (t.aiEnabled) {
+            const action = t.aiLastAction;
+            const detail = action ? ` | THR ${action.throttle || '-'} | ${action.weapon ? action.weapon.toUpperCase() : 'GUN'}` : '';
+            const label = `${uiStripNpcStatusPrefix(t.aiStatusText || '待機中')}${detail}`;
+            btnEngage.innerText = label;
+            btnEngage.title = `${label}\n點擊打開／收合決策卷軸`;
             btnEngage.style.borderColor = '#ffbb00';
             btnEngage.style.color = '#ffbb00';
             btnEngage.style.boxShadow = '0 0 10px rgba(255,187,0,0.65), inset 0 0 5px rgba(255,187,0,0.35)';
@@ -2738,6 +2887,9 @@ function uiOnEnginePhaseChanged(e) {
         case 'game_over':
             uiClearAutoAIBattleTimer();
             uiHideComputingOverlay();
+            if (window.AirArenaMultiView && typeof window.AirArenaMultiView.collapseForHumanPlanning === 'function') {
+                window.AirArenaMultiView.collapseForHumanPlanning();
+            }
             if(dashboard) { dashboard.style.pointerEvents = 'auto'; dashboard.style.opacity = '1.0'; }
             if(repStatus) { repStatus.innerText = `狀態: 戰鬥結束 - ${data.winner || ''}`; repStatus.style.color = "#ffeb3b"; }
             if(repSlider) {

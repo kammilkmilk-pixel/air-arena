@@ -407,8 +407,81 @@ if (!pilotSrc.includes('no skyOpen climb')) {
 if (!pilotSrc.includes('isSlabClimbBlocked')) {
     fails.push('pilot-ai.js missing isSlabClimbBlocked helper (P0)');
 }
+if (!pilotSrc.includes('wantsSlabDirtArrest')) {
+    fails.push('pilot-ai.js missing wantsSlabDirtArrest helper (T150 ground under slab)');
+}
+if (!pilotSrc.includes('slabDirtArrest')) {
+    fails.push('pilot-ai.js missing slabDirtArrest needle (T150 ground under slab)');
+}
+if (!pilotSrc.includes('undercroftSideLock')) {
+    fails.push('pilot-ai.js missing undercroftSideLock (T81 nest thrash)');
+}
+if (!pilotSrc.includes('resolveUndercroftCommitSide')) {
+    fails.push('pilot-ai.js missing resolveUndercroftCommitSide (away-from-mesh commit)');
+}
+if (!pilotSrc.includes('awayFromMesh')) {
+    fails.push('pilot-ai.js missing awayFromMesh needle');
+}
 if (!pilotSrc.includes('scoreAllHitHold')) {
     fails.push('pilot-ai.js missing scoreAllHitHold mode (P0)');
+}
+if (!pilotSrc.includes('isFacadeBowlOpen')) {
+    fails.push('pilot-ai.js missing isFacadeBowlOpen (T54 C-bowl climb-out)');
+}
+if (!pilotSrc.includes('bowlExit')) {
+    fails.push('pilot-ai.js missing bowlExit needle');
+}
+if (!pilotSrc.includes('scoreBowlClimb')) {
+    fails.push('pilot-ai.js missing scoreBowlClimb prototype');
+}
+if (!pilotSrc.includes('facadeBowl')) {
+    fails.push('pilot-ai.js missing facadeBowl climb-out source');
+}
+if (!pilotSrc.includes('openSkyFacadeExit')) {
+    fails.push('pilot-ai.js missing openSkyFacadeExit (ban nest vs climb contention)');
+}
+if (!pilotSrc.includes('banNest=1')) {
+    fails.push('pilot-ai.js missing banNest=1 needle');
+}
+if (!pilotSrc.includes('embedDirtLateral')) {
+    fails.push('pilot-ai.js missing embedDirtLateral (ban wall-pull dirt arrest)');
+}
+if (!pilotSrc.includes('banWallPull=1')) {
+    fails.push('pilot-ai.js missing banWallPull=1 needle');
+}
+if (!pilotSrc.includes('hr≥24') && !pilotSrc.includes('hr>=24')) {
+    fails.push('pilot-ai.js missing hr≥24 open-overhead nest-ban doctrine');
+}
+if (!pilotSrc.includes('wall mash') && !pilotSrc.includes('Single rim') && !pilotSrc.includes('rim wall')) {
+    fails.push('pilot-ai.js missing rim/wall-mash open-sky exit doctrine');
+}
+
+// Open courtyard must not classify as tableUndercroft (T54 C-bowl).
+const bowlChoke = buildingRisk.classifyUrbanHardChoke({
+    roofClearance: -3,
+    distance: 14,
+    forwardDistance: 18,
+    corridorGap: 3,
+    corridorLeftClear: 2,
+    corridorRightClear: 2,
+    corridorClear: false,
+    headroom: 32
+}, {});
+if (bowlChoke.active && bowlChoke.kind === 'tableUndercroft') {
+    fails.push('open-sky courtyard must not classify as tableUndercroft');
+}
+const trueTable = buildingRisk.classifyUrbanHardChoke({
+    roofClearance: -8,
+    distance: 4,
+    forwardDistance: 6,
+    corridorGap: 2,
+    corridorLeftClear: 1.5,
+    corridorRightClear: 1.5,
+    corridorClear: false,
+    headroom: 40
+}, {});
+if (!(trueTable.active && trueTable.kind === 'tableUndercroft')) {
+    fails.push('deep glue under slab must still classify as tableUndercroft');
 }
 
 const indexSrc = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
