@@ -446,6 +446,12 @@ if (!pilotSrc.includes('banNest=1')) {
 if (!pilotSrc.includes('embedDirtLateral')) {
     fails.push('pilot-ai.js missing embedDirtLateral (ban wall-pull dirt arrest)');
 }
+if (!pilotSrc.includes('isDirtBleedPitchStale')) {
+    fails.push('pilot-ai.js missing isDirtBleedPitchStale (dirtBleed thaw)');
+}
+if (!pilotSrc.includes('dirtBleedYield=')) {
+    fails.push('pilot-ai.js missing dirtBleedYield needle');
+}
 if (!pilotSrc.includes('banWallPull=1')) {
     fails.push('pilot-ai.js missing banWallPull=1 needle');
 }

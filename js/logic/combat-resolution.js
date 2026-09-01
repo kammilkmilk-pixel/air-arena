@@ -1,6 +1,15 @@
 // ============================================================================
 // combat-resolution.js - per-step guns, missiles, damage & death
 // ============================================================================
+function recordCombatHit(ctx, victimId, attackerId, weapon, step) {
+    if (!ctx || !ctx.log || !victimId || !attackerId || victimId === attackerId) return;
+    if (!ctx.log.damageFrom) ctx.log.damageFrom = {};
+    const friendly = (typeof combatFactionOf === 'function')
+        ? combatFactionOf(victimId) === combatFactionOf(attackerId)
+        : false;
+    ctx.log.damageFrom[victimId] = { attackerId, weapon: weapon || 'unknown', friendly, step };
+}
+
 function resolveGunsForStep(step, ratio, ctx) {
     combatActiveIds().forEach(id => {
         let t = teams[id]; let enemy = combatEnemyOf(id);
@@ -50,17 +59,13 @@ function resolveGunsForStep(step, ratio, ctx) {
             if (isGunBlockedByBuilding && distToBlock <= dRange) {
                 if (step % 4 === 0) {
                     ctx.log.vfxTriggers.push({ type: 'puff', step: step, pos: blockPoint, rot: Math.random()*Math.PI*2, scale: 0.5, opacity: 0.28 });
-                    ctx.log.vfxTriggers.push({
-                        type: 'spark_explosion',
-                        step: step,
-                        pos: blockPoint,
-                        velocities: genSparks(6, 0.28),
+                    ctx.log.vfxTriggers.push(sparkBurstTrigger(step, blockPoint, 6, 0.28, {
                         wind: fwd.clone().multiplyScalar(-0.028),
                         life: 14,
                         streak: 0.55,
                         gravity: 0.008,
                         windForce: 0.2
-                    });
+                    }));
                 }
             }
 
@@ -98,6 +103,7 @@ function resolveGunsForStep(step, ratio, ctx) {
                         ctx.log[enemy.id].damageTaken += (GUN_DAMAGE / 100);
                         if (!Array.isArray(ctx.log[enemy.id].damageSteps)) ctx.log[enemy.id].damageSteps = [];
                         ctx.log[enemy.id].damageSteps.push(step);
+                        recordCombatHit(ctx, enemy.id, id, 'gun', step);
                         
                         // 機身命中：噴泉式四周彈開，再被風壓往機尾飄
                         // 機模縮放到最大邊長 ~1.2，爆發點必須貼在機身表面附近。
@@ -118,18 +124,14 @@ function resolveGunsForStep(step, ratio, ctx) {
                                     (Math.random() - 0.5) * 0.14
                                 ).applyQuaternion(q2));
                             const wakeWind = tailDir.clone().multiplyScalar(0.036).add(new THREE.Vector3(0, -0.004, 0));
-                            ctx.log.vfxTriggers.push({
-                                type: 'spark_explosion',
-                                step: step,
-                                pos: hitPos,
-                                velocities: genSparksFountain(10, 0.34),
+                            ctx.log.vfxTriggers.push(sparkBurstTrigger(step, hitPos, 10, 0.34, {
                                 wind: wakeWind,
                                 life: 16,
                                 streak: 0.55,
                                 gravity: 0.007,
                                 windForce: 0.26,
                                 fountain: true
-                            });
+                            }));
                             ctx.log.vfxTriggers.push({ type: 'flash', step: step, pos: hitPos, rot: Math.random()*Math.PI*2, scale: 0.4 });
                             ctx.log.vfxTriggers.push({
                                 type: 'puff',
@@ -239,7 +241,9 @@ function resolveMissilesForStep(step, ratio, ctx) {
                 ctx.log[`${id}MslIsSelfDestruct`][activeM.pylonId] = stepRes.lostTarget || stepRes.selfDestructed; 
                 
                 let mFwd = new THREE.Vector3(0,0,1).applyQuaternion(activeM.quat);
-                ctx.log.vfxTriggers.push({ type: 'spark_explosion', step: step, pos: activeM.pos.clone(), velocities: genSparks(80, 0.8), wind: mFwd.clone().multiplyScalar(-0.005) });
+                ctx.log.vfxTriggers.push(sparkBurstTrigger(step, activeM.pos, 80, 0.8, {
+                    wind: mFwd.clone().multiplyScalar(-0.005)
+                }));
                 ctx.log.vfxTriggers.push({ type: 'explosion', step: step, pos: activeM.pos.clone(), rot: Math.random() * Math.PI * 2, scale: 1.2 });
                 ctx.log.vfxTriggers.push({ type: 'flash', step: step, pos: activeM.pos.clone(), rot: Math.random() * Math.PI * 2, scale: 1.5 });
 
@@ -279,6 +283,7 @@ function resolveMissilesForStep(step, ratio, ctx) {
                         if (!Array.isArray(ctx.log[victimId].damageSteps)) ctx.log[victimId].damageSteps = [];
                         ctx.log[victimId].damageSteps.push(step);
                     }
+                    recordCombatHit(ctx, victimId, id, 'missile', step);
                 }
             }
         });
@@ -425,8 +430,16 @@ function resolveDamageAndDeathForStep(step, ratio, ctx) {
                 if (CONFIG.debug) console.log(`🚫 [空域] ${id.toUpperCase()} 離開作戰空域，判定擊落！`);
             } else {
                 ctx.log.vfxTriggers.push({ type: 'explosion', step: step, pos: currentPos.clone(), scale: 2.3, rot: Math.random()*Math.PI*2 });
-                ctx.log.vfxTriggers.push({ type: 'spark_explosion', step: step, pos: currentPos.clone(), velocities: genSparks(60, 0.7), wind: new THREE.Vector3(0,0,0) });
+                ctx.log.vfxTriggers.push(sparkBurstTrigger(step, currentPos, 60, 0.7, {
+                    wind: new THREE.Vector3(0, 0, 0)
+                }));
                 ctx.log.vfxTriggers.push({ type: 'flash', step: step, pos: currentPos.clone(), rot: Math.random()*Math.PI*2, scale: 1.5 });
+                ctx.log.vfxTriggers.push({
+                    type: 'debris',
+                    step,
+                    pos: currentPos.clone(),
+                    color: t.colorMain || '#555555'
+                });
                 if (CONFIG.debug) console.log(`💥 [撞擊事故] ${id.toUpperCase()} 戰機規避失敗，直接撞毀於 ${collisionType === 'building' ? '城市建築' : '地面'}！`);
             }
         }
@@ -438,6 +451,10 @@ function resolveDamageAndDeathForStep(step, ratio, ctx) {
             if (ctx.log.softWreck[id] !== false) ctx.log.softWreck[id] = true;
             if (!ctx.log.deathCause) ctx.log.deathCause = {};
             if (!ctx.log.deathCause[id]) ctx.log.deathCause[id] = 'combat';
+            if (ctx.log.deathCause[id] === 'combat' && ctx.log.damageFrom && ctx.log.damageFrom[id]) {
+                if (!ctx.log.killedBy) ctx.log.killedBy = {};
+                if (!ctx.log.killedBy[id]) ctx.log.killedBy[id] = ctx.log.damageFrom[id];
+            }
         }
 
         if (ctx.death[id] === step || (ctx.death[id] !== -1 && step === ctx.death[id])) {
@@ -478,7 +495,9 @@ function resolveDamageAndDeathForStep(step, ratio, ctx) {
                     ctx.log.vfxTriggers.push({ type: 'puff', step: step, pos: deadPos.clone(), rot: Math.random()*Math.PI*2, scale: 1.1, opacity: 0.4, drift: fwd.clone().multiplyScalar(-0.02) });
                 }
             } else if (step % 2 === 0 && deadPos.y > minH + 0.1) {
-                ctx.log.vfxTriggers.push({ type: 'spark_explosion', step: step, pos: deadPos.clone(), velocities: genSparks(8, 0.4), wind: fwd.clone().multiplyScalar(-0.006) });
+                ctx.log.vfxTriggers.push(sparkBurstTrigger(step, deadPos, 8, 0.4, {
+                    wind: fwd.clone().multiplyScalar(-0.006)
+                }));
                 ctx.log.vfxTriggers.push({ type: 'puff', step: step, pos: deadPos.clone(), rot: Math.random()*Math.PI*2, scale: 1.5, opacity: 0.45, drift: fwd.clone().multiplyScalar(-0.025) });
                 ctx.log.vfxTriggers.push({ type: 'flash', step: step, pos: deadPos.clone().add(new THREE.Vector3((Math.random()-0.5), (Math.random()-0.5), (Math.random()-0.5))), rot: Math.random()*Math.PI*2, scale: 0.8 });
             }

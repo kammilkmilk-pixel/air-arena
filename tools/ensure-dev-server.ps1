@@ -60,12 +60,14 @@ if (Test-PortListening $Port) {
     Write-Host "Already listening on $Port — OK"
 } else {
     Write-Host "Starting serve on $Port..."
-    $log = Join-Path $env:TEMP "airarena-serve-$Port.log"
+    $logOut = Join-Path $env:TEMP "airarena-serve-$Port.out.log"
+    $logErr = Join-Path $env:TEMP "airarena-serve-$Port.err.log"
     Start-Process -FilePath 'npm.cmd' -ArgumentList @('start') -WorkingDirectory $Root `
-        -WindowStyle Minimized -RedirectStandardOutput $log -RedirectStandardError $log
+        -WindowStyle Minimized -RedirectStandardOutput $logOut -RedirectStandardError $logErr
     if (-not (Wait-HttpOk $Port)) {
         Write-Host "FAILED: server did not respond on http://127.0.0.1:$Port/"
-        if (Test-Path $log) { Get-Content $log -Tail 40 }
+        if (Test-Path $logOut) { Get-Content $logOut -Tail 20 }
+        if (Test-Path $logErr) { Get-Content $logErr -Tail 20 }
         exit 1
     }
     Write-Host "Started — http://127.0.0.1:$Port/"

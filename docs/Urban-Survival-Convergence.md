@@ -2,7 +2,7 @@
 
 **Status:** Active from **2026-08-09**  
 **Scope:** Dense-urban building / ground survival in `js/ai/pilot-ai.js` (and related urban helpers).  
-**Gate for Phase B full role FSM (M8 remainder):** this track must be green first.
+**Gate for Phase B:** B0 完成；B1 碼已上 live `test_01`（`deferred=seekAngle` 已證實；A.0 **優先目錄 lag／beam＋不安全回退**，針 `tapRoleGate:`）。B2 生存可對看、五角色等 A.2。Gold T150 仍是凍結標準；soft gate 2026-08-25 已關測量波。**tableGlue / collapse 已解凍（2026-08-28）**；**dirtBleed 已解凍（2026-08-28）**。
 
 **Near-term route closed (2026-08-13):** dense-urban survival gate green on live `test_01` (3×T150 building **0/0/0**). Clean A/B vs prior control `Rei_01` was **0/0/0** vs **1/0/1**. Control freeze at that close was **`Rei_02`**.
 
@@ -10,7 +10,11 @@
 
 **bakeDualPref (2026-08-14):** dump T150a held `active=L why=hold` while `bakeDualHt pref=R L=1.00 R=0.08`. Fix: clear dual pocket gap (≥0.18) forces `why=bakeDualPref`; do not wash open bakeDual street with sticky WP funnel `pocketRisk`.
 
-**Control freeze Rei_03 (2026-08-14):** live `test_01` snapshot after mid-term + bakeDualPref measurement (T150 streaks **1/0/0**, **0/1/0**). Primary A/B control is now **`Rei_03`** (see `AI-Control-Baseline.md`). Stick (`dirtBleed` / `tableGlue` / collapse) stays frozen unless the same choke repeats on 2 consecutive T150s. Phase B full roles not opened.
+**Control freeze Rei_03 (2026-08-14):** live `test_01` snapshot after mid-term + bakeDualPref measurement (T150 streaks **1/0/0**, **0/1/0**). Primary A/B control is now **`Rei_03`** (see `AI-Control-Baseline.md`). **tableGlue / collapse thawed 2026-08-28** (`tableGlueHold` when flip would enter a still-dead nest). **dirtBleed thawed 2026-08-28** (`dirtBleedYield` when lock keeps pitch after the dive recovered under facade; `dirtBleedGap` keeps punch bank toward an owned gap). Phase B must not mix with this knife.
+
+**Measurement A/B closed (2026-08-23):** Rei_03 vs Rei_02 T150×3 — building **1 vs 4**, gate **3/3 vs 2/3**, weapon activity Rei_03 ≥ Rei_02. Written back to `AI-Control-Baseline.md`. Still not a weapon knife.
+
+**Soft gate + kills (2026-08-24/25):** 2v2 combat wipes often end before T150. This wave pass = turn ≥ 60, building ≤ 1, combat-end OK. Rei_03 T83 / T65 / T136 **3/3**. Optional gold T150 **16:46 0/0/2**. `kills/mslQ` landed. Stick still frozen. **Phase B** first look: all `test_01` T150 16:54 **0/0/0**; mixed 17:03 test_01 building `tableGlueFlip`/`collapse` — not 2 consecutive T150 same choke, **not thawed**.
 ---
 
 ## Why this exists
@@ -29,7 +33,8 @@ Root cause is not “one more threshold,” but **stacked contradictory hard ban
 
 1. **Stop adding dump bans.** Allowed edits: delete contradictions, merge gates, extract classifiers / single stick owner.  
    Forbidden: new `ban *` reason strings keyed to one dump turn.
-2. **Pass definition (survival gate):** 3 consecutive dense-urban matches to **T150** with **≤1 building death per match**, and deaths not all the same choke class (e.g. not all `tableUndercroft`).
+2. **Pass definition (survival gate):** 3 consecutive dense-urban matches to **T150** with **≤1 building death per match**, and deaths not all the same choke class (e.g. not all `tableUndercroft`).  
+   **Soft gate (2026-08-25 measurement wave):** turn ≥ 60, building ≤ 1, combat faction-wipe allowed — used to close the kills/`kills/mslQ` wave without grinding T150. Gold T150 remains the freeze-time standard.
 3. **Perception before stick.** Classify overhead once; climb / skim / arrest / escape only read that class.
 4. **Single escape owner.** When emergency urban escape owns the stick, climbOut / merge / soft combat must not silently overwrite pitch.
 5. **Validate by death class counts**, not only alive/dead:
@@ -40,8 +45,8 @@ Root cause is not “one more threshold,” but **stacked contradictory hard ban
    - `routePocket` — sticky WP / gapHold into funnel while opposite corridor open (選路，非近樓 stick)
    Same class in 2 consecutive matches → only then touch that class.
 6. **Spawn / merge-dirt is a separate queue** from mid-match undercroft.
-7. **Phase B full roles stay deferred** until the pass definition holds.
-8. **Route vs stick:** close-range overhead stick (dirtBleed / pitch owner) is largely frozen; mid/long **route** work uses soft bake WP pocketRisk + earlier replan — do not add stick bans to fix bad corridors.
+7. **Phase B** is open on live `test_01` (2026-08-25). Do not mix role retune with stick thaw or a weapon knife.
+8. **Route vs stick:** close-range overhead: **tableGlue / collapse thawed 2026-08-28** (hold vs dead-nest flip); **dirtBleed thawed 2026-08-28** (yield recovered facade pitch; keep gap bank under table). Mid/long **route** work uses soft bake WP pocketRisk + earlier replan — do not add stick bans to fix bad corridors.
 
 ---
 
@@ -78,6 +83,10 @@ Helpers: `AirArenaAiMap.scoreWaypointChainPocket`, PilotAI `resolveSurvivalWaypo
 
 **tableGlue knife:** undercroft skim `hit=1` → `tableGlueFlip=1` when (a) same-side hit streak≥2, or (b) single catastrophic hit (`score < -180`, cov&lt;14). Flip opposite scrape `joyX` (not sticky away alone); do not cancel solely because `away===side`. Fail recovery honors `forcedExitSide` so flip is not double-inverted. **Commit:** `armTableGlueFlipCommit` forces sticky (`forceFlip`) + `|joyX|≈0.78` for ~3 turns (`tableGlueCommit=1`); mid-alt flip bans soft `midAltLevel` skim.
 
+**tableGlue / collapse thaw (2026-08-28):** consecutive gold T150s (15:50 blue2, 16:36 blue) died `scoreCollapseAwayFlip` / `tableGlueFlip` into still-dead nest (`hit=1`, score≪0, `gapOwnsSafe=0`). **Hold** current/away bank (`tableGlueHold=1`); do not keep 3-turn flip commit when opposite is not owned. Do not mix with Phase B or a weapon knife.
+
+**dirtBleed thaw (2026-08-28):** consecutive gold T150s (01:41 red2 facade building, 01:59 blue2 table ground) died with `dirtBleedRecover=1` still pitch-owning. **Yield** lock when nose is no longer diving into dirt under facade glue (`dirtBleedYield=1`) — do not keep `alt<14` lock after sink recovered. Under true table, if a gap is owned, keep punch bank (`dirtBleedGap=1`) instead of Knife-7 `|joyX|≈0.36`. Near-dirt `dirtPunchThrottle` must not be clamped back to thr3 by nestExitSoft. Do not mix with Phase B, tableGlue hold retune, or a weapon knife.
+
 **Weapon reclaim:** `shouldSoftYieldCombatForBakeRoute` — when `weaponWindowOpen` (or inferred FOX-1/missile prep window), do **not** soft-yield unless steep facade dive (`fwdY < -0.28`) or hard mesh. Stale `bakeYieldLock` alone must not cancel missiles.
 
 ---
@@ -102,12 +111,13 @@ Helpers: `AirArenaAiMap.scoreWaypointChainPocket`, PilotAI `resolveSurvivalWaypo
 3. Prefer one classifier change + wire call sites over N threshold tweaks.  
 4. Run `test:building-risk`, `test:decide-gates`, `test:phase3`.  
 5. Ask for **Ctrl+F5 + new match** dumps; ignore identical fingerprints / stale exports.  
-6. Re-check pass definition before any Phase B full-layer work.
+6. **Stick thaw still needs 2 consecutive T150 same choke.** **tableGlue / collapse** and **dirtBleed** thawed 2026-08-28 — do not mix with Phase B or a weapon knife.
 
 ---
 
 ## Related
 
 - Doctrine slogan: **少強制、優選路** (soft aiMap) — still valid; survival hard locks must be **few, ordered, and class-based**.  
-- `TECH-DEBT.md` — M8 remainder / H7 plateau.  
-- Thin Phase B knife already landed; do not expand roles here.
+- `TECH-DEBT.md` — M8 follow-up / H7 plateau.  
+- Thin Phase B knife already landed; full roles live on `test_01` only — do not mix role retune with this dirtBleed thaw or a weapon knife.  
+- 接敵走廊／雙機／新武器機體順序：`docs/Path-Cooperation-Roadmap.md`（現停在步驟 0）。

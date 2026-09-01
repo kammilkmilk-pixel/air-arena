@@ -30,6 +30,10 @@ function scheduleWreckFallTurn(delayMs = 450) {
 
 function executeTurnSimultaneously() {
     if (turnExecutionLocked || GameContext.isAnimating() || GameContext.isReplayMode()) return;
+    // Guest never resolves — waits for host turn-log replay.
+    if (typeof AirArenaNetplay !== 'undefined' && AirArenaNetplay.isGuest && AirArenaNetplay.isGuest()) {
+        return;
+    }
     turnExecutionLocked = true;
     clearWreckFallAutoTimer();
     if (typeof window.uiClearAutoAIBattleTimer === 'function') {
@@ -44,6 +48,12 @@ function executeTurnSimultaneously() {
     if (window.ghostWrapper) window.ghostWrapper.visible = false;
 
     const runHeavy = () => {
+        const hitch = { t0: 0, paths: 0, resolve: 0, total: 0 };
+        const nowMs = () => (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+        hitch.t0 = nowMs();
+        if (typeof performance !== 'undefined' && performance.mark) {
+            performance.mark('aa-turn-start');
+        }
         try {
             let steps = CONFIG.rules.stepsPerTurn; let arrayLen = steps + 1;
             const ids = combatActiveIds();
@@ -67,6 +77,8 @@ function executeTurnSimultaneously() {
             processFlightPaths(ctx);
             processFlares(ctx);
             if (typeof processChaff === 'function') processChaff(ctx);
+            hitch.paths = nowMs() - hitch.t0;
+            if (typeof performance !== 'undefined' && performance.mark) performance.mark('aa-turn-paths');
 
             for (let step = 0; step <= steps; step++) {
                 let ratio = step / steps;
@@ -74,6 +86,8 @@ function executeTurnSimultaneously() {
                 resolveMissilesForStep(step, ratio, ctx);
                 resolveDamageAndDeathForStep(step, ratio, ctx);
             }
+            hitch.resolve = nowMs() - hitch.t0 - hitch.paths;
+            if (typeof performance !== 'undefined' && performance.mark) performance.mark('aa-turn-resolve');
 
             ctx.log.destroyed = {};
             ids.forEach((id) => {
@@ -99,7 +113,32 @@ function executeTurnSimultaneously() {
                 }
             });
 
+            hitch.total = nowMs() - hitch.t0;
+            ctx.log.hitch = {
+                pathsMs: Math.round(hitch.paths),
+                resolveMs: Math.round(hitch.resolve),
+                totalMs: Math.round(hitch.total)
+            };
+            if (typeof AirArenaRadioCues !== 'undefined' && AirArenaRadioCues.buildFromTurn) {
+                ctx.log.radioCues = AirArenaRadioCues.buildFromTurn(ctx.log, {
+                    teams,
+                    activeIds: ids
+                });
+            }
+            if (typeof window !== 'undefined') {
+                window.AirArenaHitchLast = Object.assign({}, window.AirArenaHitchLast || {}, ctx.log.hitch);
+            }
+            if (typeof performance !== 'undefined' && performance.measure) {
+                try {
+                    performance.measure('aa-turn-paths', 'aa-turn-start', 'aa-turn-paths');
+                    performance.measure('aa-turn-resolve', 'aa-turn-paths', 'aa-turn-resolve');
+                } catch (e) { /* marks missing */ }
+            }
+
             GameContext.stateMachine.commitTurn(ctx.log);
+            if (typeof AirArenaHostAuthority !== 'undefined' && AirArenaHostAuthority.broadcastTurn) {
+                AirArenaHostAuthority.broadcastTurn(ctx.log);
+            }
             window.dispatchEvent(new CustomEvent('EnginePhaseChanged', { detail: { phase: 'playing', maxLog: battleLog.length } }));
             if (GameContext.services.startCombatAnimation) {
                 GameContext.callService('startCombatAnimation');
@@ -148,10 +187,16 @@ function finishTurnSimultaneously() {
             const inferredCause = logCause
                 || (softFlag === false && destroyedByLog ? 'impact' : null)
                 || 'combat';
+            const hitInfo = lastLog && lastLog.damageFrom ? lastLog.damageFrom[id] : null;
+            const killInfo = lastLog && lastLog.killedBy ? lastLog.killedBy[id] : null;
+            if (hitInfo) t.lastCombatHitBy = hitInfo;
             const deathMeta = {
                 cause: inferredCause,
                 stalled: flags && flags.stalled != null ? !!flags.stalled : !!t.stalled,
-                ap: flags && Number.isFinite(Number(flags.ap)) ? Number(flags.ap) : t.ap
+                ap: flags && Number.isFinite(Number(flags.ap)) ? Number(flags.ap) : t.ap,
+                lastHit: hitInfo || t.lastCombatHitBy || null,
+                killedBy: killInfo
+                    || (inferredCause === 'combat' ? (hitInfo || t.lastCombatHitBy || null) : null)
             };
             if (!t.isDestroyed && lastLog[id] && lastLog[id].damageTaken > 0) {
                 GameContext.stateMachine.applyDamage(id, lastLog[id].damageTaken, deathMeta);

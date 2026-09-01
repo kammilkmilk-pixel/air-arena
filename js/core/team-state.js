@@ -100,6 +100,9 @@ function createTeamState(id, colorMain, matchActive = true) {
         aiThreatActive: false,
         aiLastFlareTurn: -99,
         aiLastChaffTurn: -99,
+        aiTacticalRole: null,
+        aiTacticalRoleWhy: null,
+        aiTacticalRoleUntilTurn: -1,
         aiDebugTrace: [],
         aiDebugRecording: false,
         // Always-on compact decision ring buffer (export-all / death forensics).
@@ -107,6 +110,12 @@ function createTeamState(id, colorMain, matchActive = true) {
         aiDecisionTrailFrozen: false,
         // Match-long weapon/CM tallies for A/B (not truncated by trailMax).
         aiWeaponCounters: null,
+        killedBy: null,
+        lastCombatHitBy: null,
+        killCredited: false,
+        combatKills: 0,
+        combatKillsGun: 0,
+        combatKillsMsl: 0,
         wingmanOrder: 'follow',
         lockedTargetId: null,
         wreckPhase: null,
@@ -118,7 +127,11 @@ function createTeamState(id, colorMain, matchActive = true) {
         pathQuats: [],
         flightCurve: null,
         pylons: null,
-        activeMissiles: []
+        activeMissiles: [],
+        pilotId: null,
+        callsign: null,
+        voiceSetId: null,
+        portraitColor: null
     };
 }
 

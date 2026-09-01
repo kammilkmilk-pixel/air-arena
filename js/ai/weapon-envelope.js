@@ -158,6 +158,7 @@
      */
     function inferTeamMissileType(team, opts = {}) {
         if (!team) return 'fox2';
+        // CONFIG.weapons.rocket is a stub (aiEnabled:false). Never infer missileType from it.
         if (opts.missileType === 'fox1' || opts.missileType === 'fox2') {
             return opts.missileType;
         }

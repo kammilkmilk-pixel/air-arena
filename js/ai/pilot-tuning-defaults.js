@@ -92,6 +92,10 @@
         // Tactical approach: random among near-ties only (|Δscore|≤eps). 0 disables.
         tacticalTieEps: 12,
         tacticalTieRandom: 1,
+        // Phase B full roles: hold current TAP role this many turns (defend / head-on extend switch now).
+        tacticalRoleHoldTurns: 2,
+        // T88: merge-break S-turn — hold diverge side this many turns (localX flip after a pass).
+        mergeDivergeHoldTurns: 3,
         // Soft-yield thin knife (crash vs combat efficiency): align/airspace/band reclaim.
         // Dump T140/T150: angMax 52 never overlapped alignFirst (need ang>38) → raise gun window.
         alignSoftFire: 1,

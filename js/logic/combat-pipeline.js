@@ -118,7 +118,14 @@ function processFlightPaths(ctx) {
         }
 
         t.flightCurve = new THREE.CatmullRomCurve3(t.pathPoints, false, 'catmullrom', 0);
-        ctx.log[id] = { pts: [...t.pathPoints], quats: [...t.pathQuats], chain: [...t.chain], wasFlaresArmed: t.wasFlaresArmedThisTurn, damageTaken: 0 };
+        ctx.log[id] = {
+            pts: [...t.pathPoints],
+            quats: [...t.pathQuats],
+            chain: [...t.chain],
+            wasFlaresArmed: t.wasFlaresArmedThisTurn,
+            wasChaffArmed: t.wasChaffArmedThisTurn,
+            damageTaken: 0
+        };
 
         let fireDelayCounter = 0; 
         let singleMissileFired = false;

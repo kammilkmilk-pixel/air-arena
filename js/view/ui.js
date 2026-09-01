@@ -98,7 +98,13 @@ function uiForceHumanControlView() {
         if (typeof uiSyncSelectionChrome === 'function') uiSyncSelectionChrome(uiCurrentTeamId());
         return null;
     }
-    const next = uiPickControlTeamAfterSettle(GameContext.getActiveTeamId());
+    let preferred = GameContext.getActiveTeamId();
+    if (window.AirArenaNetplay && AirArenaNetplay.isActive && AirArenaNetplay.isActive()
+        && AirArenaNetplay.getLocalSeatId) {
+        const seat = AirArenaNetplay.getLocalSeatId();
+        if (seat && humans.includes(seat)) preferred = seat;
+    }
+    const next = uiPickControlTeamAfterSettle(preferred);
     // Save combat multi-view BEFORE selectTeam focuses a single seat.
     if (window.AirArenaMultiView && typeof window.AirArenaMultiView.collapseForHumanPlanning === 'function') {
         window.AirArenaMultiView.collapseForHumanPlanning(next);
@@ -153,7 +159,12 @@ async function uiRunPendingAIAndMaybeResolve() {
         for (let i = 0; i < pendingAi.length; i++) {
             const id = pendingAi[i];
             uiSetComputeSub(`NPC 決策 ${String(id).toUpperCase()} (${i + 1}/${pendingAi.length})…`);
+            const t0 = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
             uiRunAI(id);
+            const dt = ((typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now()) - t0;
+            if (!window.AirArenaHitchLast) window.AirArenaHitchLast = {};
+            window.AirArenaHitchLast.decide = window.AirArenaHitchLast.decide || {};
+            window.AirArenaHitchLast.decide[id] = Math.round(dt);
             await uiYieldPaint();
         }
 
@@ -186,11 +197,13 @@ let uiMatchSetupState = {
     mapId: 'original',
     spawnAltitude: 45,
     spawnSeparation: 100,
+    playerFaction: 'red',
+    challengeId: 'skirmish',
     seats: {
-        'red-1': { control: 'human', aiModel: null, loadout: 'standard', pylons: ['fox1', 'fox2', 'fox2', 'fox1'] },
-        'red-2': { control: 'ai', aiModel: 'test_01', loadout: 'standard', pylons: ['fox1', 'fox2', 'fox2', 'fox1'] },
-        'blue-1': { control: 'ai', aiModel: 'test_01', loadout: 'standard', pylons: ['fox1', 'fox2', 'fox2', 'fox1'] },
-        'blue-2': { control: 'ai', aiModel: 'test_01', loadout: 'standard', pylons: ['fox1', 'fox2', 'fox2', 'fox1'] }
+        'red-1': { control: 'human', aiModel: null, loadout: 'standard', pylons: ['fox1', 'fox2', 'fox2', 'fox1'], pilotId: 'nori' },
+        'red-2': { control: 'ai', aiModel: 'test_01', loadout: 'standard', pylons: ['fox1', 'fox2', 'fox2', 'fox1'], pilotId: 'hawk' },
+        'blue-1': { control: 'ai', aiModel: 'test_01', loadout: 'standard', pylons: ['fox1', 'fox2', 'fox2', 'fox1'], pilotId: 'fox' },
+        'blue-2': { control: 'ai', aiModel: 'test_01', loadout: 'standard', pylons: ['fox1', 'fox2', 'fox2', 'fox1'], pilotId: 'kite' }
     }
 };
 let uiMatchSetupBound = false;
@@ -198,7 +211,7 @@ let uiMatchSetupBound = false;
 function uiSanitizeSpawnAltitude(alt) {
     if (GameContext && GameContext.sanitizeSpawnAltitude) return GameContext.sanitizeSpawnAltitude(alt);
     const n = Math.round(Number(alt));
-    return [28, 45, 60, 80].includes(n) ? n : 45;
+    return [28, 45, 60, 80, 92].includes(n) ? n : 45;
 }
 
 function uiSanitizeSpawnSeparation(sep) {
@@ -233,6 +246,91 @@ function uiMatchSeatDefs(mode) {
         { id: 'red-1', label: 'RED-1', faction: 'red', live: true },
         { id: 'blue-1', label: 'BLUE-1', faction: 'blue', live: true }
     ];
+}
+
+function uiIsLabCatalog() {
+    const id = uiMatchSetupState.challengeId || 'skirmish';
+    if (typeof AirArenaChallenges !== 'undefined' && AirArenaChallenges.isLab) {
+        return AirArenaChallenges.isLab(id);
+    }
+    return id === 'lab';
+}
+
+function uiApplyCatalogChrome() {
+    const panel = document.getElementById('match-setup-panel');
+    const screen = document.getElementById('startup-screen');
+    const title = document.getElementById('match-setup-title');
+    const lab = uiIsLabCatalog();
+    if (panel) panel.classList.toggle('is-lab-catalog', lab);
+    if (screen) screen.classList.toggle('is-lab-catalog', lab);
+    if (title) title.textContent = lab ? 'MATCH SETUP' : '目錄';
+}
+
+function uiRefreshChallengeSelect() {
+    const select = document.getElementById('match-challenge-select');
+    if (!select || typeof AirArenaChallenges === 'undefined') return;
+    const items = AirArenaChallenges.list();
+    const cur = uiMatchSetupState.challengeId || 'skirmish';
+    select.innerHTML = '';
+    items.forEach((ch) => {
+        const opt = document.createElement('option');
+        opt.value = ch.id;
+        opt.textContent = ch.name;
+        select.appendChild(opt);
+    });
+    select.value = items.some((c) => c.id === cur) ? cur : 'skirmish';
+    uiMatchSetupState.challengeId = select.value;
+    const hint = document.getElementById('match-challenge-hint');
+    const ch = AirArenaChallenges.get(select.value);
+    if (hint && ch) hint.textContent = ch.hint || '';
+    uiApplyCatalogChrome();
+}
+
+function uiSyncFactionButtons() {
+    const fac = uiMatchSetupState.playerFaction === 'blue' ? 'blue' : 'red';
+    document.querySelectorAll('.match-faction-btn').forEach((btn) => {
+        btn.classList.toggle('is-active', btn.getAttribute('data-faction') === fac);
+    });
+}
+
+function uiApplyPlayerFaction(faction) {
+    const fac = faction === 'blue' ? 'blue' : 'red';
+    uiMatchSetupState.playerFaction = fac;
+    const lead = fac === 'blue' ? 'blue-1' : 'red-1';
+    const other = fac === 'blue' ? 'red-1' : 'blue-1';
+    const seats = uiMatchSetupState.seats;
+    if (seats[lead] && seats[other]) {
+        if (seats[lead].control !== 'human' && seats[other].control === 'human') {
+            const tmp = { control: seats[lead].control, aiModel: seats[lead].aiModel };
+            seats[lead].control = 'human';
+            seats[lead].aiModel = null;
+            seats[other].control = tmp.control === 'human' ? 'ai' : tmp.control;
+            seats[other].aiModel = tmp.aiModel || 'test_01';
+        }
+    }
+    uiSyncFactionButtons();
+    uiAssignCatalogPilotsIfNeeded();
+    uiRenderMatchSeatList();
+}
+
+function uiAssignCatalogPilotsIfNeeded() {
+    if (uiIsLabCatalog()) return;
+    if (typeof AirArenaPilotRoster === 'undefined' || !AirArenaPilotRoster.assignCatalogPilots) return;
+    const ids = uiMatchSeatDefs(uiMatchSetupState.mode).map((d) => d.id);
+    AirArenaPilotRoster.assignCatalogPilots(uiMatchSetupState.seats, ids);
+}
+
+function uiRandomizePilots() {
+    const roster = (typeof AirArenaPilotRoster !== 'undefined') ? AirArenaPilotRoster : null;
+    if (!roster) return;
+    const used = [];
+    uiMatchSeatDefs(uiMatchSetupState.mode).forEach((def) => {
+        const p = roster.pickRandom(used, `${Date.now()}:${def.id}:${Math.random()}`);
+        if (!uiMatchSetupState.seats[def.id]) uiMatchSetupState.seats[def.id] = {};
+        uiMatchSetupState.seats[def.id].pilotId = p.id;
+        used.push(p.id);
+    });
+    uiRenderMatchSeatList();
 }
 
 function uiRefreshMapSelect() {
@@ -277,11 +375,15 @@ function uiReadMatchSetupFromDom() {
     const sepEl = document.getElementById('match-spawn-sep');
     const spawnAltitude = uiSanitizeSpawnAltitude(altEl ? altEl.value : uiMatchSetupState.spawnAltitude);
     const spawnSeparation = uiSanitizeSpawnSeparation(sepEl ? sepEl.value : uiMatchSetupState.spawnSeparation);
+    const challengeEl = document.getElementById('match-challenge-select');
+    const challengeId = (challengeEl && challengeEl.value) || uiMatchSetupState.challengeId || 'skirmish';
+    const facBtn = document.querySelector('.match-faction-btn.is-active');
+    const playerFaction = (facBtn && facBtn.getAttribute('data-faction') === 'blue') ? 'blue' : 'red';
     const seats = {
-        'red-1': { control: 'human', aiModel: null, loadout: 'standard', pylons: ['fox1', 'fox2', 'fox2', 'fox1'] },
-        'red-2': { control: 'ai', aiModel: 'test_01', loadout: 'standard', pylons: ['fox1', 'fox2', 'fox2', 'fox1'] },
-        'blue-1': { control: 'ai', aiModel: 'test_01', loadout: 'standard', pylons: ['fox1', 'fox2', 'fox2', 'fox1'] },
-        'blue-2': { control: 'ai', aiModel: 'test_01', loadout: 'standard', pylons: ['fox1', 'fox2', 'fox2', 'fox1'] }
+        'red-1': { control: 'human', aiModel: null, loadout: 'standard', pylons: ['fox1', 'fox2', 'fox2', 'fox1'], pilotId: 'nori' },
+        'red-2': { control: 'ai', aiModel: 'test_01', loadout: 'standard', pylons: ['fox1', 'fox2', 'fox2', 'fox1'], pilotId: 'hawk' },
+        'blue-1': { control: 'ai', aiModel: 'test_01', loadout: 'standard', pylons: ['fox1', 'fox2', 'fox2', 'fox1'], pilotId: 'fox' },
+        'blue-2': { control: 'ai', aiModel: 'test_01', loadout: 'standard', pylons: ['fox1', 'fox2', 'fox2', 'fox1'], pilotId: 'kite' }
     };
     uiMatchSeatDefs(mode).forEach((def) => {
         const controlEl = document.getElementById(`match-control-${def.id}`);
@@ -292,10 +394,15 @@ function uiReadMatchSetupFromDom() {
                 control: (controlEl && controlEl.value === 'ai') ? 'ai' : 'human',
                 aiModel: (controlEl && controlEl.value === 'ai') ? 'test_01' : null
             };
+        const prev = uiMatchSetupState.seats[def.id] || {};
         seats[def.id] = {
             control: parsed.control,
             aiModel: parsed.aiModel,
             loadout: (loadoutEl && loadoutEl.value) || 'standard',
+            pilotId: (function () {
+                const pel = document.getElementById(`match-pilot-${def.id}`);
+                return (pel && pel.value) || prev.pilotId || 'random';
+            }()),
             pylons: [1, 2, 3, 4].map((n) => {
                 const el = document.getElementById(`match-pylon-${def.id}-${n}`);
                 const raw = el ? el.value : 'fox2';
@@ -305,7 +412,12 @@ function uiReadMatchSetupFromDom() {
             })
         };
     });
-    uiMatchSetupState = { mode, mapId, spawnAltitude, spawnSeparation, seats };
+    uiMatchSetupState = { mode, mapId, spawnAltitude, spawnSeparation, playerFaction, challengeId, seats };
+    if (typeof AirArenaChallenges === 'undefined' || !AirArenaChallenges.isLab || !AirArenaChallenges.isLab(challengeId)) {
+        if (typeof AirArenaPilotRoster !== 'undefined' && AirArenaPilotRoster.assignCatalogPilots) {
+            AirArenaPilotRoster.assignCatalogPilots(seats, uiMatchSeatDefs(mode).map((d) => d.id));
+        }
+    }
     uiSyncSpawnSelects(spawnAltitude, spawnSeparation);
     return uiMatchSetupState;
 }
@@ -315,12 +427,14 @@ function uiRenderMatchSeatList() {
     if (!list) return;
     const mode = uiMatchSetupState.mode;
     const defs = uiMatchSeatDefs(mode);
+    const lab = uiIsLabCatalog();
     list.innerHTML = defs.map((def) => {
         const seat = uiMatchSetupState.seats[def.id] || {
             control: 'ai',
             aiModel: 'test_01',
             loadout: 'standard',
-            pylons: ['fox1', 'fox2', 'fox2', 'fox1']
+            pylons: ['fox1', 'fox2', 'fox2', 'fox1'],
+            pilotId: 'random'
         };
         const pylons = (typeof sanitizePylonLoadout === 'function')
             ? sanitizePylonLoadout(seat.pylons)
@@ -330,6 +444,20 @@ function uiRenderMatchSeatList() {
         const controlValue = (window.AirArenaAIRegistry && window.AirArenaAIRegistry.controlSelectValue)
             ? window.AirArenaAIRegistry.controlSelectValue(seat)
             : (seat.control === 'ai' ? (seat.aiModel || 'test_01') : 'human');
+        const playerAiValue = (controlValue === 'human') ? 'test_01' : controlValue;
+        const controlSelect = lab
+            ? `<select id="match-control-${def.id}" class="match-control-select" aria-label="${def.label} control"${def.live ? '' : ' disabled'}>
+                    <option value="human"${controlValue === 'human' ? ' selected' : ''}>人工</option>
+                    <option value="Rei_03"${controlValue === 'Rei_03' ? ' selected' : ''}>Rei_03</option>
+                    <option value="Rei_02"${controlValue === 'Rei_02' ? ' selected' : ''}>Rei_02</option>
+                    <option value="Rei_01"${controlValue === 'Rei_01' ? ' selected' : ''}>Rei_01</option>
+                    <option value="test_01"${controlValue === 'test_01' ? ' selected' : ''}>test_01</option>
+                </select>`
+            : `<select id="match-control-${def.id}" class="match-control-select" aria-label="${def.label} control"${def.live ? '' : ' disabled'}>
+                    <option value="human"${controlValue === 'human' ? ' selected' : ''}>人工</option>
+                    <option value="${playerAiValue}"${controlValue !== 'human' ? ' selected' : ''}>AI</option>
+                </select>`;
+        const pilotSelect = '';
         const pylonSelects = [0, 1, 2, 3].map((i) => {
             const raw = pylons[i];
             const w = raw === 'fox1' ? 'fox1' : (raw === 'empty' ? 'empty' : 'fox2');
@@ -340,15 +468,10 @@ function uiRenderMatchSeatList() {
             </select>`;
         }).join('');
         return `
-            <div class="match-seat-row${disabled}" data-seat="${def.id}"${note}>
+            <div class="match-seat-row${disabled}${lab ? ' is-lab' : ''}" data-seat="${def.id}"${note}>
                 <div class="match-seat-name ${def.faction}">${def.label}</div>
-                <select id="match-control-${def.id}" class="match-control-select" aria-label="${def.label} control"${def.live ? '' : ' disabled'}>
-                    <option value="human"${controlValue === 'human' ? ' selected' : ''}>人工</option>
-                    <option value="Rei_03"${controlValue === 'Rei_03' ? ' selected' : ''}>Rei_03</option>
-                    <option value="Rei_02"${controlValue === 'Rei_02' ? ' selected' : ''}>Rei_02</option>
-                    <option value="Rei_01"${controlValue === 'Rei_01' ? ' selected' : ''}>Rei_01</option>
-                    <option value="test_01"${controlValue === 'test_01' ? ' selected' : ''}>test_01</option>
-                </select>
+                ${pilotSelect}
+                ${controlSelect}
                 <select id="match-loadout-${def.id}" aria-label="${def.label} loadout"${def.live ? '' : ' disabled'}>
                     <option value="standard"${seat.loadout === 'standard' ? ' selected' : ''}>標準</option>
                     <option value="gun-priority"${seat.loadout === 'gun-priority' ? ' selected' : ''}>機砲</option>
@@ -362,12 +485,16 @@ function uiRenderMatchSeatList() {
     const hint = document.getElementById('match-mode-hint');
     if (hint) {
         hint.classList.remove('is-hidden');
-        if (mode === '2v2') {
+        if (lab) {
+            hint.textContent = mode === '2v2'
+                ? '測試目錄：紅藍各兩架。控制＝人工／Rei_03（對照）／Rei_02／Rei_01／test_01（現行）。改回「自由交戰」可離開測試。'
+                : '測試目錄：紅藍各一架。控制＝人工／Rei_03（對照基準）／test_01（現行測試腦）。改回「自由交戰」可離開測試。';
+        } else if (mode === '2v2') {
             hint.textContent =
-                '2v2：紅藍各兩架（RED-1/2、BLUE-1/2）。控制可選人工／Rei_03（對照）／Rei_02（舊對照）／Rei_01（更早）／test_01（現行）。翼機可收僚機令。';
+                '2v2：紅藍各兩架。控制＝人工／AI（現行 test_01）。玩家語音 NORI；AI 為 REI／HAWK／FOX／KITE。要 A/B（Rei_03／test_01）請選目錄「測試」。翼機可收僚機令。';
         } else {
             hint.textContent =
-                '1v1：紅藍各一架。控制：人工／Rei_03（對照基準）／Rei_02（舊對照）／Rei_01（更早）／test_01（現行測試腦）。僅 RED-1 與 BLUE-1 參戰。';
+                '1v1：紅藍各一架。控制＝人工／AI。僅 RED-1 與 BLUE-1 參戰。AI 調整請選目錄「測試」以還原 Rei_03／test_01。';
         }
     }
 }
@@ -380,16 +507,46 @@ function uiBindMatchSetupOnce() {
 
     panel.addEventListener('click', (e) => {
         const modeBtn = e.target.closest('.match-mode-btn');
-        if (!modeBtn) return;
-        uiReadMatchSetupFromDom();
-        uiMatchSetupState.mode = modeBtn.getAttribute('data-mode') === '2v2' ? '2v2' : '1v1';
-        document.querySelectorAll('.match-mode-btn').forEach((btn) => {
-            btn.classList.toggle('is-active', btn === modeBtn);
-        });
-        uiRenderMatchSeatList();
+        if (modeBtn) {
+            uiReadMatchSetupFromDom();
+            uiMatchSetupState.mode = modeBtn.getAttribute('data-mode') === '2v2' ? '2v2' : '1v1';
+            document.querySelectorAll('.match-mode-btn').forEach((btn) => {
+                btn.classList.toggle('is-active', btn === modeBtn);
+            });
+            uiRenderMatchSeatList();
+            return;
+        }
+        const facBtn = e.target.closest('.match-faction-btn');
+        if (facBtn) {
+            uiReadMatchSetupFromDom();
+            uiApplyPlayerFaction(facBtn.getAttribute('data-faction'));
+            return;
+        }
     });
 
     panel.addEventListener('change', (e) => {
+        if (e.target && e.target.id === 'match-challenge-select') {
+            const id = e.target.value;
+            uiMatchSetupState.challengeId = id;
+            if (typeof AirArenaChallenges !== 'undefined') {
+                const ch = AirArenaChallenges.get(id);
+                const hint = document.getElementById('match-challenge-hint');
+                if (hint && ch) hint.textContent = ch.hint || '';
+                if (ch && ch.mode) {
+                    uiMatchSetupState.mode = ch.mode;
+                    document.querySelectorAll('.match-mode-btn').forEach((btn) => {
+                        btn.classList.toggle('is-active', btn.getAttribute('data-mode') === ch.mode);
+                    });
+                }
+                if (ch && ch.mapId && window.MapCatalog) {
+                    window.MapCatalog.setSelectedId(ch.mapId);
+                    uiRefreshMapSelect();
+                }
+                uiApplyCatalogChrome();
+                uiRenderMatchSeatList();
+            }
+            return;
+        }
         if (e.target && e.target.id === 'match-map-select') {
             const id = e.target.value;
             if (window.MapCatalog) window.MapCatalog.setSelectedId(id);
@@ -475,10 +632,167 @@ function uiBindMatchSetupOnce() {
         });
     }
 
+    const randomBtn = document.getElementById('btn-pilot-random');
+    if (randomBtn) {
+        randomBtn.addEventListener('click', () => {
+            uiReadMatchSetupFromDom();
+            uiRandomizePilots();
+        });
+    }
+
     const engage = document.getElementById('btn-match-engage');
     if (engage) {
         engage.addEventListener('click', () => {
             uiConfirmMatchSetup();
+        });
+    }
+
+    uiBindNetplayControlsOnce();
+}
+
+function uiSetNetStatus(text, kind) {
+    const el = document.getElementById('match-net-status');
+    if (!el) return;
+    const t = text != null ? String(text) : '';
+    el.hidden = !t;
+    el.textContent = t;
+    el.classList.toggle('is-error', kind === 'error');
+    el.classList.toggle('is-ok', kind === 'ok');
+}
+
+function uiRefreshNetReconnectBtn() {
+    const btn = document.getElementById('btn-match-reconnect');
+    if (!btn || !window.AirArenaNetplay) return;
+    const tok = AirArenaNetplay.getReconnectToken && AirArenaNetplay.getReconnectToken();
+    btn.hidden = !tok;
+}
+
+function uiPrepareNetplayDraft(draft) {
+    const net = window.AirArenaNetplay;
+    if (!net || !net.isActive || !net.isActive()) return draft;
+    const cfg = (net.getMatchConfig && net.getMatchConfig()) || draft;
+    const out = Object.assign({}, draft, {
+        mode: '1v1',
+        seats: Object.assign({}, draft.seats, cfg.seats || {})
+    });
+    out.seats['red-1'] = Object.assign({}, out.seats['red-1'], { control: 'human', aiModel: null });
+    out.seats['blue-1'] = Object.assign({}, out.seats['blue-1'], { control: 'human', aiModel: null });
+    if (cfg.mapId) out.mapId = cfg.mapId;
+    if (cfg.spawnAltitude != null) out.spawnAltitude = cfg.spawnAltitude;
+    if (cfg.spawnSeparation != null) out.spawnSeparation = cfg.spawnSeparation;
+    return out;
+}
+
+function uiBindNetplayControlsOnce() {
+    if (uiBindNetplayControlsOnce._bound) return;
+    uiBindNetplayControlsOnce._bound = true;
+
+    window.addEventListener('AirArenaNetplayStatus', (e) => {
+        const d = e.detail || {};
+        const kind = d.error ? 'error' : (d.peerConnected || d.matched ? 'ok' : null);
+        let text = d.status || '';
+        if (d.room && window.AirArenaNetplay && AirArenaNetplay.isHost && AirArenaNetplay.isHost()) {
+            text = `房間碼 ${d.room}${d.peerConnected ? ' · 對手已入房' : ' · 等待加入'} — ${d.status || ''}`.trim();
+        }
+        uiSetNetStatus(text, kind);
+        uiRefreshNetReconnectBtn();
+    });
+
+    window.addEventListener('AirArenaNetplayMatchConfig', () => {
+        uiSetNetStatus('已收到開局設定，按 ENGAGE 開始', 'ok');
+        const engage = document.getElementById('btn-match-engage');
+        if (engage) engage.disabled = false;
+    });
+
+    const hostBtn = document.getElementById('btn-match-host');
+    if (hostBtn) {
+        hostBtn.addEventListener('click', () => {
+            if (!window.AirArenaNetplay) return;
+            const draft = uiReadMatchSetupFromDom();
+            const netCfg = (AirArenaNetplayProtocol && AirArenaNetplayProtocol.defaultNetMatchConfig)
+                ? Object.assign(AirArenaNetplayProtocol.defaultNetMatchConfig('red'), {
+                    mapId: draft.mapId,
+                    spawnAltitude: draft.spawnAltitude,
+                    spawnSeparation: draft.spawnSeparation
+                })
+                : draft;
+            let ok = AirArenaNetplay.startHostRoom({
+                matchConfig: netCfg,
+                transport: 'websocket'
+            });
+            if (!ok) {
+                ok = AirArenaNetplay.startHostRoom({
+                    matchConfig: netCfg,
+                    transport: 'broadcast'
+                });
+                uiSetNetStatus(
+                    ok
+                        ? `本機房間 ${AirArenaNetplay.getRoom()}（BroadcastChannel）。對手開 ?hostRoom=${AirArenaNetplay.getRoom()}&netRole=guest`
+                        : '無法建立房間（需 npm run room 或支援 BroadcastChannel）',
+                    ok ? 'ok' : 'error'
+                );
+            } else {
+                uiSetNetStatus(`已建立房間 ${AirArenaNetplay.getRoom()} — 對手按「加入」輸入此碼（需 npm run room）`, 'ok');
+            }
+            uiRefreshNetReconnectBtn();
+            try {
+                if (AirArenaNetplay.getRoom()) {
+                    sessionStorage.setItem('aa-net-room', AirArenaNetplay.getRoom());
+                    sessionStorage.setItem('aa-net-reconnect', AirArenaNetplay.getReconnectToken() || '');
+                    sessionStorage.setItem('aa-net-seat', AirArenaNetplay.getLocalSeatId() || 'red');
+                    sessionStorage.setItem('aa-net-role', 'host');
+                }
+            } catch (_) { /* ignore */ }
+        });
+    }
+
+    const joinBtn = document.getElementById('btn-match-join');
+    if (joinBtn) {
+        joinBtn.addEventListener('click', () => {
+            if (!window.AirArenaNetplay) return;
+            let code = window.prompt('輸入房間邀請碼', sessionStorage.getItem('aa-net-room') || '');
+            if (!code) return;
+            code = String(code).trim().toUpperCase();
+            const ok = AirArenaNetplay.joinRoom(code, { transport: 'websocket' });
+            uiSetNetStatus(ok ? `正在加入 ${code}…` : '加入失敗', ok ? 'ok' : 'error');
+            uiRefreshNetReconnectBtn();
+        });
+    }
+
+    const queueBtn = document.getElementById('btn-match-queue');
+    if (queueBtn) {
+        queueBtn.addEventListener('click', () => {
+            if (!window.AirArenaNetplay) return;
+            const ok = AirArenaNetplay.joinQueue({ mode: '1v1' });
+            uiSetNetStatus(ok ? '排隊配對中…（需 npm run room）' : '無法連線房間伺服器', ok ? 'ok' : 'error');
+        });
+    }
+
+    const reconBtn = document.getElementById('btn-match-reconnect');
+    if (reconBtn) {
+        reconBtn.addEventListener('click', () => {
+            if (!window.AirArenaNetplay) return;
+            try {
+                if (!AirArenaNetplay.getReconnectToken()) {
+                    const tok = sessionStorage.getItem('aa-net-reconnect');
+                    const room = sessionStorage.getItem('aa-net-room');
+                    const seat = sessionStorage.getItem('aa-net-seat') || 'red';
+                    const role = sessionStorage.getItem('aa-net-role') || 'guest';
+                    if (tok && room) {
+                        AirArenaNetplay.start({
+                            role,
+                            room,
+                            seatId: seat,
+                            action: 'reconnect',
+                            transport: 'websocket',
+                            reconnectToken: tok
+                        });
+                    }
+                } else {
+                    AirArenaNetplay.tryReconnect();
+                }
+            } catch (_) { /* ignore */ }
+            uiSetNetStatus('嘗試重連…');
         });
     }
 }
@@ -490,12 +804,20 @@ function uiShowMatchSetup() {
     const scroller = document.getElementById('startup-scroll');
     if (!screen || !panel) return false;
     uiBindMatchSetupOnce();
+    try {
+        const q = new URLSearchParams(window.location.search);
+        if (q.get('lab') === '1' || q.get('lab') === 'true') {
+            uiMatchSetupState.challengeId = 'lab';
+        }
+    } catch (e) { /* ignore */ }
     if (!uiMatchSetupState.seats) {
         uiMatchSetupState = {
             mode: '1v1',
             mapId: (window.MapCatalog && window.MapCatalog.getSelectedId()) || 'original',
             spawnAltitude: 45,
             spawnSeparation: 100,
+            playerFaction: 'red',
+            challengeId: uiMatchSetupState.challengeId || 'skirmish',
             seats: {
                 'red-1': { control: 'human', aiModel: null, loadout: 'standard' },
                 'red-2': { control: 'ai', aiModel: 'test_01', loadout: 'standard' },
@@ -508,6 +830,8 @@ function uiShowMatchSetup() {
         btn.classList.toggle('is-active', btn.getAttribute('data-mode') === uiMatchSetupState.mode);
     });
     uiRefreshMapSelect();
+    uiRefreshChallengeSelect();
+    uiSyncFactionButtons();
     uiSyncSpawnSelects(uiMatchSetupState.spawnAltitude, uiMatchSetupState.spawnSeparation);
     uiRenderMatchSeatList();
     panel.hidden = false;
@@ -544,33 +868,69 @@ function uiDismissStartupScreen() {
 function uiConfirmMatchSetup() {
     const engage = document.getElementById('btn-match-engage');
     if (engage) engage.disabled = true;
-    const draft = uiReadMatchSetupFromDom();
+    let draft = uiReadMatchSetupFromDom();
+    draft = uiPrepareNetplayDraft(draft);
+    if (window.AirArenaAudio && AirArenaAudio.unlock) AirArenaAudio.unlock(true);
+
+    const net = window.AirArenaNetplay;
+    const netActive = !!(net && net.isActive && net.isActive());
+    if (netActive && net.isGuest && net.isGuest() && !net.getMatchConfig()) {
+        uiSetNetStatus('尚未收到房主開局設定，請稍候', 'error');
+        if (engage) engage.disabled = false;
+        return;
+    }
+    // Prefer netplay matchConfig from host when guest.
+    if (netActive && net.getMatchConfig && net.getMatchConfig()) {
+        const remoteCfg = net.getMatchConfig();
+        draft = uiPrepareNetplayDraft(Object.assign({}, draft, remoteCfg, {
+            mapId: remoteCfg.mapId || draft.mapId,
+            spawnAltitude: remoteCfg.spawnAltitude != null ? remoteCfg.spawnAltitude : draft.spawnAltitude,
+            spawnSeparation: remoteCfg.spawnSeparation != null ? remoteCfg.spawnSeparation : draft.spawnSeparation,
+            seats: remoteCfg.seats || draft.seats
+        }));
+    }
+
     if (window.MapCatalog) window.MapCatalog.setSelectedId(draft.mapId);
 
     const finishEngage = () => {
+        if (netActive && net.isHost && net.isHost() && window.AirArenaNetplayProtocol) {
+            const seed = net.getMatchSeed && net.getMatchSeed();
+            if (AirArenaNetplayProtocol.applyMatchSeed) {
+                AirArenaNetplayProtocol.applyMatchSeed(seed != null ? seed : AirArenaNetplayProtocol.makeMatchSeed());
+            }
+            // Refresh host matchConfig from local draft before engage.
+            if (typeof net.sendMatchConfig === 'function') {
+                // beginEngaged stores + sends
+            }
+        }
+
         const cfg = GameContext.stateMachine.applyMatchConfig(draft);
         uiRefreshTeamModeButtons();
         uiRefreshAIDebugPanel();
 
         let activeId = 'red';
-        const seatPick = [
-            ['red-1', 'red'],
-            ['red-2', 'red2'],
-            ['blue-1', 'blue'],
-            ['blue-2', 'blue2']
-        ];
-        for (let i = 0; i < seatPick.length; i++) {
-            const seatId = seatPick[i][0];
-            const teamId = seatPick[i][1];
-            if (cfg.seats[seatId] && cfg.seats[seatId].control === 'human' && teams[teamId] && teams[teamId].matchActive !== false) {
-                activeId = teamId;
-                break;
+        if (netActive && net.getLocalSeatId) {
+            activeId = net.getLocalSeatId() || activeId;
+        } else {
+            const seatPick = [
+                ['red-1', 'red'],
+                ['red-2', 'red2'],
+                ['blue-1', 'blue'],
+                ['blue-2', 'blue2']
+            ];
+            for (let i = 0; i < seatPick.length; i++) {
+                const seatId = seatPick[i][0];
+                const teamId = seatPick[i][1];
+                if (cfg.seats[seatId] && cfg.seats[seatId].control === 'human' && teams[teamId] && teams[teamId].matchActive !== false) {
+                    activeId = teamId;
+                    break;
+                }
             }
-        }
-        if (teams[activeId] && teams[activeId].aiEnabled) {
-            const living = (GameContext.getLivingTeamIds && GameContext.getLivingTeamIds()) || ['red', 'blue'];
-            const human = living.find((id) => teams[id] && !teams[id].aiEnabled);
-            if (human) activeId = human;
+            if (teams[activeId] && teams[activeId].aiEnabled) {
+                const living = (GameContext.getLivingTeamIds && GameContext.getLivingTeamIds()) || ['red', 'blue'];
+                const human = living.find((id) => teams[id] && !teams[id].aiEnabled);
+                if (human) activeId = human;
+            }
         }
 
         if (typeof window.selectTeam === 'function') window.selectTeam(activeId);
@@ -580,7 +940,17 @@ function uiConfirmMatchSetup() {
         }
         uiRefreshTeamModeButtons();
 
-        if (typeof uiAreBothTeamsAI === 'function' && uiAreBothTeamsAI() && typeof uiScheduleBothAITurn === 'function') {
+        if (netActive && net.beginEngaged) {
+            net.beginEngaged(draft, net.getMatchSeed && net.getMatchSeed());
+            try {
+                sessionStorage.setItem('aa-net-room', net.getRoom() || '');
+                sessionStorage.setItem('aa-net-reconnect', net.getReconnectToken() || '');
+                sessionStorage.setItem('aa-net-seat', net.getLocalSeatId() || activeId);
+                sessionStorage.setItem('aa-net-role', net.getRole() || '');
+            } catch (_) { /* ignore */ }
+        }
+
+        if (!netActive && typeof uiAreBothTeamsAI === 'function' && uiAreBothTeamsAI() && typeof uiScheduleBothAITurn === 'function') {
             uiScheduleBothAITurn();
         }
 
@@ -591,8 +961,9 @@ function uiConfirmMatchSetup() {
                 const found = window.MapCatalog.list().find((m) => m.id === draft.mapId);
                 if (found) mapLabel = found.name;
             }
+            const netTag = netActive ? ` · NET ${net.getRole()}/${net.getRoom() || ''}` : '';
             showSMSAlert(
-                `MATCH LOCKED: ${modeLabel} · ${mapLabel} · ALT ${cfg.spawnAltitude}m · SEP ${cfg.spawnSeparation}m`,
+                `MATCH LOCKED: ${modeLabel} · ${mapLabel} · ALT ${cfg.spawnAltitude}m · SEP ${cfg.spawnSeparation}m${netTag}`,
                 '#00ff88'
             );
         }
@@ -613,6 +984,7 @@ function uiConfirmMatchSetup() {
 
 function uiShouldSkipMatchSetup() {
     if (typeof window.AirArenaScenario !== 'undefined' && window.AirArenaScenario.isActive()) return true;
+    if (window.AirArenaBatchRun && typeof AirArenaBatchRun.isActive === 'function' && AirArenaBatchRun.isActive()) return true;
     try {
         const params = new URLSearchParams(window.location.search || '');
         if (params.get('skipSetup') === '1' || params.get('skipSetup') === 'true') return true;
@@ -621,8 +993,38 @@ function uiShouldSkipMatchSetup() {
     return false;
 }
 
+function uiBeginBatchMatch() {
+    if (window.AirArenaBatchRun && typeof AirArenaBatchRun.applyArena === 'function') {
+        AirArenaBatchRun.applyArena();
+    }
+    const cfg = (window.AirArenaBatchRun && typeof AirArenaBatchRun.buildMatchConfig === 'function')
+        ? AirArenaBatchRun.buildMatchConfig()
+        : GameContext.createDefaultMatchConfig('2v2');
+    if (window.MapCatalog && typeof window.MapCatalog.setSelectedId === 'function') {
+        window.MapCatalog.setSelectedId(cfg.mapId || 'citymap');
+    }
+    const applyMap = (typeof applySelectedMap === 'function')
+        ? applySelectedMap
+        : (GameContext.callService ? (id) => GameContext.callService('applySelectedMap', id) : null);
+    const finish = () => {
+        GameContext.stateMachine.applyMatchConfig(cfg);
+        if (typeof uiAreBothTeamsAI === 'function' && uiAreBothTeamsAI() && typeof uiScheduleBothAITurn === 'function') {
+            uiScheduleBothAITurn();
+        }
+        uiDismissStartupScreen();
+    };
+    const mapPromise = applyMap ? Promise.resolve(applyMap(cfg.mapId || 'citymap')) : Promise.resolve();
+    mapPromise
+        .catch((err) => console.warn('[batch-ai] map apply failed', err))
+        .finally(finish);
+}
+
 function uiBeginMatchOrShowSetup() {
     if (uiShouldSkipMatchSetup()) {
+        if (window.AirArenaBatchRun && typeof AirArenaBatchRun.isActive === 'function' && AirArenaBatchRun.isActive()) {
+            uiBeginBatchMatch();
+            return;
+        }
         const defaults = GameContext.createDefaultMatchConfig('1v1');
         GameContext.stateMachine.applyMatchConfig(defaults);
         if (typeof window.AirArenaScenario !== 'undefined' && window.AirArenaScenario.isActive()) {
@@ -700,6 +1102,9 @@ function uiScheduleBothAITurn() {
     const turnNo = Number(GameContext.state.currentTurn || 1);
     if (turnNo <= 1 && Array.isArray(GameContext.state.battleLog) && GameContext.state.battleLog.length === 0) {
         uiAutoAIFirstDelayDone = false;
+    }
+    if (window.AirArenaBatchRun && typeof AirArenaBatchRun.skipFirstDelay === 'function' && AirArenaBatchRun.skipFirstDelay()) {
+        uiAutoAIFirstDelayDone = true;
     }
     const delayMs = uiAutoAIFirstDelayDone ? 0 : 3000;
     const statusText = delayMs > 0 ? '3秒後自動提交' : '自動提交中';
@@ -975,14 +1380,18 @@ function uiTeamLabel(teamId) {
     const t = teams[teamId];
     const seat = teamId === 'red2' ? 'RED-2' : teamId === 'blue2' ? 'BLUE-2'
         : teamId === 'blue' ? 'BLUE-1' : 'RED-1';
-    let tag = 'P';
+    let role = '玩家';
     if (t && t.aiEnabled) {
-        tag = t.aiModel === 'Rei_03' ? 'Rei_03'
+        role = t.aiModel === 'Rei_03' ? 'Rei_03'
             : (t.aiModel === 'Rei_02' ? 'Rei_02'
                 : (t.aiModel === 'Rei_01' ? 'Rei_01'
-                    : (t.aiModel === 'test_01' ? 'test_01' : 'AI')));
+                    : 'AI'));
     }
-    return `${seat} [${tag}]`;
+    const cs = (t && t.callsign)
+        || (typeof AirArenaPilotRoster !== 'undefined' && AirArenaPilotRoster.callsignForTeam
+            ? AirArenaPilotRoster.callsignForTeam(t || { id: teamId })
+            : '');
+    return cs ? `${seat} ${role} ${cs}` : `${seat} ${role}`;
 }
 function uiSeatIds() {
     return ['red', 'red2', 'blue', 'blue2'];
@@ -1075,6 +1484,12 @@ function toggleReadyState(teamId) {
     if (t.aiEnabled) return;
     if (t.matchActive === false) return;
 
+    const net = window.AirArenaNetplay;
+    if (net && net.isActive && net.isActive() && net.isEngaged && net.isEngaged()) {
+        // Only local netplay seat may ready; remote seat is driven by intents.
+        if (net.getLocalSeatId && teamId !== net.getLocalSeatId()) return;
+    }
+
     const nextReady = !t.ready;
     if (!GameContext.stateMachine.setReady(teamId, nextReady)) return;
 
@@ -1085,6 +1500,14 @@ function toggleReadyState(teamId) {
     updateDashboardUI(teams[uiCurrentTeamId()]);
 
     if (nextReady) {
+        if (net && net.shouldInterceptReady && net.shouldInterceptReady(teamId)) {
+            net.captureAndSendLocalIntent(teamId);
+            if (net.isGuest && net.isGuest()) {
+                uiShowComputingOverlay('等待房主結算…');
+                uiSetComputeSub('已送出指令');
+            }
+            return;
+        }
         // Async: show 運算中, yield paint, then AI + turn resolve (keeps spinner alive during freeze).
         uiRunPendingAIAndMaybeResolve().then((resolved) => {
             if (resolved) return;
@@ -1106,6 +1529,9 @@ function uiToggleAI(teamId) {
         t.aiModel = t.aiModel || ((window.AirArenaAIRegistry && window.AirArenaAIRegistry.DEFAULT_MODEL) || 'test_01');
     } else {
         t.aiModel = null;
+    }
+    if (typeof AirArenaPilotRoster !== 'undefined' && AirArenaPilotRoster.applyControlVoice) {
+        AirArenaPilotRoster.applyControlVoice(t, !t.aiEnabled, Object.keys(teams).map((id) => teams[id]));
     }
     if (!t.aiEnabled && uiAIDebugExpandedTeam === teamId) uiAIDebugExpandedTeam = null;
     uiClearAutoAIBattleTimer();
@@ -1348,15 +1774,22 @@ function uiEmptyWeaponCounters() {
         chaff: 0,
         flare: 0,
         chaffEsc: 0,
-        flareEsc: 0
+        flareEsc: 0,
+        kills: 0,
+        killsGun: 0,
+        killsMsl: 0
     };
 }
 
 function uiGetAIWeaponCounters(teamId) {
     const team = uiGetAIDebugTeam(teamId);
-    if (!team) return uiEmptyWeaponCounters();
-    if (!team.aiWeaponCounters) return uiEmptyWeaponCounters();
-    return { ...team.aiWeaponCounters };
+    const base = (!team || !team.aiWeaponCounters)
+        ? uiEmptyWeaponCounters()
+        : { ...uiEmptyWeaponCounters(), ...team.aiWeaponCounters };
+    base.kills = Number(team && team.combatKills) || Number(base.kills) || 0;
+    base.killsGun = Number(team && team.combatKillsGun) || Number(base.killsGun) || 0;
+    base.killsMsl = Number(team && team.combatKillsMsl) || Number(base.killsMsl) || 0;
+    return base;
 }
 
 /** Match-long tallies; bumps once per turn (same-turn trail replace does not double-count). */
@@ -1499,6 +1932,15 @@ function uiBuildAIDebugSnapshot(teamId, opts = {}) {
         ready: !!team.ready,
         isDestroyed: !!team.isDestroyed,
         deathCause: team.deathCause || (action && action.deathCause) || null,
+        killedBy: team.killedBy || null,
+        combatKills: Number(team.combatKills) || 0,
+        combatKillsGun: Number(team.combatKillsGun) || 0,
+        combatKillsMsl: Number(team.combatKillsMsl) || 0,
+        tacticalRole: team.aiTacticalRole || null,
+        tacticalRoleWhy: team.aiTacticalRoleWhy || null,
+        tacticalRoleUntilTurn: Number.isFinite(Number(team.aiTacticalRoleUntilTurn))
+            ? Number(team.aiTacticalRoleUntilTurn)
+            : null,
         matchActive: team.matchActive !== false,
         aircraft: {
             type: team.type || 'mig21',
@@ -1588,7 +2030,11 @@ function uiFormatAIDebugText(teamId, opts = {}) {
     lines.push(`state: ${(snap.action && snap.action.state) || '-'}  status: ${snap.statusText || '-'}`);
     if (snap.isDestroyed) {
         const act = snap.action || {};
-        lines.push(`death: cause=${act.deathCause || snap.deathCause || '-'} stalled=${act.deathStalled ?? '-'} lastAlive=${act.lastAliveState || '-'} (${act.lastAliveStatusText || '-'})`);
+        const kb = snap.killedBy;
+        const kbBit = kb && kb.attackerId
+            ? ` killedBy=${kb.attackerId}/${kb.weapon || '-'}${kb.friendly ? '/friendly' : ''}`
+            : '';
+        lines.push(`death: cause=${act.deathCause || snap.deathCause || '-'} stalled=${act.deathStalled ?? '-'}${kbBit} lastAlive=${act.lastAliveState || '-'} (${act.lastAliveStatusText || '-'})`);
     }
     if (snap.aircraft) {
         const a = snap.aircraft;
@@ -1648,7 +2094,8 @@ function uiFormatAIDebugText(teamId, opts = {}) {
         const w = snap.weaponCounters;
         lines.push(
             `weaponCounters: turns=${w.turns} mslQ=${w.mslQ} gunQ=${w.gunQ} illum=${w.illum}` +
-            ` atk/prep=${w.mslAtk}/${w.mslPrep} chaff=${w.chaff}(${w.chaffEsc}esc) flare=${w.flare}(${w.flareEsc}esc)`
+            ` atk/prep=${w.mslAtk}/${w.mslPrep} chaff=${w.chaff}(${w.chaffEsc}esc) flare=${w.flare}(${w.flareEsc}esc)` +
+            ` kills=${w.kills || 0}(g${w.killsGun || 0}/m${w.killsMsl || 0})`
         );
     }
     if (trail.length) {
@@ -1697,6 +2144,8 @@ function uiBuildAIRosterSnapshot() {
             ready: snap.ready,
             isDestroyed: snap.isDestroyed,
             deathCause: snap.deathCause || null,
+            killedBy: snap.killedBy || null,
+            combatKills: snap.combatKills || 0,
             hp: snap.aircraft ? snap.aircraft.hp : null,
             ap: snap.aircraft ? snap.aircraft.ap : null,
             wingmanOrder: snap.wingmanOrder,
@@ -1734,12 +2183,16 @@ function uiFormatAIRosterText(roster) {
     (dump.rosterSummary || []).forEach((r) => {
         const w = r.weaponCounters;
         const wBit = w
-            ? `  wpn=msl${w.mslQ}/gun${w.gunQ}/ill${w.illum}`
+            ? `  wpn=msl${w.mslQ}/gun${w.gunQ}/ill${w.illum}/kills${w.kills || 0}`
             : '';
+        const kb = r.killedBy;
+        const kbBit = kb && kb.attackerId ? `  killedBy=${kb.attackerId}/${kb.weapon || '-'}` : '';
         lines.push(
             `- ${String(r.id).toUpperCase()}  ${r.faction}  ${String(r.control).toUpperCase()}` +
             `  ready=${r.ready} destroyed=${r.isDestroyed}` +
             `  hp=${r.hp ?? '-'} ap=${r.ap ?? '-'}` +
+            `  kills=${r.combatKills ?? 0}` +
+            kbBit +
             `  order=${r.wingmanOrder || '-'} lead=${r.leadId || '-'}` +
             `  target=${r.targetId || '-'} locked=${r.lockedTargetId || '-'}` +
             `  trail=${r.trailCount ?? 0}${r.trailFrozen ? 'F' : ''}` +
@@ -2109,13 +2562,25 @@ function uiApplyArenaSpawnFromPanel() {
     uiSyncSpawnSelects(altitude, separation);
     const sm = GameContext.stateMachine;
     if (!sm || typeof sm.applySpawnLayout !== 'function') return false;
-    const applied = sm.applySpawnLayout({ altitude, separation });
-    const ids = (GameContext.getActiveMatchIds && GameContext.getActiveMatchIds()) || ['red', 'blue'];
-    ids.forEach((id) => {
-        if (typeof sm.faceOpponent === 'function') sm.faceOpponent(id);
-        const t = GameContext.getTeam(id);
-        if (t && typeof window.updateTacticalPreview === 'function') window.updateTacticalPreview(t);
+    const applied = sm.applySpawnLayout({
+        altitude,
+        separation,
+        formation: (GameContext.getMatchConfig && GameContext.getMatchConfig().spawnFormation) || 'pair',
+        facing: (GameContext.getMatchConfig && GameContext.getMatchConfig().spawnFacing)
     });
+    const ids = (GameContext.getActiveMatchIds && GameContext.getActiveMatchIds()) || ['red', 'blue'];
+    if (!applied || applied.facing === 'face') {
+        ids.forEach((id) => {
+            if (typeof sm.faceOpponent === 'function') sm.faceOpponent(id);
+            const t = GameContext.getTeam(id);
+            if (t && typeof window.updateTacticalPreview === 'function') window.updateTacticalPreview(t);
+        });
+    } else {
+        ids.forEach((id) => {
+            const t = GameContext.getTeam(id);
+            if (t && typeof window.updateTacticalPreview === 'function') window.updateTacticalPreview(t);
+        });
+    }
     if (typeof showSMSAlert === 'function') {
         showSMSAlert(`起飛位置: ALT ${applied.altitude}m · SEP ${applied.separation}m`, '#00ff88');
     }
@@ -2864,6 +3329,7 @@ function uiOnEnginePhaseChanged(e) {
             break;
         case 'planning':
             uiHideComputingOverlay();
+            if (window.AirArenaRadioHud && AirArenaRadioHud.hide) AirArenaRadioHud.hide();
             if(dashboard) { dashboard.style.pointerEvents = 'auto'; dashboard.style.opacity = '1.0'; }
             if (data.wreckFall) {
                 // Wreck auto-turn is owned by combat.scheduleWreckFallTurn — never also schedule AI.
@@ -2887,6 +3353,7 @@ function uiOnEnginePhaseChanged(e) {
         case 'game_over':
             uiClearAutoAIBattleTimer();
             uiHideComputingOverlay();
+            if (window.AirArenaRadioHud && AirArenaRadioHud.hide) AirArenaRadioHud.hide();
             if (window.AirArenaMultiView && typeof window.AirArenaMultiView.collapseForHumanPlanning === 'function') {
                 window.AirArenaMultiView.collapseForHumanPlanning();
             }

@@ -447,6 +447,30 @@ function spawnAircraftDebris(pos, quat, colorHex) {
 }
 window.spawnAircraftDebris = spawnAircraftDebris;
 
+function clearAircraftDebris() {
+    for (let i = aircraftDebris.length - 1; i >= 0; i--) {
+        const mesh = aircraftDebris[i];
+        if (mesh) {
+            if (mesh.parent) mesh.parent.remove(mesh);
+            else if (typeof scene !== 'undefined') scene.remove(mesh);
+            if (mesh.geometry) mesh.geometry.dispose();
+            if (mesh.material) mesh.material.dispose();
+        }
+        aircraftDebris.splice(i, 1);
+    }
+    [explosionPool, flashPool].forEach((pool) => {
+        if (!pool) return;
+        pool.forEach((mesh) => {
+            if (mesh && mesh.userData && typeof mesh.userData.debrisLife === 'number') {
+                mesh.visible = false;
+                delete mesh.userData.debrisLife;
+                delete mesh.userData.debrisMaxLife;
+            }
+        });
+    });
+}
+window.clearAircraftDebris = clearAircraftDebris;
+
 function updateAircraftDebris() {
     const minH = (CONFIG.rules && CONFIG.rules.minFlightHeight) ? CONFIG.rules.minFlightHeight : 0.5;
     for (let i = aircraftDebris.length - 1; i >= 0; i--) {
@@ -1222,6 +1246,14 @@ function renderCombatFrame(currentLog, animProgress) {
     vfxToRender.forEach(({ trigger, ageFrames }) => {
         if (ageFrames < 0) return;
 
+        if (trigger.type === 'debris') {
+            if (ageFrames <= 2 && !trigger._replaySpawned && typeof spawnAircraftDebris === 'function') {
+                trigger._replaySpawned = true;
+                spawnAircraftDebris(trigger.pos, trigger.quat, trigger.color);
+            }
+            return;
+        }
+
         if (trigger.type === 'spark_explosion') {
             const maxLife = Number(trigger.life) > 0 ? Number(trigger.life) : sparkLifeDefault;
             if (ageFrames >= maxLife) return;
@@ -1233,7 +1265,9 @@ function renderCombatFrame(currentLog, animProgress) {
             let windDir = wind.lengthSq() > 1e-8 ? wind.clone().normalize() : new THREE.Vector3(0, -0.15, -1).normalize();
             const windAccel = windDir.multiplyScalar(windMul * 0.12);
             const fountain = !!trigger.fountain;
-            const vels = trigger.velocities || [];
+            const vels = (typeof sparkVelocitiesOf === 'function')
+                ? sparkVelocitiesOf(trigger)
+                : (trigger.velocities || []);
             for (let i = 0; i < vels.length; i++) {
                 if (sparkIdx >= sparkStreakPool.length) break;
                 let p = trigger.pos.clone();
@@ -1598,6 +1632,11 @@ function renderCombatFrame(currentLog, animProgress) {
     });
 
     for (; bulletIdx < visualBullets.length; bulletIdx++) { visualBullets[bulletIdx].visible = false; }
+
+    if (window.AirArenaRadioHud && typeof window.AirArenaRadioHud.sync === 'function') {
+        const seeking = !!(window.AirArenaRadioHud.isScrubbing && window.AirArenaRadioHud.isScrubbing());
+        window.AirArenaRadioHud.sync(trackIdx, currentLog.radioCues, { seek: seeking, holdSteps: 80 });
+    }
 }
 
 // ============================================================================

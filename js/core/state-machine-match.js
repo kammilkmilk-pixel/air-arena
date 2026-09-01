@@ -14,19 +14,53 @@ window.StateMachineMatchApi = {
         const separation = (GameContext.sanitizeSpawnSeparation
             ? GameContext.sanitizeSpawnSeparation(opts.separation != null ? opts.separation : cfg.spawnSeparation)
             : Number(opts.separation || cfg.spawnSeparation || 100));
+        const formation = (opts.formation === 'cross' || cfg.spawnFormation === 'cross')
+            ? 'cross'
+            : 'pair';
+        const facingRaw = opts.facing || opts.spawnFacing || cfg.spawnFacing;
+        const facing = (facingRaw === 'face' || facingRaw === 'outbound' || facingRaw === 'tangent')
+            ? facingRaw
+            : (formation === 'cross' ? 'tangent' : 'face');
         const half = separation * 0.5;
-        const wingX = 8;
-        const wingZ = 4;
-        const layout = {
-            red: { x: 10, y: altitude, z: -half, yaw: 0 },
-            red2: { x: 10 + wingX, y: altitude, z: -half - wingZ, yaw: 0 },
-            blue: { x: 10, y: altitude, z: half, yaw: Math.PI },
-            blue2: { x: 10 + wingX, y: altitude, z: half + wingZ, yaw: Math.PI }
-        };
-        Object.keys(layout).forEach((id) => {
+        let cx = 10;
+        let cz = 0;
+        try {
+            const map = (typeof CONFIG !== 'undefined' && CONFIG.map) ? CONFIG.map : {};
+            if (Number.isFinite(Number(map.centerX))) cx = Number(map.centerX);
+            if (formation === 'cross' && Number.isFinite(Number(map.centerZ))) cz = Number(map.centerZ);
+        } catch (_) { /* keep defaults */ }
+        let spots;
+        if (formation === 'cross') {
+            // Cardinal cross around map center: red N, blue S, red2 W, blue2 E.
+            // inbound yaw flies at the city; tangent = +90° clockwise orbit;
+            // outbound = +180° away from center. faceOpponent is skipped unless facing=face.
+            const inbound = {
+                red: 0,
+                blue: Math.PI,
+                red2: Math.PI / 2,
+                blue2: -Math.PI / 2
+            };
+            const extra = facing === 'outbound' ? Math.PI : (facing === 'tangent' ? Math.PI / 2 : 0);
+            spots = {
+                red: { x: cx, y: altitude, z: cz - half, yaw: inbound.red + extra },
+                blue: { x: cx, y: altitude, z: cz + half, yaw: inbound.blue + extra },
+                red2: { x: cx - half, y: altitude, z: cz, yaw: inbound.red2 + extra },
+                blue2: { x: cx + half, y: altitude, z: cz, yaw: inbound.blue2 + extra }
+            };
+        } else {
+            const wingX = 8;
+            const wingZ = 4;
+            spots = {
+                red: { x: cx, y: altitude, z: -half, yaw: 0 },
+                red2: { x: cx + wingX, y: altitude, z: -half - wingZ, yaw: 0 },
+                blue: { x: cx, y: altitude, z: half, yaw: Math.PI },
+                blue2: { x: cx + wingX, y: altitude, z: half + wingZ, yaw: Math.PI }
+            };
+        }
+        Object.keys(spots).forEach((id) => {
             const t = this.getTeamOrNull(id);
             if (!t || !t.wrapper) return;
-            const spot = layout[id];
+            const spot = spots[id];
             t.wrapper.position.set(spot.x, spot.y, spot.z);
             t.wrapper.rotation.set(0, spot.yaw, 0);
             t.wrapper.quaternion.setFromEuler(t.wrapper.rotation);
@@ -39,7 +73,6 @@ window.StateMachineMatchApi = {
                 if (initialPositions[id].pos) initialPositions[id].pos.copy(t.wrapper.position);
                 if (initialPositions[id].quat) initialPositions[id].quat.copy(t.wrapper.quaternion);
             }
-            // Clear path preview so next plan starts from new spawn.
             t.pathPoints = null;
             t.pathQuats = null;
             t.chain = null;
@@ -52,20 +85,32 @@ window.StateMachineMatchApi = {
             }
             GameContext.state.matchConfig.spawnAltitude = altitude;
             GameContext.state.matchConfig.spawnSeparation = separation;
+            GameContext.state.matchConfig.spawnFormation = formation;
+            GameContext.state.matchConfig.spawnFacing = facing;
         }
-        return { altitude, separation };
+        return { altitude, separation, formation, facing };
     },
 
     applyMatchConfig(config) {
         const cfg = GameContext.setMatchConfig(config || GameContext.getMatchConfig());
         GameContext.state.matchReady = false;
         const is2v2 = cfg.mode === '2v2';
+        const usedPilots = [];
+        if (typeof window.clearAircraftDebris === 'function') {
+            try { window.clearAircraftDebris(); } catch (_) { /* ignore */ }
+        }
+        if (typeof AirArenaAI !== 'undefined' && AirArenaAI.mergeDivergeMemory) {
+            AirArenaAI.mergeDivergeMemory = {};
+        }
 
         // Spawn altitude / separation before facing / AI enable.
-        this.applySpawnLayout({
+        const laid = this.applySpawnLayout({
             altitude: cfg.spawnAltitude,
-            separation: cfg.spawnSeparation
+            separation: cfg.spawnSeparation,
+            formation: cfg.spawnFormation,
+            facing: cfg.spawnFacing
         });
+        const faceOnEnable = !laid || laid.facing === 'face';
 
         const setUnitActive = (teamId, active) => {
             const t = this.getTeamOrNull(teamId);
@@ -81,11 +126,20 @@ window.StateMachineMatchApi = {
                 t.deathCause = null;
                 t.deathStalled = null;
                 t.deathAp = null;
+                t.killedBy = null;
+                t.lastCombatHitBy = null;
+                t.killCredited = false;
+                t.combatKills = 0;
+                t.combatKillsGun = 0;
+                t.combatKillsMsl = 0;
                 t.wreckPhase = null;
                 t.wreckBurstTurn = 0;
                 t.hp = MAX_HP;
                 t.aiLastAction = null;
                 t.aiPreDeathAction = null;
+                t.aiTacticalRole = null;
+                t.aiTacticalRoleWhy = null;
+                t.aiTacticalRoleUntilTurn = -1;
                 t.aiDecisionTrail = [];
                 t.aiDecisionTrailFrozen = false;
                 t.aiWeaponCounters = null;
@@ -95,11 +149,20 @@ window.StateMachineMatchApi = {
                 t.deathCause = null;
                 t.deathStalled = null;
                 t.deathAp = null;
+                t.killedBy = null;
+                t.lastCombatHitBy = null;
+                t.killCredited = false;
+                t.combatKills = 0;
+                t.combatKillsGun = 0;
+                t.combatKillsMsl = 0;
                 t.wreckPhase = null;
                 t.wreckBurstTurn = 0;
                 t.hp = MAX_HP;
                 t.aiLastAction = null;
                 t.aiPreDeathAction = null;
+                t.aiTacticalRole = null;
+                t.aiTacticalRoleWhy = null;
+                t.aiTacticalRoleUntilTurn = -1;
                 t.aiDecisionTrail = [];
                 t.aiDecisionTrailFrozen = false;
                 t.aiWeaponCounters = null;
@@ -112,6 +175,16 @@ window.StateMachineMatchApi = {
         setUnitActive('blue', true);
         setUnitActive('red2', is2v2);
         setUnitActive('blue2', is2v2);
+
+        const lab = typeof AirArenaChallenges !== 'undefined'
+            && AirArenaChallenges.isLab
+            && AirArenaChallenges.isLab(cfg.challengeId);
+        if (!lab && typeof AirArenaPilotRoster !== 'undefined' && AirArenaPilotRoster.assignCatalogPilots) {
+            AirArenaPilotRoster.assignCatalogPilots(
+                cfg.seats,
+                is2v2 ? ['red-1', 'red-2', 'blue-1', 'blue-2'] : ['red-1', 'blue-1']
+            );
+        }
 
         const applySeat = (seatId, teamId) => {
             const seat = cfg.seats[seatId];
@@ -165,6 +238,18 @@ window.StateMachineMatchApi = {
             t.pendingPylonLoadout = (typeof sanitizePylonLoadout === 'function')
                 ? sanitizePylonLoadout(pylons)
                 : (Array.isArray(pylons) ? pylons.slice(0, 4) : ['fox1', 'fox2', 'fox2', 'fox1']);
+            if (typeof AirArenaPilotRoster !== 'undefined' && AirArenaPilotRoster.applyToTeam) {
+                const requested = seat.pilotId === 'random' ? null : seat.pilotId;
+                const pid = AirArenaPilotRoster.resolveSeatPilotId(
+                    seatId,
+                    requested,
+                    usedPilots,
+                    `${cfg.challengeId || 'skirmish'}:${seatId}:${cfg.playerFaction || 'red'}`
+                );
+                seat.pilotId = pid;
+                usedPilots.push(pid);
+                AirArenaPilotRoster.applyToTeam(t, pid);
+            }
             if (t.pylons) {
                 t.pylons.forEach((p) => {
                     if (p.mesh && p.mesh.parent) p.mesh.parent.remove(p.mesh);
@@ -182,11 +267,13 @@ window.StateMachineMatchApi = {
             if (typeof tryAttachAllPylons === 'function') {
                 try { tryAttachAllPylons(); } catch (e) { /* ignore */ }
             }
-            ['red', 'red2', 'blue', 'blue2'].forEach((id) => {
-                const t = this.getTeamOrNull(id);
-                if (!t || !t.matchActive) return;
-                this.faceOpponent(id);
-            });
+            if (faceOnEnable) {
+                ['red', 'red2', 'blue', 'blue2'].forEach((id) => {
+                    const t = this.getTeamOrNull(id);
+                    if (!t || !t.matchActive) return;
+                    this.faceOpponent(id);
+                });
+            }
         } else {
             if (cfg.seats['red-2']) {
                 cfg.seats['red-2'].teamId = 'red2';
@@ -196,8 +283,10 @@ window.StateMachineMatchApi = {
                 cfg.seats['blue-2'].teamId = 'blue2';
                 cfg.seats['blue-2'].deferred = true;
             }
-            this.faceOpponent('red');
-            this.faceOpponent('blue');
+            if (faceOnEnable) {
+                this.faceOpponent('red');
+                this.faceOpponent('blue');
+            }
             if (typeof tryAttachAllPylons === 'function') {
                 try { tryAttachAllPylons(); } catch (e) { /* ignore */ }
             }

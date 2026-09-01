@@ -17,12 +17,22 @@
                     <span class="startup-sub">ENGAGEMENT AUTHORIZED</span>
                 </div>
                 <div id="match-setup-panel" hidden>
-                    <div class="match-setup-title">MATCH SETUP</div>
+                    <div class="match-setup-title" id="match-setup-title">目錄</div>
+                    <div class="match-setup-section">
+                        <div class="match-setup-label">目錄 · 挑戰</div>
+                        <select id="match-challenge-select" aria-label="挑戰"></select>
+                        <div id="match-challenge-hint" class="match-setup-hint">自由交戰：自選地圖與模式。挑戰會帶入建議地圖／人數（勝負條件尚未強制裁判）。</div>
+                    </div>
                     <div class="match-setup-section">
                         <div class="match-setup-label">對戰模式</div>
                         <div class="match-mode-row" role="group" aria-label="match mode">
                             <button type="button" class="match-mode-btn is-active" data-mode="1v1">1 vs 1</button>
                             <button type="button" class="match-mode-btn" data-mode="2v2">2 vs 2</button>
+                        </div>
+                        <div class="match-faction-row" role="group" aria-label="player faction">
+                            <span class="match-setup-label" style="margin:0;">本機陣營</span>
+                            <button type="button" class="match-faction-btn is-active" data-faction="red">紅</button>
+                            <button type="button" class="match-faction-btn" data-faction="blue">藍</button>
                         </div>
                         <div id="match-mode-hint" class="match-setup-hint">1v1：紅藍各一架，適合單挑與練習武器／箔條。僅 RED-1 與 BLUE-1 參戰。</div>
                     </div>
@@ -42,6 +52,7 @@
                                     <option value="45" selected>45m 戰鬥帶</option>
                                     <option value="60">60m 高空</option>
                                     <option value="80">80m 屋頂帶</option>
+                                    <option value="92">92m 屋頂上</option>
                                 </select>
                             </label>
                             <label class="match-spawn-field" for="match-spawn-sep">
@@ -57,13 +68,23 @@
                         <div id="match-map-hint" class="match-setup-hint">內建地圖可直接選用（含預烘焙 AI 摘要）。自訂圖：先用 Map Editor 匯出 JSON，再按「加入」；僅存於本機瀏覽器。起始高度／相對距離在 ENGAGE 時套用雙方起飛位置。</div>
                     </div>
                     <div class="match-setup-section match-setup-section-seats">
-                        <div class="match-setup-label">機組配置</div>
+                        <div class="match-setup-label-row">
+                            <div class="match-setup-label">機組配置</div>
+                            <button type="button" id="btn-pilot-random" class="match-map-btn">隨機呼號</button>
+                        </div>
                         <div id="match-seat-list" class="match-seat-list"></div>
                     </div>
                 </div>
             </div>
         </div>
         <div id="startup-setup-footer" hidden>
+            <div class="match-net-row">
+                <button type="button" id="btn-match-host" class="match-map-btn" title="建立私人房間（WebSocket 邀請碼；本機可用 ?hostRoom=test&netRole=host）">建立房間</button>
+                <button type="button" id="btn-match-join" class="match-map-btn" title="輸入邀請碼加入">加入</button>
+                <button type="button" id="btn-match-queue" class="match-map-btn" title="公開 1v1 排隊配對">快速配對</button>
+                <button type="button" id="btn-match-reconnect" class="match-map-btn" title="用上次 seat token 重連" hidden>重連</button>
+            </div>
+            <div id="match-net-status" class="match-setup-hint match-net-status" hidden></div>
             <button type="button" id="btn-match-engage" class="match-engage-btn">ENGAGE</button>
         </div>
     </div>
@@ -87,6 +108,23 @@
                 <span class="replay-status-spinner" id="replay-status-spinner" aria-hidden="true"></span>
                 <span id="replay-status">狀態: 戰術規劃中</span>
                 <span id="compute-lock-sub" class="replay-status-sub" hidden></span>
+                <div id="radio-hud" aria-live="polite">
+                    <div id="radio-bust" aria-hidden="true">--</div>
+                    <div class="radio-hud-copy">
+                        <div class="radio-hud-top">
+                            <span id="radio-lamp" aria-hidden="true"></span>
+                            <span id="radio-callsign">RADIO</span>
+                        </div>
+                        <div id="radio-subtitle">電台待命</div>
+                    </div>
+                    <div class="radio-hud-tools">
+                        <label class="radio-tts-label" for="radio-tts-toggle">
+                            <input type="checkbox" id="radio-tts-toggle">
+                            電台語音
+                        </label>
+                        <button type="button" id="radio-preview-btn">試聽</button>
+                    </div>
+                </div>
             </div>
             <div id="replay-team-roster" class="replay-team-roster" aria-label="team seats">
                 <div class="team-seat-col" data-team-id="red2" hidden>
@@ -180,8 +218,6 @@
     </div>
 </div>
 
-<div id="scenario-test-banner" class="scenario-test-banner"></div>
-
 <div id="arena-mode-panel" class="arena-mode-panel">
     <label for="arena-mode-select">場地模式</label>
     <select id="arena-mode-select">
@@ -198,6 +234,7 @@
         <option value="45" selected>45m 戰鬥帶</option>
         <option value="60">60m 高空</option>
         <option value="80">80m 屋頂帶</option>
+        <option value="92">92m 屋頂上</option>
     </select>
     <label for="arena-spawn-sep">相對距離</label>
     <select id="arena-spawn-sep" aria-label="相對距離">
@@ -417,6 +454,12 @@
     <script src="js/core/map-loader.js"></script>
     <script src="js/core/map-catalog.js"></script>
     <script src="js/core/context.js"></script>
+    <script src="js/core/pilot-roster.js"></script>
+    <script src="js/core/radio-cues.js"></script>
+    <script src="js/core/match-challenges.js"></script>
+    <script src="js/core/turn-log-serialize.js"></script>
+    <script src="js/core/netplay-protocol.js"></script>
+    <script src="js/core/host-authority.js"></script>
     <script src="js/core/team-state.js"></script>
     <script src="js/core/compat-aliases.js"></script>
     <script src="js/core/state-machine-match.js"></script>
@@ -438,9 +481,13 @@
     <script src="js/ai/ai-model-registry.js"></script>
     <script src="js/ai/scenario-flare-test.js"></script>
     <script src="js/view/render.js"></script>
+    <script src="js/view/audio-mixer.js"></script>
+    <script src="js/view/radio-voice.js"></script>
+    <script src="js/view/radio-hud.js"></script>
     <script src="js/view/hud.js"></script>
     <script src="js/view/multi-view.js"></script>
     <script src="js/view/ui.js"></script>
+    <script src="js/core/batch-ai-run.js"></script>
     <script src="js/game.js"></script>
 </body>
 </html>

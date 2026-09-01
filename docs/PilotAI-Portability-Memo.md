@@ -94,6 +94,7 @@ applyPilotAction / simulateFlight / ACMI 播放
 
 - 整包脫 Three 或上 Godot 重寫  
 - 為「可移植」重寫整份 `pilot-ai.js`  
+- **A.0 期間拆 mega-file**（M17：live ~23.4k，2026-08-29）。分類可維修、麵條是單點；之後對地／編隊開新層，不碎切凍結腦。見 Path-Cooperation「檔案可維修性」。
 - 用引擎物理／`RayCast3D` 重寫城區感知取代現有 bake＋評分  
 - 未對齊 regression 就改 hard-contact 語義  
 - 讓 live decide 與 `tools/ai-regression.js` surrogate 長期分叉卻不在 `TECH-DEBT` 記一筆
@@ -123,6 +124,20 @@ worldSnapshot：純數值 + bake + AABB（不含 wrapper / Object3D / Raycaster�
 
 ---
 
+## 呈現層契約（電台／重播）
+
+`decide` 仍只出 `pilotAction`。玩家台詞**不**讀 dump 針（`T76`／`survivalWpGate:`）。
+
+- 戰鬥 log 可附 `radioCues[]`：`{ step, speakerSeatId, callsign, event, textKey }`
+- 凍結事件：`illuminate` / `fire_gun` / `fire_msl` / `urban_escape` / `kill` / `wingman_down`
+- 建構：`AirArenaRadioCues.buildFromTurn`（combat log + 席位 chain／aiLastAction）
+- ACMI 用同一 `step` 播字幕／通話燈；錄音包之後走 `voice` 軌，前期 TTS 可關
+- 駕駛員 roster（`pilotId`／callsign／voiceSetId）只給 UI；**不要**讓 `decide` 讀肖像
+
+Host-authority 連線傳的是剝過 THREE 的回合 log（`AirArenaTurnLogSerialize`），不是每幀搖桿。
+
+---
+
 ## 與其它文件的關係
 
 | 文件 | 角色 |
@@ -130,9 +145,11 @@ worldSnapshot：純數值 + bake + AABB（不含 wrapper / Object3D / Raycaster�
 | `README.md` | 系統字典（現行行為與架構） |
 | `TECH-DEBT.md` | 債與計劃進度 |
 | `docs/Arena-Map-Onboarding-Memo.md` | 新場地：bake + envelope |
+| `docs/Urban-Survival-Convergence.md` | 城區 stick／bake |
 | **本檔** | PilotAI 優先、網頁試玩期預先準備、日後引擎移植邊界 |
+| `docs/Path-Cooperation-Roadmap.md` | 接敵走廊／雙機合作／新武器與機體插入點；**M17 拆檔時機** |
 | `docs/Tactical-Development-Memo.md` | **過時**，勿當現行架構 |
 
 ---
 
-*文件版本 2026-08-05*
+*文件版本 2026-08-29*

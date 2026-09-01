@@ -6,13 +6,19 @@
   "scripts": {
     "start": "serve -l 8080",
     "dev": "serve -l 8080",
+    "room": "node tools/room-server.js",
+    "dev:net": "node tools/room-server.js",
+    "test:netplay": "node tools/netplay-protocol-smoke.js",
+    "test:room": "node tools/room-server-smoke.js",
     "dev:ensure": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/ensure-dev-server.ps1",
     "dev:open": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/ensure-dev-server.ps1 -Open",
     "autotune": "node tools/ai-autotune.js --iterations 120 --episodes 60 --turns 80",
     "autotune:merge": "node tools/ai-autotune-merge.js --top 3 --stableN 3",
     "autotune:apply": "node tools/ai-apply-tuning.js --source consensus",
     "autotune:pipeline": "npm run autotune && npm run autotune:merge && npm run autotune:apply",
-    "test:ai": "node tools/decide-gate-smoke.js && node tools/building-risk-smoke.js && node tools/weapon-envelope-smoke.js && node tools/munition-doctrine-smoke.js && node tools/sarh-support-smoke.js && node tools/ai-map-smoke.js && node tools/phase3-route-smoke.js && node tools/arena-envelope-smoke.js && node tools/ai-regression.js",
+    "test:ai": "node tools/decide-gate-smoke.js && node tools/building-risk-smoke.js && node tools/weapon-envelope-smoke.js && node tools/munition-doctrine-smoke.js && node tools/sarh-support-smoke.js && node tools/ai-map-smoke.js && node tools/phase3-route-smoke.js && node tools/arena-envelope-smoke.js && node tools/radio-cues-smoke.js && node tools/turn-log-serialize-smoke.js && node tools/netplay-protocol-smoke.js && node tools/batch-ai-run-smoke.js && node tools/dump-ingest-smoke.js && node tools/tap-role-gate-smoke.js && node tools/ai-regression.js",
+    "test:radio-cues": "node tools/radio-cues-smoke.js",
+    "test:tap-role-gate": "node tools/tap-role-gate-smoke.js",
     "test:decide-gates": "node tools/decide-gate-smoke.js",
     "test:building-risk": "node tools/building-risk-smoke.js",
     "test:weapon-envelope": "node tools/weapon-envelope-smoke.js",
@@ -22,11 +28,15 @@
     "test:phase3": "node tools/phase3-route-smoke.js",
     "test:arena-envelope": "node tools/arena-envelope-smoke.js",
     "analyze:weapon-dump": "node tools/weapon-efficiency-dump.js",
+    "dump:ingest": "node tools/dump-ingest.js",
+    "batch:ai": "node tools/batch-ai-matches.js",
+    "test:batch-ai": "node tools/batch-ai-run-smoke.js && node tools/dump-ingest-smoke.js",
     "bake:ai-map": "node tools/ai-map-smoke.js --write",
     "test:ai:gap": "node tools/building-risk-smoke.js && node tools/ai-regression.js --stage G-urban-gap-corridor --runs 2 --episodes 20",
     "tuning:dashboard": "node tools/tuning-dashboard-server.js"
   },
   "devDependencies": {
-    "serve": "^14.2.4"
+    "serve": "^14.2.4",
+    "ws": "^8.21.3"
   }
 }

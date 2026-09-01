@@ -2,9 +2,19 @@
 
 ## 目前更新狀態
 
-**版本快照：v3.0+**（文件更新 **2026-08-05 · 備份點**）  
+**版本快照：v3.0+**（文件更新 **2026-08-25 · 下一波軌道落地**）  
 基於 v2.2 Stable 架構；v3.0 協作編隊／殘骸之後，續修 AI 城區、SARH／箔條、鏡頭與頂欄 UX。  
 **備份前請以本節 + [`TECH-DEBT.md`](./TECH-DEBT.md) 為準。**
+
+### 下一波軌道（2026-08-25）
+
+- **電台 A：** ACMI 播放中稀疏 `radioCues`（照明／發射／逃城／擊墜／僚機被擊墜）；2D 半身＋通話燈；字幕對齊 `step`；前期 TTS，發行走錄音包。
+- **目錄：** 預設玩家目錄（人工／AI、呼號、陣營）。選「測試」還原原本 Match Setup（人工／Rei_03／test_01）。`?lab=1` 直接開測試。Host／Join／快速配對已開放（需 `npm run room`）。
+- **連線 B／C：** 回合 log JSON 剝 THREE（`AirArenaTurnLogSerialize`）；Host 權威 netplay（`AirArenaNetplay`）；`npm run room` 邀請碼／配對；本機 `?hostRoom=&netRole=` BroadcastChannel。
+- **結算卡頓：** `window.AirArenaHitchLast`（decide／paths／resolve ms）；火花改 seed 不寫速度陣列。
+- **音訊：** 三軌 mixer（music／sfx／voice）。BGM 尚未掛檔。
+- **AI：** Phase B 單刀繼續；`CONFIG.weapons.rocket` 僅佔位，**不進 decide**。總序：**單機空戰完成 → 對地武器 → 編隊 AI**（現停在單機空戰 A.0）。見 [`docs/Path-Cooperation-Roadmap.md`](./docs/Path-Cooperation-Roadmap.md)。
+- **對地：** 地圖地面目標 schema 仍未開；編隊契約 `strike_cover` 預留到對地開火之後。
 
 ### 已完成（v2.2 基礎）
 
@@ -43,6 +53,7 @@
 | 項目 | 內容 |
 |------|------|
 | **Phase B thin** | `applyEnemyPredictCombatScore` + softYield；`rngTie` 近分平手 |
+| **Phase B roles** | 2026-08-25 B1 碼上 `test_01`；有效性／A/B 未過（見 baseline） |
 | **Midair P0** | 旁樓假 `roof<0` 不再擋 midair break |
 | **Undercroft P1** | `P1 undercroftBoost` 側推／近地門檻 |
 | **UI** | 戰術電腦「交戰開始 ▶」；收納列交戰不強制展開 |
@@ -63,14 +74,17 @@
 | 建築風險降級 | `buildingRiskDowngrade: 0` |
 | Chaff 壽命 | 5 回合（`lifeSteps` 500） |
 | 戰術近分平手 | `tacticalTieEps: 12`（可 `tacticalTieRandom: 0` 關） |
+| Phase B 角色 hold | `tacticalRoleHoldTurns: 2`（`defend` / 對頭 `extend` 立刻切） |
+| Merge diverge hold | `mergeDivergeHoldTurns: 3`（對穿後不跟 `localX` 翻邊） |
 
 ### 目前技術債（摘要）
 
 - **High（1）：** 城區 AI 回歸安全門（H7）— B／D／F／G-heur 已綠；**C + G-hybrid** plateau；優先 live dump。
-- **Medium 優先：** FOX-1 照射環 vs 發射窗（M23）；城區逃生無 chaff（M24）；T38／beam（M18/M21）；**Phase B 完整角色層**（M8 餘）；ACMI 碎片（M4–M6）；僚機「無長機」誤報（M7）；`pilot-ai` 巨型檔（M17 ~14k 行）。
+- **Medium 優先：** FOX-1 照射環 vs 發射窗（M23）；城區逃生無 chaff（M24）；T38／beam（M18/M21）；ACMI 碎片（M4–M5）；`pilot-ai` 巨型檔（M17 ~23k，A.0 不拆）。 **M8：** B1 A.0 優先目錄＋回退（`tapRoleGate`）；B2 生存可對看、五角色等 A.2。 **M6／M7：** 新場清碎片；全 AI 不再誤標「無長機」。
 - **詳表：** [`TECH-DEBT.md`](./TECH-DEBT.md)（快照 **2026-08-05**）。
 - **新地圖必讀：** [`docs/Arena-Map-Onboarding-Memo.md`](./docs/Arena-Map-Onboarding-Memo.md)。
 - **PilotAI／引擎預先準備：** [`docs/PilotAI-Portability-Memo.md`](./docs/PilotAI-Portability-Memo.md)。
+- **接敵路徑／雙機／武器機體順序：** [`docs/Path-Cooperation-Roadmap.md`](./docs/Path-Cooperation-Roadmap.md)（A 單機空戰 → B 對地 → C 編隊；現停在 A.0）。
 - **歷史備忘（勿當架構）：** `docs/Tactical-Development-Memo.md`。
 
 ### Phase 1 架構（烘焙 = 空間 OS）
@@ -108,6 +122,7 @@ Air-Arena-v2.2-Stable/          # 目錄名保留；文件版本 v3.0+
 ├── docs/
 │   ├── Arena-Map-Onboarding-Memo.md   # 新場地：bake + envelope 檢查清單（現行）
 │   ├── PilotAI-Portability-Memo.md   # PilotAI 優先／引擎預先準備（現行）
+│   ├── Path-Cooperation-Roadmap.md  # 單機空戰 → 對地 → 編隊（現行；現停 A.0）
 │   └── Tactical-Development-Memo.md  # 歷史備忘（已過時）
 ├── map-editor/                 # 地圖編輯器（WIP polish）
 ├── js/
@@ -119,6 +134,8 @@ Air-Arena-v2.2-Stable/          # 目錄名保留；文件版本 v3.0+
 │   │   ├── context.js              # GameContext、陣營/目標/對戰 API
 │   │   ├── fallbacks.js
 │   │   ├── map-catalog.js / map-loader.js
+│   ├── radio-cues.js / pilot-roster.js / match-challenges.js
+│   ├── turn-log-serialize.js / host-authority.js
 │   │   ├── team-state.js
 │   │   ├── compat-aliases.js
 │   │   ├── state-machine-match.js
@@ -146,13 +163,16 @@ npm start
 
 瀏覽器：`http://127.0.0.1:8080/`  
 開發面板：`?dev=1`  
-跳過 Match Setup：`?skipSetup=1` 或 scenario URL。
+跳過 Match Setup：`?skipSetup=1` 或 scenario URL。  
+測試目錄（Rei_03／test_01）：`?lab=1`  
+批次真機 T150 dump（非 `ai-regression` surrogate）：`npm run batch:ai -- --brains test_01 --n 3`（再開 `--brains Rei_03 --n 3` 或一次 `--ab --n 3`）。預設 **City Map** + dense-urban 2v2 + **十字形出生**（紅北／藍南／紅2西／藍2東，順時針切線朝向，不對頭衝市中心）+ 屋頂帶高度（80／92m）+ 距離 100／140／200（十字不抽 60）。目錄手打仍用雙機編組、對頭。不改 `decide()`。瀏覽器會連打、結束自動寫入 `tools/reports/dumps/`。
 
 ---
 
 ## 對戰設定 (Match Setup)
 
 - **模式**：`1v1`（僅 red/blue）｜`2v2`（啟用 red2/blue2）
+- **目錄**：玩家目錄控制＝人工／AI（`test_01`）。選「測試」還原席位下拉：人工／`Rei_03`／`Rei_02`／`Rei_01`／`test_01`；再選「自由交戰」改回玩家目錄。
 - **席位**：`red-1` / `red-2` / `blue-1` / `blue-2` → `control: human | ai`、`loadout: standard | gun-priority | fox2-priority | fox1-priority`  
   - **standard** 預設掛載：`fox1, fox2, fox2, fox1` + SMS 機砲  
 - **套用**：`GameContext.stateMachine.applyMatchConfig(config)` → 設 `matchActive`、AI 政策、武器預選
@@ -222,7 +242,7 @@ npm start
 
 ### VFX
 
-- `window.spawnAircraftDebris(pos, quat, color)` — 即時碎片 + 佔用 explosion/flash pool
+- `window.spawnAircraftDebris(pos, quat, color)` — 即時碎片 + 佔用 explosion/flash pool；`clearAircraftDebris()` 在 `applyMatchConfig` 清掉
 - `window.updateAircraftDebris()` — `animate()` 每幀更新
 
 ---
@@ -388,7 +408,7 @@ processFlightPaths → processFlares
 - [ ] ACMI 重播碎片（待辦）
 - [ ] wreck 狀態序列化（待辦）
 - [x] Phase B thin knife（predict soft-score）
-- [ ] Phase B 完整戰術定位層
+- [x] Phase B B1 角色 FSM 碼（2026-08-25 · live `test_01`；有效性／A/B 未過）
 - [x] Envelope 單一來源 + regression 對齊
 - [ ] 城區 AI 回歸安全門（H7）
 - [ ] FOX-1 照射環 vs 發射窗 UX（M23）

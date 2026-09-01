@@ -14,6 +14,8 @@
  *   4) Run this tool on both groups; compare combat kills, mslQueues, illuminateHold, ground deaths
  *
  * Prefers unit.weaponCounters (match-long tallies) when present; else falls back to trailMax≈40.
+ * 2026-08-24+ dumps include killedBy / combatKills / weaponCounters.kills.
+ * Older combat/mslQ is own combat deaths per missile-queue — not kill efficiency.
  */
 const fs = require('fs');
 const path = require('path');
@@ -76,10 +78,16 @@ function analyzeFile(filePath) {
     let softMsl = 0;
     let countersUsed = 0;
     let counterTurns = 0;
+    let combatKills = 0;
+    let killsGun = 0;
+    let killsMsl = 0;
+    let killFields = 0;
+    let killedByCombat = 0;
 
     for (const id of Object.keys(j.units || {})) {
         const u = j.units[id];
-        const wc = u && u.weaponCounters;
+        if (!u) continue;
+        const wc = u.weaponCounters;
         if (wc && Number(wc.turns) > 0) {
             countersUsed += 1;
             counterTurns += Number(wc.turns) || 0;
@@ -112,6 +120,21 @@ function analyzeFile(filePath) {
                 if (/fox1Doctrine:\s*illuminate/i.test(s)) illuminate++;
             }
         }
+        const unitKills = Number.isFinite(Number(u && u.combatKills))
+            ? Number(u.combatKills)
+            : (wc && Number.isFinite(Number(wc.kills)) ? Number(wc.kills) : null);
+        if (unitKills != null) {
+            combatKills += unitKills;
+            killFields += 1;
+            killsGun += Number(u.combatKillsGun != null ? u.combatKillsGun : (wc && wc.killsGun)) || 0;
+            killsMsl += Number(u.combatKillsMsl != null ? u.combatKillsMsl : (wc && wc.killsMsl)) || 0;
+        }
+        const kb = u && u.killedBy;
+        const cause = (roster.find((r) => r.id === id) || {}).deathCause
+            || u.deathCause
+            || (u.action && u.action.deathCause)
+            || null;
+        if (kb && kb.attackerId && String(cause) === 'combat') killedByCombat += 1;
         // Dirt/slab tags still come from trails even when counters exist (survival, not weapon).
         if (wc && Number(wc.turns) > 0) {
             const trails = []
@@ -155,8 +178,17 @@ function analyzeFile(filePath) {
         softMsl,
         countersUsed,
         counterTurns,
-        // Rough efficiency proxy: combat deaths per missile-queue frame (higher = more often dying while shooting)
-        combatPerMsl: mslQ > 0 ? Number((combat / mslQ).toFixed(3)) : (combat > 0 ? Infinity : 0)
+        combatKills,
+        killsGun,
+        killsMsl,
+        killFields,
+        killedByCombat,
+        // Own combat deaths per missile-queue (legacy; not kill efficiency).
+        combatPerMsl: mslQ > 0 ? Number((combat / mslQ).toFixed(3)) : (combat > 0 ? Infinity : 0),
+        // True combat kills per missile-queue (null if dump lacks kill fields).
+        killsPerMsl: killFields > 0
+            ? (mslQ > 0 ? Number((combatKills / mslQ).toFixed(3)) : (combatKills > 0 ? Infinity : 0))
+            : null
     };
 }
 
@@ -175,7 +207,9 @@ function printRow(r) {
             `atk/prep=${r.missileAttackSel}/${r.missilePrepSel}`,
             `chaffEsc=${r.chaffEsc}`,
             `dirt=${r.dirtBleed}`,
-            `c/msl=${r.combatPerMsl === Infinity ? 'inf' : r.combatPerMsl}`,
+            `kills=${r.killFields ? r.combatKills : 'n/a'}`,
+            `k/msl=${r.killsPerMsl == null ? 'n/a' : (r.killsPerMsl === Infinity ? 'inf' : r.killsPerMsl)}`,
+            `ownC/msl=${r.combatPerMsl === Infinity ? 'inf' : r.combatPerMsl}`,
             `ai=${(r.models || []).join('|') || '?'}`
         ].join('  ')
     );
@@ -195,8 +229,18 @@ function summarize(name, rows) {
         `  mslQ=${sum('mslQ')}  gunQ=${sum('gunQ')}  fox1Env=${sum('fox1Env')}  fox2Env=${sum('fox2Env')}  illuminate=${sum('illuminate')}`
     );
     console.log(
-        `  chaffEsc=${sum('chaffEsc')}  flareEsc=${sum('flareEsc')}  dirtBleedTags=${sum('dirtBleed')}  combat/mslQ=${sum('mslQ') ? (sum('combat') / sum('mslQ')).toFixed(3) : 'n/a'}`
+        `  chaffEsc=${sum('chaffEsc')}  flareEsc=${sum('flareEsc')}  dirtBleedTags=${sum('dirtBleed')}  ownCombat/mslQ=${sum('mslQ') ? (sum('combat') / sum('mslQ')).toFixed(3) : 'n/a'}`
     );
+    const killRows = rows.filter((r) => r.killFields > 0);
+    if (killRows.length) {
+        const kSum = (k) => killRows.reduce((a, r) => a + (Number(r[k]) || 0), 0);
+        const msl = kSum('mslQ');
+        console.log(
+            `  combatKills=${kSum('combatKills')}  killsGun=${kSum('killsGun')}  killsMsl=${kSum('killsMsl')}  killedByCombat=${kSum('killedByCombat')}  kills/mslQ=${msl ? (kSum('combatKills') / msl).toFixed(3) : 'n/a'}`
+        );
+    } else {
+        console.log('  combatKills=n/a (pre-2026-08-24 dump — ownCombat/mslQ is not kill efficiency)');
+    }
     console.log(
         `  weaponCounters: matches=${wcMatches}/${n}  counterTurns=${sum('counterTurns')}`
     );
@@ -210,7 +254,8 @@ function main() {
     }
     console.log('weapon-efficiency-dump — survival + weapon A/B');
     console.log('Knife6 look-for: ground↓, dirtBleed tags with high joyY arrest, no skim at alt<8');
-    console.log('Weapon look-for: higher combat/mslQ, fewer illuminate-only stalls, chaffEsc on paint\n');
+    console.log('Weapon look-for: higher kills/mslQ, fewer illuminate-only stalls, chaffEsc on paint');
+    console.log('ownCombat/mslQ = own combat deaths per mslQ (legacy). kills/mslQ needs 2026-08-24+ dumps.\n');
 
     for (const g of groups) {
         const rows = [];

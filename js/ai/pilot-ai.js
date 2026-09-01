@@ -14,6 +14,8 @@ window.AirArenaAI = {
     weaponRangeMemory: {},
     brakeTurnMemory: {},
     urbanAvoidMemory: {},
+    /** T88: merge-break bank commit — do not flip with localX after a pass. */
+    mergeDivergeMemory: {},
     /** Phase 3 MVP: short bake survival waypoints (commit a few turns while building pressure). */
     survivalWaypointMemory: {},
     /** Phase mid: corridor homotopy commit (L/R/C) — not a single joyX lock. */
@@ -37,7 +39,7 @@ window.AirArenaAI = {
     dirtBleedLockMemory: {},
     /** Knife 3: after scored collapse, commit away∩clear bank a few turns (block soft skim scrape). */
     collapseExitMemory: {},
-    /** tableGlueFlip: multi-turn hard bank commit (sticky must not refuse flip under glue). */
+    /** tableGlueFlip: multi-turn hard bank commit. Thaw 2026-08-28: abort if opposite nest still dead. */
     tableGlueFlipMemory: {},
     /** P1: after FOX-1 bake soft-yield, keep climb-extend a few turns (block cruise/align sink). */
     fox1BakeYieldMemory: {},
@@ -113,6 +115,9 @@ window.AirArenaAI = {
             // Tactical approach near-tie break (only among "good enough" candidates).
             tacticalTieEps: 12,
             tacticalTieRandom: 1,
+            tacticalRoleHoldTurns: 2,
+            // T88: merge-break S-turn — hold diverge side this many turns (localX flip after a pass).
+            mergeDivergeHoldTurns: 3,
             alignSoftFire: 1,
             // Missile soft fire ≤ doctrine maxLaunch (~32°); gun knife stays wide via gunAngMax.
             alignSoftFireAngMax: 34,
@@ -2786,6 +2791,43 @@ window.AirArenaAI = {
     },
 
     /**
+     * dirtBleed thaw: consecutive gold T150s (01:41 facade building, 01:59 table ground)
+     * kept pitch-owning after the dive had already recovered, or softened bank off
+     * an owned gap. Yield lock when nose is no longer diving into dirt under facade
+     * glue; true table at alt<8 still arrests until clearly rising (Knife 6).
+     */
+    isDirtBleedPitchStale(opts = {}) {
+        const alt = Number(opts.altitude);
+        const fy = Number(opts.forwardY);
+        const dAlt = Number(opts.dAlt != null ? opts.dAlt : opts.sink);
+        const oh = opts.oh || {};
+        const dist = Number(oh.dist != null ? oh.dist : opts.coverDistance);
+        const roof = Number(oh.roof != null ? oh.roof : opts.roofClearance);
+        const cls = String(oh.class || '');
+        const stillDiving =
+            (Number.isFinite(dAlt) && dAlt < -1.2) ||
+            (Number.isFinite(fy) && fy < -0.22);
+        if (stillDiving) return false;
+        const trueTable =
+            (cls === 'tableClose' || cls === 'tableWide') &&
+            Number.isFinite(roof) &&
+            roof < -8;
+        if (trueTable && Number.isFinite(alt) && alt < 8) {
+            return !!(Number.isFinite(fy) && fy > 0.15 && Number.isFinite(dAlt) && dAlt > 0.3);
+        }
+        const facadeGlue =
+            cls === 'facadeClose' ||
+            (Number.isFinite(dist) && dist < 6 && !trueTable);
+        return !!(facadeGlue && Number.isFinite(fy) && fy > -0.15);
+    },
+
+    isDirtBleedGapBank(stick = {}) {
+        if (!stick) return false;
+        if (stick.dirtBleedGap) return true;
+        return /dirtBleedGap=1/.test(String(stick.reason || ''));
+    },
+
+    /**
      * Prefer away-from-mesh, but flip to the corridor-clear side when away is closed.
      */
     resolveCollapseExitSide(coverInfo = {}, awaySide = 0, curSide = 0) {
@@ -2885,6 +2927,22 @@ window.AirArenaAI = {
 
     clearTableGlueFlipCommit(teamId) {
         if (teamId && this.tableGlueFlipMemory[teamId]) delete this.tableGlueFlipMemory[teamId];
+    },
+
+    /**
+     * tableGlue/collapse thaw: consecutive T150 deaths flipped into still-dead nest
+     * (hit=1, score≪0, gapOwnsSafe=0). Only callers that know the gap is NOT owned
+     * may suppress; omitting gapOwnsSafe keeps prior flip-commit behavior.
+     */
+    isTableGlueFlipIntoDeadNest(opts = {}) {
+        if (opts.gapOwnsSafe === true || opts.gapOwnsSafe === 1) return false;
+        if (opts.gapOwnsSafe !== false && opts.gapOwnsSafe !== 0) return false;
+        const hit = !!(opts.buildingHit || opts.hit);
+        const score = Number(opts.score);
+        const dist = Number(opts.coverDistance != null ? opts.coverDistance : opts.dist);
+        const deadScore = Number.isFinite(score) && score < -160;
+        const glued = Number.isFinite(dist) && dist < 14;
+        return hit && deadScore && glued;
     },
 
     isCollapseExitStick(stick = {}) {
@@ -3178,16 +3236,22 @@ window.AirArenaAI = {
             Number.isFinite(oh.dist) &&
             oh.dist < 14;
         const climbingInto = Number.isFinite(fy) && fy > 0.2;
-        // Rising out of dirt: drop priority-1 lock so skim/level can resume.
+        // Rising out of dirt / recovered under facade: drop priority-1 lock so skim/level can resume.
+        let dirtBleedYield = false;
         if (
             opts.teamId &&
             this.isDirtBleedLockActive(opts.teamId, opts.turnNo) &&
-            Number.isFinite(dAlt) &&
-            dAlt > 0.8 &&
-            Number.isFinite(fy) &&
-            fy > -0.12
+            this.isDirtBleedPitchStale({
+                oh,
+                altitude: alt,
+                forwardY: fy,
+                dAlt,
+                coverDistance: oh.dist,
+                roofClearance: oh.roof != null ? oh.roof : opts.roofClearance
+            })
         ) {
             this.clearDirtBleedLock(opts.teamId);
+            dirtBleedYield = true;
         }
         const dirtLock = !!(opts.teamId && this.isDirtBleedLockActive(opts.teamId, opts.turnNo));
         // Priority 1: catastrophic Δalt into dirt — pitch owns; soft bank (tableGlue merge).
@@ -3298,16 +3362,23 @@ window.AirArenaAI = {
             const floorY = alt < 6 ? 0.42 : (alt < 10 ? 0.28 : (alt < 14 ? 0.18 : 0.14));
             stick.joyY = this.clamp(arrestY, floorY, Math.max(arrestY, floorY));
             // Knife 7: near-dirt punch — thr↑ + softer bank so MIL/AB can rebuild energy / exit table.
+            // Thaw: owned gap must keep bank (01:59 |joyX|≈0.36 flew into dirt beside a flyable exit).
             if (Number.isFinite(alt) && alt < 3.5) {
-                stick.joyX = this.clamp(side * 0.36, -0.4, 0.4);
+                stick.joyX = gapOwns
+                    ? this.clamp(side * Math.max(bankDirt, 0.52), -0.58, 0.58)
+                    : this.clamp(side * 0.36, -0.4, 0.4);
                 stick.throttle = 5;
                 stick.dirtPunchThrottle = 1;
                 stick._softThrAlt = alt;
+                if (gapOwns) stick.dirtBleedGap = 1;
             } else if (Number.isFinite(alt) && alt < 6) {
-                stick.joyX = this.clamp(side * Math.min(bankDirt, 0.46), -0.48, 0.48);
+                stick.joyX = gapOwns
+                    ? this.clamp(side * Math.max(bankDirt, 0.5), -0.58, 0.58)
+                    : this.clamp(side * Math.min(bankDirt, 0.46), -0.48, 0.48);
                 stick.throttle = 4;
                 stick.dirtPunchThrottle = 1;
                 stick._softThrAlt = alt;
+                if (gapOwns) stick.dirtBleedGap = 1;
             } else {
                 stick.throttle = Math.min(3, Number(stick.throttle) || 3);
             }
@@ -3326,6 +3397,7 @@ window.AirArenaAI = {
             if (gapOwns) bleedTags.push(`gapOwns=${gapAsym.side}`);
             if (dirtLock) bleedTags.push('dirtLock=1');
             if (stick.dirtPunchThrottle) bleedTags.push(`dirtPunch=thr${stick.throttle}`);
+            if (stick.dirtBleedGap) bleedTags.push('dirtBleedGap=1');
             const bleedStr = bleedTags.length ? ` ${bleedTags.join(' ')}` : '';
             const ownerTag = `tableOwner=1 mode=pitch oh=${oh.class}`;
             if (stick.reason && !/dirtBleedRecover|tableOwner=1/i.test(String(stick.reason))) {
@@ -3336,6 +3408,15 @@ window.AirArenaAI = {
                 stick.reason = `Table stick dirt-bleed recover (${ownerTag})${bleedStr}`;
             }
             return this.stripProvisionalUndercroftSkimTag(stick);
+        }
+
+        if (dirtBleedYield) {
+            stick.dirtBleedYield = 1;
+            if (stick.reason && !/dirtBleedYield=/.test(String(stick.reason))) {
+                stick.reason = `${stick.reason} | dirtBleedYield=1`;
+            } else if (!stick.reason) {
+                stick.reason = 'Dirt-bleed yield: recovered under facade (lateral owns)';
+            }
         }
 
         // Soft all-hit / collapse / recovering ClimbOut / tableGlue class:
@@ -3419,6 +3500,7 @@ window.AirArenaAI = {
             );
             let mode = 'collapseExit';
             const dirtUnderTable =
+                !dirtBleedYield &&
                 Number.isFinite(alt) &&
                 alt < 16 &&
                 (Number.isFinite(fy) && fy < -0.08 || alt < 14 || !!stick.dirtPullFloor);
@@ -6286,6 +6368,27 @@ window.AirArenaAI = {
                         cutSide = holdAway;
                         flipped = false;
                     }
+                    const flipIntoDead = this.isTableGlueFlipIntoDeadNest({
+                        gapOwnsSafe,
+                        buildingHit: !!best.buildingHit,
+                        score: bestScore,
+                        dist
+                    });
+                    if (
+                        flipIntoDead &&
+                        (stuckMeta.hitFlip ||
+                            flipped ||
+                            this.getTableGlueFlipCommit(teamId, opts.turnNo).active)
+                    ) {
+                        this.clearTableGlueFlipCommit(teamId);
+                        cutSide = holdAway || scrapeSide || cutSide;
+                        flipped = false;
+                        stuckMeta.hitFlip = false;
+                        stuckMeta.shouldFlip = false;
+                        if (best.reason && !/tableGlueHold=/.test(String(best.reason))) {
+                            best.reason = `${best.reason} | tableGlueHold=1`;
+                        }
+                    }
                     // Seed sticky early so next turn cannot AABB-flip (hitFlip seeds opposite).
                     if (teamId && cutSide) {
                         this.resolveTableStickAwaySide(teamId, cutSide, opts.turnNo, {
@@ -6336,6 +6439,9 @@ window.AirArenaAI = {
                             (Number.isFinite(dist) && dist < 8 && Number.isFinite(roof) && roof < -0.8),
                         sameSideHitStreak: Number(stuckMeta.hitStreak) || 0,
                         tableGlueFlip: !!stuckMeta.hitFlip,
+                        gapOwnsSafe,
+                        buildingHit: !!best.buildingHit,
+                        score: bestScore,
                         collapseStreak: Math.max(
                             Number(collapsePrev.streak) || 0,
                             Number(stuckMeta.streak) || 0,
@@ -6600,9 +6706,10 @@ window.AirArenaAI = {
                 allHitUnlock: flipOut
             });
             const arrestSoft =
-                this.wantsSlabDirtArrest(alt, forwardY) ||
+                !this.isDirtBleedGapBank(best) &&
+                (this.wantsSlabDirtArrest(alt, forwardY) ||
                 /slabDirtArrest|dirt arrest/i.test(String(best.reason || '')) ||
-                best.navMode === 'slabDirtArrest';
+                best.navMode === 'slabDirtArrest');
             // Soft nest / dirtBleed owns bank — sideLock must not reseal |jx|→0.78 (T150 death).
             const softNestBank =
                 !arrestSoft &&
@@ -6728,7 +6835,10 @@ window.AirArenaAI = {
                     tableClose:
                         !!tableChoke ||
                         (Number.isFinite(dist) && dist < 8 && Number.isFinite(roof) && roof < -0.8),
-                    collapseStreak: collapseMeta.streak
+                    collapseStreak: collapseMeta.streak,
+                    gapOwnsSafe,
+                    buildingHit: !!(best && best.buildingHit),
+                    score: best && best.score != null ? best.score : bestScore
                 });
             } else if (Number.isFinite(dist) && dist >= 16 && collapseMeta.streak === 0) {
                 this.clearScoredEscapeCollapse(teamId);
@@ -6759,7 +6869,10 @@ window.AirArenaAI = {
                 tableClose:
                     !!tableChoke ||
                     (Number.isFinite(dist) && dist < 8 && Number.isFinite(roof) && roof < -0.8),
-                collapseStreak: collapseMeta.streak
+                collapseStreak: collapseMeta.streak,
+                gapOwnsSafe,
+                buildingHit: !!(out && out.buildingHit),
+                score: out && out.score != null ? out.score : bestScore
             });
         }
         const allHitNowFinal =
@@ -7415,11 +7528,50 @@ window.AirArenaAI = {
         return Math.sign(ctx.breakSide || 1) || 1;
     },
 
+    /**
+     * T88: hold merge-break bank 3 turns so a pass does not S-turn with localX.
+     * Mesh away-side still wins (do not hold into a facade).
+     */
+    resolveMergeDivergeSide(ctx = {}, forceAway = 0) {
+        const desired = this.getMidairDivergeSide(ctx) || 1;
+        const teamId = ctx.teamId;
+        const turnNo = Number(ctx.turnNo) || 0;
+        const holdTurns = Math.max(1, Number((this.getTuning() || {}).mergeDivergeHoldTurns) || 3);
+        let mem = teamId ? this.mergeDivergeMemory[teamId] : null;
+        if (mem && Number(mem.armedTurn) > turnNo) {
+            delete this.mergeDivergeMemory[teamId];
+            mem = null;
+        }
+        const holding = !!(
+            mem &&
+            mem.side &&
+            Number.isFinite(Number(mem.untilTurn)) &&
+            turnNo < Number(mem.untilTurn)
+        );
+        const away = Math.sign(forceAway) || 0;
+        let side = desired;
+        let held = 0;
+        if (away) {
+            side = away;
+        } else if (holding) {
+            side = Math.sign(mem.side) || desired;
+            held = 1;
+        }
+        const untilTurn = held ? Number(mem.untilTurn) : (turnNo + holdTurns);
+        if (teamId && side) {
+            this.mergeDivergeMemory[teamId] = {
+                side,
+                untilTurn,
+                armedTurn: turnNo
+            };
+        }
+        return { side, desired, held, untilTurn };
+    },
+
     buildCloseMidairBreakAction(ctx = {}) {
         const distance = Number(ctx.distance) || 0;
         const altitude = Number(ctx.altitude) || 40;
         const hard = distance <= 12;
-        let side = this.getMidairDivergeSide(ctx);
         const heat = (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(ctx.heat) : (Number(ctx.heat) || 0));
         const noseDown = Number(ctx.forwardY);
         const divingHard = Number.isFinite(noseDown) && noseDown < -0.35;
@@ -7458,9 +7610,10 @@ window.AirArenaAI = {
                 )
             );
         let reasonExtra = '';
+        let forceAway = 0;
         if (intoBldg) {
             const away = this.getAwayFromMeshSide(cover, ctx.selfForward || null);
-            if (away) side = away;
+            if (away) forceAway = away;
             const tightFacade =
                 (Number.isFinite(cov) && cov < 10) ||
                 (Number.isFinite(fwd) && fwd > 0 && fwd < 8);
@@ -7477,6 +7630,9 @@ window.AirArenaAI = {
                 reasonExtra = ' | facadeDive=1';
             }
         }
+        const diverge = this.resolveMergeDivergeSide(ctx, forceAway);
+        const side = diverge.side || 1;
+        reasonExtra += ` | divergeHold=${diverge.held} until=${diverge.untilTurn} des=${diverge.desired}`;
         let joyX = this.clamp(side * auth, -1, 1);
         let joyYOut = joyY;
         const thr = this.pickThrottleForTurn(heat > 76 ? 3 : 4, joyX, {
@@ -7495,6 +7651,9 @@ window.AirArenaAI = {
             queueAction: 'none',
             ready: true,
             diveLevelPull,
+            divergeHold: diverge.held,
+            divergeUntil: diverge.untilTurn,
+            divergeDesired: diverge.desired,
             reason: (divePullPriority
                 ? (hard
                     ? 'Close midair while diving: level-out first, soft diverge'
@@ -7792,6 +7951,20 @@ window.AirArenaAI = {
         const activeId = GameContext.getActiveTeamId && GameContext.getActiveTeamId();
         if (activeId && humans.includes(activeId)) return activeId;
         return humans[0];
+    },
+
+    /** True if this faction has a human seat this match (including destroyed). All-AI = false. */
+    factionHasHumanSeat(teamId) {
+        if (typeof GameContext === 'undefined' || !GameContext.getFaction || !GameContext.getTeam) return false;
+        const faction = GameContext.getFaction(teamId);
+        if (!faction) return false;
+        const ids = (GameContext.getActiveMatchIds && GameContext.getActiveMatchIds())
+            || ['red', 'red2', 'blue', 'blue2'];
+        return ids.some((id) => {
+            if (GameContext.getFaction(id) !== faction) return false;
+            const t = GameContext.getTeam(id);
+            return !!(t && t.matchActive !== false && !t.aiEnabled);
+        });
     },
 
     getWingmanOrder(teamId) {
@@ -9080,11 +9253,23 @@ window.AirArenaAI = {
         let exitSide = this.resolveCollapseExitSide(coverInfo, away, cur) || away || cur;
         let flipped = !!(away && exitSide && away === exitSide && cur && cur !== exitSide);
         // tableGlue knife: force opposite of scrape — honor forcedExitSide / multi-turn commit.
+        // Thaw: do not keep awayFlip when opposite nest is still dead (gapOwnsSafe=0, hit, score≪0).
         const hitStreak = Number(opts.sameSideHitStreak) || 0;
         const flipCommit = opts.teamId
             ? this.getTableGlueFlipCommit(opts.teamId, opts.turnNo)
             : { active: false, side: 0, bank: 0 };
-        const tableGlueFlip = !!(opts.tableGlueFlip || flipCommit.active || hitStreak >= 2);
+        const rawGlueFlip = !!(opts.tableGlueFlip || flipCommit.active || hitStreak >= 2);
+        const deadNest = this.isTableGlueFlipIntoDeadNest({
+            gapOwnsSafe: opts.gapOwnsSafe,
+            buildingHit: opts.buildingHit != null ? opts.buildingHit : !!stick.buildingHit,
+            score: opts.score != null ? opts.score : stick.score,
+            dist
+        });
+        if (deadNest && opts.teamId) this.clearTableGlueFlipCommit(opts.teamId);
+        const tableGlueFlip = rawGlueFlip && !deadNest;
+        if (deadNest && stick.reason && !/tableGlueHold=/.test(String(stick.reason))) {
+            stick.reason = `${stick.reason} | tableGlueHold=1`;
+        }
         if (tableGlueFlip && Number.isFinite(dist) && dist < 16) {
             const forced =
                 Math.sign(Number(opts.forcedExitSide) || 0) ||
@@ -10579,6 +10764,9 @@ window.AirArenaAI = {
         if (st === 'tacticalLeadIntercept') score += urban ? 4 : 16;
         if (st === 'tacticalSearchCruise') score += 20;
 
+        // Phase B full roles: bias TAP catalog toward current role (never survival).
+        score = this.applyTacticalRoleScore(score, candidate, ctx);
+
         // Phase 3a: bake / WP / facade soft layer (engagement candidates).
         score = this.applyBakeRouteCombatScore(score, {
             state: st,
@@ -10775,6 +10963,199 @@ window.AirArenaAI = {
         return { pick, note };
     },
 
+    /**
+     * Phase B full roles (M8): map geometry / energy / inbound into one TAP role.
+     * Does not own stick. TAP already nulls on actualMissileThreat.
+     */
+    evaluateTacticalRole(ctx = {}) {
+        const distance = Number(ctx.distance);
+        const angleDeg = Number(ctx.angleDeg);
+        const headOn = Number(ctx.headOnFactor);
+        const ap = Number(ctx.ap);
+        const energyLow = !!ctx.energyLow || (Number.isFinite(ap) && ap < 65);
+        const paint = !!ctx.underSarhPaint;
+        const shotWin = !!ctx.predictedShotWindow;
+        const inbound = !!(
+            ctx.inboundFox1 ||
+            ctx.inboundFox2 ||
+            ctx.urgentMissileThreat ||
+            ctx.actualMissileThreat
+        );
+        if (inbound || paint || shotWin) {
+            const why = inbound ? 'inbound' : (paint ? 'paint' : 'shotWindow');
+            return { role: 'defend', why };
+        }
+        if (
+            (Number.isFinite(headOn) && headOn > 0.55 && Number.isFinite(distance) && distance < 80) ||
+            (energyLow && Number.isFinite(headOn) && headOn > 0.35 && Number.isFinite(distance) && distance < 90)
+        ) {
+            return { role: 'extend', why: energyLow ? 'energy' : 'headOn' };
+        }
+        if (Number.isFinite(distance) && distance >= 90 && !energyLow && (!Number.isFinite(ap) || ap >= 80)) {
+            return { role: 'recommit', why: 'farEnergy' };
+        }
+        if (Number.isFinite(angleDeg) && angleDeg < 42 && Number.isFinite(distance) && distance < 110) {
+            return { role: 'press', why: 'onAspect' };
+        }
+        return { role: 'seek_angle', why: 'offBore' };
+    },
+
+    /**
+     * Hold role 2 turns unless defend or head-on extend must switch now.
+     */
+    resolveTacticalRole(teamId, ctx = {}) {
+        const team = (typeof GameContext !== 'undefined' && GameContext.getTeam)
+            ? GameContext.getTeam(teamId)
+            : null;
+        const turnNo = Number(ctx.turnNo) || 0;
+        const tuning = this.getTuning();
+        const holdTurns = Math.max(1, Number(tuning.tacticalRoleHoldTurns) || 2);
+        const desired = this.evaluateTacticalRole(ctx) || { role: 'seek_angle', why: 'offBore' };
+        const prev = team ? team.aiTacticalRole : null;
+        const until = team ? Number(team.aiTacticalRoleUntilTurn) : -1;
+        const holding = !!(prev && Number.isFinite(until) && turnNo < until);
+        const headOn = Number(ctx.headOnFactor);
+        const immediate =
+            desired.role === 'defend' ||
+            (desired.role === 'extend' && Number.isFinite(headOn) && headOn > 0.55);
+        let role = desired.role;
+        let why = desired.why;
+        let switched = true;
+        if (holding && !immediate && prev) {
+            role = prev;
+            why = team.aiTacticalRoleWhy || why;
+            switched = false;
+        }
+        const nextUntil = switched ? (turnNo + holdTurns) : until;
+        if (team) {
+            team.aiTacticalRole = role;
+            team.aiTacticalRoleWhy = why;
+            team.aiTacticalRoleUntilTurn = nextUntil;
+        }
+        const holdLeft = Math.max(0, (Number(nextUntil) || 0) - turnNo);
+        const note = `phaseBRole: role=${role} why=${why} hold=${holdLeft} until=${nextUntil}`;
+        ctx._tacticalRole = role;
+        ctx._tacticalRoleWhy = why;
+        ctx._tacticalRoleHold = holdLeft;
+        ctx._tacticalRoleUntil = nextUntil;
+        ctx._tacticalRoleNote = note;
+        return { role, why, hold: holdLeft, until: nextUntil, note };
+    },
+
+    applyTacticalRoleScore(score, candidate = {}, ctx = {}) {
+        let s = Number(score) || 0;
+        const role = ctx._tacticalRole;
+        const st = String(candidate.state || '');
+        if (!role) return s;
+        if (role === 'seek_angle') {
+            if (st === 'tacticalLagPursuit') s += 18;
+            if (st === 'tacticalBeamReposition') s += 16;
+            if (st === 'tacticalLeadIntercept') s -= 10;
+            // Catalog cruise is +18 and energy-straight can add +22; -6 never won (T88).
+            if (st === 'tacticalEnergyCruise' || st === 'tacticalEnergyCruiseCut') s -= 28;
+            if (st === 'tacticalSearchCruise') s -= 22;
+        } else if (role === 'press') {
+            if (st === 'tacticalLeadIntercept') s += 20;
+            if (st === 'tacticalCorridorCut') s += 10;
+            if (st === 'tacticalLagPursuit') s += 4;
+        } else if (role === 'extend') {
+            if (st === 'tacticalEnergyCruise') s += 22;
+            if (st === 'tacticalEnergyCruiseCut') s += 18;
+            if (st === 'tacticalLeadIntercept') s -= 28;
+            if (st === 'tacticalLagPursuit') s -= 8;
+            if (st === 'tacticalSearchCruise') s += 8;
+        } else if (role === 'recommit') {
+            if (st === 'tacticalLeadIntercept') s += 18;
+            if (st === 'tacticalCorridorCut') s += 16;
+            if (st === 'tacticalEnergyCruise' || st === 'tacticalEnergyCruiseCut') s += 4;
+            if (st === 'tacticalHighPerch') s -= 8;
+        } else if (role === 'defend') {
+            if (st === 'tacticalBeamReposition') s += 24;
+            if (st === 'tacticalLeadIntercept') s -= 20;
+            if (st === 'tacticalLagPursuit') s += 6;
+            if (st === 'tacticalEnergyCruise') s -= 4;
+        }
+        return s;
+    },
+
+    /**
+     * B1 seek_angle: alignFirst is not a TAP candidate — it returns before TAP.
+     * Defer so lag/beam can own the stick (T88 cruise / 04:00 alignFirst).
+     */
+    shouldDeferAlignFirstForSeekAngle(teamId, ctx = {}) {
+        this.resolveTacticalRole(teamId, ctx);
+        return ctx._tacticalRole === 'seek_angle';
+    },
+
+    applyTacticalRoleThrottle(candidate, ctx = {}) {
+        if (!candidate || !ctx._tacticalRole) return candidate;
+        if (ctx.energyCritical || ctx.navClimbOutActive) return candidate;
+        const role = ctx._tacticalRole;
+        const thr = Number(candidate.throttle) || 0;
+        const joyX = Math.abs(Number(candidate.joyX) || 0);
+        if (role === 'seek_angle' && thr >= 5 && joyX > 0.35) {
+            candidate.throttle = 3;
+        } else if (role === 'extend' && thr < 4 && joyX < 0.4 && !ctx.energyLow) {
+            candidate.throttle = 4;
+        }
+        return candidate;
+    },
+
+    isSeekAnglePreferredTapState(state) {
+        const st = String(state || '');
+        return st === 'tacticalLagPursuit' || st === 'tacticalBeamReposition';
+    },
+
+    tapApproachEntryUsable(entry) {
+        if (!entry || !entry.evalResult || !entry.candidate) return false;
+        const score = Number(entry.score);
+        if (!Number.isFinite(score) || score < 20) return false;
+        const ev = entry.evalResult;
+        if (ev.buildingHit && Number.isFinite(ev.minAltitude) && ev.minAltitude < 12) return false;
+        return true;
+    },
+
+    /**
+     * A.0: seek_angle prefers lag/beam. Empty or unusable preferred set falls back to full TAP pool.
+     * Does not change catalog scores. Dump needle tapRoleGate:
+     */
+    pickSeekAngleTacticalWinner(scored, opts = {}) {
+        const list = Array.isArray(scored) ? scored : [];
+        const tieEnabled = !!opts.tieEnabled;
+        const tieOpts = {
+            eps: opts.eps,
+            teamId: opts.teamId,
+            turnNo: opts.turnNo
+        };
+        const pickFrom = (pool) => {
+            if (!pool.length) return { pick: null, note: null };
+            if (tieEnabled && pool.length > 1) {
+                return this.pickTacticalNearTie(pool, tieOpts);
+            }
+            return {
+                pick: pool.reduce((a, b) => (Number(b.score) > Number(a.score) ? b : a), pool[0]),
+                note: null
+            };
+        };
+        const preferred = list.filter((e) => this.isSeekAnglePreferredTapState(e.candidate && e.candidate.state));
+        const prefTied = pickFrom(preferred);
+        if (this.tapApproachEntryUsable(prefTied.pick)) {
+            const st = prefTied.pick.candidate.state;
+            return {
+                entry: prefTied.pick,
+                rngTieNote: prefTied.note,
+                gateNote: `tapRoleGate: pref=${st} n=${preferred.length} fallback=0`
+            };
+        }
+        const fullTied = pickFrom(list);
+        const fb = fullTied.pick && fullTied.pick.candidate ? fullTied.pick.candidate.state : 'none';
+        return {
+            entry: fullTied.pick,
+            rngTieNote: fullTied.note,
+            gateNote: `tapRoleGate: pref=none n=${preferred.length} fallback=1 pick=${fb}`
+        };
+    },
+
     planTacticalApproach(teamId, ctx) {
         const team = (typeof GameContext !== 'undefined' && GameContext.getTeam) ? GameContext.getTeam(teamId) : null;
         if (!team || !ctx) return null;
@@ -10789,6 +11170,9 @@ window.AirArenaAI = {
         const fyTap = Number(ctx.forwardY);
         const altTap = Number(ctx.altitude || 0);
         if (Number.isFinite(fyTap) && fyTap < -0.55 && altTap < 72) return null;
+
+        if (!Number.isFinite(Number(ctx.ap))) ctx.ap = Number(team.ap);
+        this.resolveTacticalRole(teamId, ctx);
 
         const tuning = this.getTuning();
         const altitude = Number(ctx.altitude || 0);
@@ -11013,7 +11397,18 @@ window.AirArenaAI = {
             : 12;
         let bestEntry = null;
         let rngTieNote = null;
-        if (tieEnabled && scored.length > 1) {
+        let tapRoleGateNote = null;
+        if (ctx._tacticalRole === 'seek_angle') {
+            const gated = this.pickSeekAngleTacticalWinner(scored, {
+                tieEnabled,
+                eps: tieEps,
+                teamId,
+                turnNo: ctx.turnNo
+            });
+            bestEntry = gated.entry;
+            rngTieNote = gated.rngTieNote;
+            tapRoleGateNote = gated.gateNote;
+        } else if (tieEnabled && scored.length > 1) {
             const tied = this.pickTacticalNearTie(scored, {
                 eps: tieEps,
                 teamId,
@@ -11050,7 +11445,9 @@ window.AirArenaAI = {
                 minAltitude: bestEval.minAltitude,
                 ...(bestPhaseB ? { phaseB: bestPhaseB } : {}),
                 ...(rngTieNote ? { rngTie: rngTieNote } : {}),
-                ...(ctx._farReengageNote ? { farReengage: ctx._farReengageNote } : {})
+                ...(tapRoleGateNote ? { tapRoleGate: tapRoleGateNote } : {}),
+                ...(ctx._farReengageNote ? { farReengage: ctx._farReengageNote } : {}),
+                ...(ctx._tacticalRoleNote ? { phaseBRole: ctx._tacticalRoleNote } : {})
             }
         };
     },
@@ -11061,6 +11458,7 @@ window.AirArenaAI = {
             if (Array.isArray(tree)) tree.push('tacticalApproach: none');
             return null;
         }
+        this.applyTacticalRoleThrottle(planned, ctx);
         const meta = planned.tacticalApproach || {};
         if (Array.isArray(tree)) {
             tree.push(
@@ -11068,7 +11466,9 @@ window.AirArenaAI = {
             );
             if (meta.phaseB) tree.push(meta.phaseB);
             if (meta.rngTie) tree.push(meta.rngTie);
+            if (meta.tapRoleGate) tree.push(meta.tapRoleGate);
             if (meta.farReengage) tree.push(meta.farReengage);
+            if (meta.phaseBRole) tree.push(meta.phaseBRole);
         }
         return this.withDebug({
             ...planned,
@@ -17937,11 +18337,12 @@ altitude,
                                     // Hold lock: force stick to commit side so bake/embed cannot thrash next frame.
                                     // Dirt arrest: keep soft bank so pitch owns the stick.
                                     const arrestSoft =
-                                        /slabDirtArrest|dirt arrest|tableStickOwner|tableStickArrest/i.test(String(scoredEsc.reason || '')) ||
+                                        !this.isDirtBleedGapBank(scoredEsc) &&
+                                        (/slabDirtArrest|dirt arrest|tableStickOwner|tableStickArrest/i.test(String(scoredEsc.reason || '')) ||
                                         scoredEsc.navMode === 'slabDirtArrest' ||
                                         scoredEsc.navMode === 'tableStickArrest' ||
                                         scoredEsc.tableStickOwner ||
-                                        (!!scoredEsc.diveLevelPull && this.wantsSlabDirtArrest(altitude, selfForward.y));
+                                        (!!scoredEsc.diveLevelPull && this.wantsSlabDirtArrest(altitude, selfForward.y)));
                                     // Soft nest / dirtBleed: sideLock may flip side but must not reseal |jx|→0.78.
                                     const softNestBank =
                                         !arrestSoft &&
@@ -18547,6 +18948,8 @@ altitude,
                                 let outJoyX = lowJoyXClamped;
                                 let outJoyY = lowJoyY;
                                 let ownedSoftThr = null;
+                                let ownedDirtPunch = 0;
+                                let ownedSoftAlt = undefined;
                                 let ownedNavMode = embedDirtLateral ? 'embedDirtLateral' : undefined;
                                 let ownedDirtFloor = altitude < 8 && !!embedOrHardLow && !mandClimbLow;
                                 let ownedDiveLevel = !!(slabLow && this.wantsSlabDirtArrest(altitude, selfForward.y))
@@ -18603,7 +19006,11 @@ altitude,
                                     outJoyX = Number(ownedLow.joyX);
                                     outJoyY = Number(ownedLow.joyY);
                                     if (ownedLow.reason) lowReason = ownedLow.reason;
-                                    if (ownedLow.nestExitSoft || ownedLow.navMode === 'dirtBleedRecover') {
+                                    if (ownedLow.dirtPunchThrottle) {
+                                        ownedDirtPunch = 1;
+                                        ownedSoftAlt = ownedLow._softThrAlt;
+                                        ownedSoftThr = Math.max(Number(ownedLow.throttle) || 4, 4);
+                                    } else if (ownedLow.nestExitSoft || ownedLow.navMode === 'dirtBleedRecover') {
                                         ownedSoftThr = Math.min(3, Number(ownedLow.throttle) || 3);
                                     }
                                     if (ownedLow.navMode) ownedNavMode = ownedLow.navMode;
@@ -18645,6 +19052,9 @@ altitude,
                                     ready: true,
                                     dirtPullFloor: ownedDirtFloor,
                                     diveLevelPull: ownedDiveLevel,
+                                    dirtPunchThrottle: ownedDirtPunch || undefined,
+                                    _softThrAlt: ownedSoftAlt,
+                                    nestExitSoft: ownedDirtPunch ? undefined : (ownedSoftThr != null ? 1 : undefined),
                                     navMode: ownedNavMode,
                                     reason: lowReason
                                 }, debugBase, [...tree, `selected: ${(roofExitLow || mandClimbLow) ? 'obstacleEmergencyEscape-mandatoryClimb' : (embedOrHardLow ? (slabLow ? (embedDirtLateral ? 'obstacleEmergencyEscape-lowEmbedDirtLateral' : (this.wantsSlabDirtArrest(altitude, selfForward.y) ? 'obstacleEmergencyEscape-lowEmbedSlabDirtArrest' : 'obstacleEmergencyEscape-lowEmbedSlabSkim')) : (steepDive && !noseHigh ? 'obstacleEmergencyEscape-lowEmbedDivePull' : (altitude < 3 ? 'obstacleEmergencyEscape-lowEmbedDirt' : 'obstacleEmergencyEscape-lowEmbed'))) : 'obstacleEmergencyEscape-lowUrban')} embed=${embedOrHardLow ? 1 : 0}`], 'obstacleEmergencyEscape');
@@ -19802,11 +20212,28 @@ altitude,
                                 missileMaxRange
                             })
                         });
+                        const seekAngleAlignDefer = this.shouldDeferAlignFirstForSeekAngle(teamId, {
+                            turnNo,
+                            distance,
+                            angleDeg: angleToTargetDeg,
+                            headOnFactor,
+                            ap: Number((liveSelf || self).ap),
+                            energyLow,
+                            inboundFox1: !!inboundFox1,
+                            inboundFox2: !!inboundFox2,
+                            urgentMissileThreat: !!urgentMissileThreat,
+                            actualMissileThreat: !!actualMissileThreat,
+                            underSarhPaint: !!underSarhPaintNow,
+                            predictedShotWindow: !!predictedShotWindow
+                        });
                         tree.push(
-                            `alignFirstGate: need=${alignBeforeAccel ? 1 : 0} softYield=${softYieldAlign ? 1 : 0} yieldLock=${fox1BakeYieldLockNow.active ? 1 : 0} weaponWin=${weaponWindowOpen ? 1 : 0} losClear=${lineOfSightBlocked ? 0 : 1} seen=${sensor.seenNow ? 1 : 0} ang=${angleToTargetDeg.toFixed(1)} lz=${localToEnemy.z.toFixed(2)} fwdY=${selfForward.y.toFixed(2)}`
+                            `alignFirstGate: need=${alignBeforeAccel ? 1 : 0} softYield=${softYieldAlign ? 1 : 0} seekAngle=${seekAngleAlignDefer ? 1 : 0} yieldLock=${fox1BakeYieldLockNow.active ? 1 : 0} weaponWin=${weaponWindowOpen ? 1 : 0} losClear=${lineOfSightBlocked ? 0 : 1} seen=${sensor.seenNow ? 1 : 0} ang=${angleToTargetDeg.toFixed(1)} lz=${localToEnemy.z.toFixed(2)} fwdY=${selfForward.y.toFixed(2)}`
                         );
                         if (softYieldAlign) {
                             tree.push('alignFirstGate: deferred=bakeRouteScore');
+                        }
+                        if (alignBeforeAccel && seekAngleAlignDefer) {
+                            tree.push('alignFirstGate: deferred=seekAngle');
                         }
 
                         // FOX2-FIRST opening: power seekers first; only shoot once a pylon is armed (next turn).
@@ -19856,7 +20283,7 @@ altitude,
                             }, debugBase, [...tree, 'selected: missileAttack-openingImmediate'], 'missileAttack');
                         }
 
-                        if (alignBeforeAccel && !softYieldAlign && !(openingFox2Rush || fox2PerchWindow) && !openingTooClose) {
+                        if (alignBeforeAccel && !softYieldAlign && !seekAngleAlignDefer && !(openingFox2Rush || fox2PerchWindow) && !openingTooClose) {
                             const extremeAng = Number(tuning.alignExtremeYieldAng);
                             const extremeYield =
                                 Number.isFinite(angleToTargetDeg) &&
@@ -19921,7 +20348,7 @@ altitude,
                             }
                         }
                         // During fox2 opening, still align if badly off — but keep missile powered.
-                        if (alignBeforeAccel && !softYieldAlign && (openingFox2Rush || fox2PerchWindow) && !openingShotReady && !openingTooClose) {
+                        if (alignBeforeAccel && !softYieldAlign && !seekAngleAlignDefer && (openingFox2Rush || fox2PerchWindow) && !openingShotReady && !openingTooClose) {
                             const alignCtrl = this.buildAlignBeforeAccelControls({
                                 angleDeg: angleToTargetDeg,
                                 localToEnemy,
@@ -21433,6 +21860,12 @@ altitude,
                             energyCritical,
                             groundRisk,
                             actualMissileThreat,
+                            underSarhPaint: !!underSarhPaintNow,
+                            predictedShotWindow: !!predictedShotWindow,
+                            inboundFox1: !!inboundFox1,
+                            inboundFox2: !!inboundFox2,
+                            urgentMissileThreat: !!urgentMissileThreat,
+                            ap: Number((liveSelf || self).ap),
                             mandatoryMergeBreak,
                             knifeMidair,
                             collisionRisk: coverInfo.collisionRisk,
@@ -21656,6 +22089,10 @@ altitude,
                                 coverInfo,
                                 selfForward
                             });
+                            tree.push(
+                                `mergeDiverge: side=${Math.sign(mergeBuilt.joyX) || 0} hold=${mergeBuilt.divergeHold ? 1 : 0}` +
+                                ` until=${mergeBuilt.divergeUntil} des=${mergeBuilt.divergeDesired}`
+                            );
                             return this.withDebug({
                                 state: flareOnMerge ? 'defensiveFlare' : (hardBreak ? 'mandatoryMergeBreak' : 'mergeBreak'),
                                 statusText: flareOnMerge
@@ -22685,8 +23122,10 @@ altitude,
             if (!safeAction.debug) safeAction.debug = {};
             safeAction.debug.wingmanOrder = wingmanOrder;
             safeAction.debug.leadId = leadId;
-        } else if (!leadId && wingmanOrder && safeAction && team && team.aiEnabled) {
+        } else if (!leadId && wingmanOrder && safeAction && team && team.aiEnabled
+            && this.factionHasHumanSeat(teamId)) {
             // Order stuck on follow/cover but human lead is gone → free fight (explicit).
+            // All-AI 1v1/2v2 has no human lead by design — do not tag every seat.
             if (safeAction.statusText && String(safeAction.statusText).indexOf('無長機') < 0) {
                 safeAction.statusText = `${safeAction.statusText}｜無長機自由作戰`;
             }

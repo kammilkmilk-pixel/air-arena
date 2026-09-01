@@ -72,29 +72,71 @@ function tryAttachAllPylons() {
     });
 }
 
-const genSparks = (count, power) => {
-    let vels = [];
-    for(let i=0; i<count; i++) {
-        let phi = Math.random() * Math.PI * 2; let theta = Math.acos(Math.random() * 2 - 1);
-        vels.push(new THREE.Vector3(Math.sin(theta)*Math.cos(phi), Math.sin(theta)*Math.sin(phi), Math.cos(theta)).multiplyScalar(power * (0.8 + Math.random() * 0.4)));
-    }
-    return vels;
-};
+function mulberry32(seed) {
+    let a = seed >>> 0;
+    return function () {
+        a |= 0;
+        a = (a + 0x6D2B79F5) | 0;
+        let t = Math.imul(a ^ (a >>> 15), 1 | a);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+}
 
-/** Fountain burst: spray outward in all directions with a slight upward lift. */
-const genSparksFountain = (count, power) => {
+function sparkSeedFrom(step, pos) {
+    const x = pos && Number.isFinite(Number(pos.x)) ? Math.floor(Number(pos.x) * 100) : 0;
+    const y = pos && Number.isFinite(Number(pos.y)) ? Math.floor(Number(pos.y) * 100) : 0;
+    const z = pos && Number.isFinite(Number(pos.z)) ? Math.floor(Number(pos.z) * 100) : 0;
+    return ((Number(step) || 0) * 374761393 + x * 668265263 + y * 1274126177 + z * 2246822519) >>> 0;
+}
+
+const genSparksSeeded = (count, power, seed, fountain) => {
+    const rnd = mulberry32((Number(seed) || 1) >>> 0);
     const vels = [];
-    for (let i = 0; i < count; i++) {
-        const phi = Math.random() * Math.PI * 2;
-        const theta = Math.acos(Math.random() * 2 - 1);
+    const n = Math.max(0, Number(count) || 0);
+    const pwr = Number(power) || 0.4;
+    for (let i = 0; i < n; i++) {
+        const phi = rnd() * Math.PI * 2;
+        const theta = Math.acos(rnd() * 2 - 1);
         const dir = new THREE.Vector3(
             Math.sin(theta) * Math.cos(phi),
             Math.sin(theta) * Math.sin(phi),
             Math.cos(theta)
         );
-        dir.y += 0.42 + Math.random() * 0.25;
-        dir.normalize();
-        vels.push(dir.multiplyScalar(power * (0.85 + Math.random() * 0.4)));
+        if (fountain) {
+            dir.y += 0.42 + rnd() * 0.25;
+            dir.normalize();
+            vels.push(dir.multiplyScalar(pwr * (0.85 + rnd() * 0.4)));
+        } else {
+            vels.push(dir.multiplyScalar(pwr * (0.8 + rnd() * 0.4)));
+        }
     }
     return vels;
 };
+
+const genSparks = (count, power) => genSparksSeeded(count, power, (Math.random() * 0xffffffff) >>> 0, false);
+
+/** Fountain burst: spray outward in all directions with a slight upward lift. */
+const genSparksFountain = (count, power) => genSparksSeeded(count, power, (Math.random() * 0xffffffff) >>> 0, true);
+
+/** Compact spark_explosion trigger: store seed instead of velocity arrays. */
+function sparkBurstTrigger(step, pos, count, power, extra) {
+    const seed = sparkSeedFrom(step, pos);
+    return Object.assign({
+        type: 'spark_explosion',
+        step,
+        pos: pos && pos.clone ? pos.clone() : pos,
+        seed,
+        count,
+        power,
+        fountain: false
+    }, extra || {});
+}
+
+function sparkVelocitiesOf(trigger) {
+    if (!trigger) return [];
+    if (trigger.velocities && trigger.velocities.length) return trigger.velocities;
+    const count = Number(trigger.count) || 0;
+    if (count <= 0) return [];
+    return genSparksSeeded(count, trigger.power || 0.4, trigger.seed || 1, !!trigger.fountain);
+}

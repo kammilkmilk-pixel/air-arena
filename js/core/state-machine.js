@@ -10,6 +10,8 @@ GameContext.stateMachine = {
     applyDamage(teamId, amount, meta = null) {
         const t = GameContext.getTeam(teamId);
         if (!t || t.isDestroyed) return false;
+        if (meta && meta.lastHit) t.lastCombatHitBy = meta.lastHit;
+        else if (meta && meta.killedBy) t.lastCombatHitBy = meta.killedBy;
         t.hp = Math.max(0, t.hp - amount);
         if (t.hp <= 0) {
             t.hp = 0;
@@ -18,10 +20,46 @@ GameContext.stateMachine = {
             if (meta && meta.stalled != null) t.deathStalled = !!meta.stalled;
             else if (t.deathStalled == null) t.deathStalled = !!t.stalled;
             if (meta && Number.isFinite(Number(meta.ap))) t.deathAp = Number(meta.ap);
+            if ((t.deathCause || 'combat') === 'combat') {
+                this.creditCombatKill(teamId, (meta && meta.killedBy) || t.lastCombatHitBy || null);
+            }
             this.markAIDestroyedStatus(teamId);
             if (CONFIG.debug) console.log(`💀 [系統結算] ${teamId.toUpperCase()} 小隊戰機已墜毀！ cause=${t.deathCause || 'combat'}`);
         }
         return t.isDestroyed;
+    },
+
+    creditCombatKill(victimId, killInfo) {
+        const victim = this.getTeamOrNull(victimId);
+        if (!victim || victim.killCredited) return false;
+        const info = killInfo && killInfo.attackerId ? killInfo : null;
+        victim.killedBy = info
+            ? {
+                attackerId: info.attackerId,
+                weapon: info.weapon || 'unknown',
+                friendly: !!info.friendly
+            }
+            : null;
+        victim.killCredited = true;
+        if (!info || info.friendly) return !!info;
+        const attacker = this.getTeamOrNull(info.attackerId);
+        if (!attacker) return true;
+        attacker.combatKills = (Number(attacker.combatKills) || 0) + 1;
+        if (info.weapon === 'gun') attacker.combatKillsGun = (Number(attacker.combatKillsGun) || 0) + 1;
+        else if (info.weapon === 'missile') attacker.combatKillsMsl = (Number(attacker.combatKillsMsl) || 0) + 1;
+        if (!attacker.aiWeaponCounters) {
+            attacker.aiWeaponCounters = {
+                schema: 'air-arena-weapon-counters-v1',
+                turns: 0, mslQ: 0, gunQ: 0, illum: 0, mslAtk: 0, mslPrep: 0,
+                chaff: 0, flare: 0, chaffEsc: 0, flareEsc: 0,
+                kills: 0, killsGun: 0, killsMsl: 0
+            };
+        }
+        const c = attacker.aiWeaponCounters;
+        c.kills = (Number(c.kills) || 0) + 1;
+        if (info.weapon === 'gun') c.killsGun = (Number(c.killsGun) || 0) + 1;
+        else if (info.weapon === 'missile') c.killsMsl = (Number(c.killsMsl) || 0) + 1;
+        return true;
     },
 
     updateHeat(teamId, delta) {
@@ -119,6 +157,17 @@ GameContext.stateMachine = {
         if (nextLevel === 5 && (typeof getEngineHeatLevel === 'function' ? getEngineHeatLevel(t.heat) : ((t.heat || 0) - 150)) > 40) return false;
         t.throttle = nextLevel;
         return true;
+    },
+
+    /** Tangent/outbound cross spawn must not be snapped nose-on at AI enable. */
+    keepSpawnFacing() {
+        try {
+            const cfg = GameContext.getMatchConfig && GameContext.getMatchConfig();
+            const facing = cfg && cfg.spawnFacing;
+            return facing === 'tangent' || facing === 'outbound';
+        } catch (_) {
+            return false;
+        }
     },
 
     /** Point aircraft nose at nearest hostile. Slight pitch toward target altitude; writes logicalQuat. */
@@ -420,6 +469,9 @@ GameContext.stateMachine = {
         t.aiThreatActive = false;
         t.aiLastFlareTurn = t.aiLastFlareTurn ?? -99;
         t.aiLastChaffTurn = t.aiLastChaffTurn ?? -99;
+        t.aiTacticalRole = null;
+        t.aiTacticalRoleWhy = null;
+        t.aiTacticalRoleUntilTurn = -1;
         t.aiDecisionTrail = [];
         t.aiDecisionTrailFrozen = false;
         if (Array.isArray(t.aiDebugTrace)) t.aiDebugTrace = [];
@@ -432,11 +484,11 @@ GameContext.stateMachine = {
                 if (this.rollFox2OpeningAmbush(teamId)) this.applyFox2OpeningPerch(teamId);
                 else {
                     t.aiFox2OpeningAmbush = false;
-                    this.faceOpponent(teamId);
+                    if (!this.keepSpawnFacing()) this.faceOpponent(teamId);
                 }
             } else {
                 t.aiFox2OpeningAmbush = false;
-                this.faceOpponent(teamId);
+                if (!this.keepSpawnFacing()) this.faceOpponent(teamId);
             }
         } else {
             t.aiFox2OpeningAmbush = false;
@@ -517,6 +569,9 @@ GameContext.stateMachine = {
             `selected: destroyed`,
             statusText,
             `deathCause=${cause} stalled=${stalled ? 1 : 0}`,
+            t.killedBy && t.killedBy.attackerId
+                ? `killedBy=${t.killedBy.attackerId} wpn=${t.killedBy.weapon || '-'}${t.killedBy.friendly ? ' friendly' : ''}`
+                : null,
             t.aiEnabled ? null : 'control=player',
             alive && alive.state ? `lastAliveState=${alive.state}` : null,
             alive && alive.statusText ? `lastAliveStatus=${alive.statusText}` : null
@@ -590,11 +645,11 @@ GameContext.stateMachine = {
                 if (this.rollFox2OpeningAmbush(teamId)) this.applyFox2OpeningPerch(teamId);
                 else {
                     t.aiFox2OpeningAmbush = false;
-                    this.faceOpponent(teamId);
+                    if (!this.keepSpawnFacing()) this.faceOpponent(teamId);
                 }
             } else {
                 t.aiFox2OpeningAmbush = false;
-                this.faceOpponent(teamId);
+                if (!this.keepSpawnFacing()) this.faceOpponent(teamId);
             }
         }
         return true;

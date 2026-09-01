@@ -139,7 +139,7 @@ window.GameContext = {
 
     sanitizeSpawnAltitude(alt) {
         const n = Math.round(Number(alt));
-        const allowed = [28, 45, 60, 80];
+        const allowed = [28, 45, 60, 80, 92];
         return allowed.includes(n) ? n : 45;
     },
 
@@ -156,11 +156,15 @@ window.GameContext = {
             mode: matchMode,
             spawnAltitude: 45,
             spawnSeparation: 100,
+            spawnFormation: 'pair',
+            spawnFacing: 'face',
+            playerFaction: 'red',
+            challengeId: 'skirmish',
             seats: {
-                'red-1': { control: 'human', aiModel: null, loadout: 'standard', pylons: defaultPylons.slice(), teamId: 'red' },
-                'red-2': { control: 'ai', aiModel: 'test_01', loadout: 'standard', pylons: defaultPylons.slice(), teamId: 'red2', deferred: matchMode !== '2v2' },
-                'blue-1': { control: 'ai', aiModel: 'test_01', loadout: 'standard', pylons: defaultPylons.slice(), teamId: 'blue' },
-                'blue-2': { control: 'ai', aiModel: 'test_01', loadout: 'standard', pylons: defaultPylons.slice(), teamId: 'blue2', deferred: matchMode !== '2v2' }
+                'red-1': { control: 'human', aiModel: null, loadout: 'standard', pylons: defaultPylons.slice(), teamId: 'red', pilotId: 'nori' },
+                'red-2': { control: 'ai', aiModel: 'test_01', loadout: 'standard', pylons: defaultPylons.slice(), teamId: 'red2', deferred: matchMode !== '2v2', pilotId: 'hawk' },
+                'blue-1': { control: 'ai', aiModel: 'test_01', loadout: 'standard', pylons: defaultPylons.slice(), teamId: 'blue', pilotId: 'fox' },
+                'blue-2': { control: 'ai', aiModel: 'test_01', loadout: 'standard', pylons: defaultPylons.slice(), teamId: 'blue2', deferred: matchMode !== '2v2', pilotId: 'kite' }
             }
         };
     },
@@ -307,6 +311,7 @@ window.GameContext = {
             base.seats[seatId].aiModel = this.sanitizeMatchAiModel(aiModel, control);
             base.seats[seatId].loadout = this.sanitizeMatchLoadout(src.loadout || base.seats[seatId].loadout);
             base.seats[seatId].pylons = this.sanitizePylonLoadout(src.pylons || base.seats[seatId].pylons);
+            base.seats[seatId].pilotId = src.pilotId || base.seats[seatId].pilotId || 'random';
         });
         base.spawnAltitude = this.sanitizeSpawnAltitude(
             config && config.spawnAltitude != null ? config.spawnAltitude : base.spawnAltitude
@@ -314,6 +319,16 @@ window.GameContext = {
         base.spawnSeparation = this.sanitizeSpawnSeparation(
             config && config.spawnSeparation != null ? config.spawnSeparation : base.spawnSeparation
         );
+        base.playerFaction = (config && config.playerFaction === 'blue') ? 'blue' : 'red';
+        base.challengeId = (config && config.challengeId) ? String(config.challengeId) : 'skirmish';
+        if (config && config.mapId) base.mapId = config.mapId;
+        base.spawnFormation = (config && config.spawnFormation === 'cross') ? 'cross' : 'pair';
+        const facingRaw = config && config.spawnFacing;
+        if (facingRaw === 'face' || facingRaw === 'outbound' || facingRaw === 'tangent') {
+            base.spawnFacing = facingRaw;
+        } else {
+            base.spawnFacing = base.spawnFormation === 'cross' ? 'tangent' : 'face';
+        }
         this.state.matchConfig = base;
         return base;
     },
@@ -435,6 +450,12 @@ window.GameContext = {
             aiPolicyMode: team.aiPolicyMode || 'heuristic',
             wingmanOrder: team.wingmanOrder || 'follow',
             lockedTargetId: team.lockedTargetId || null,
+            wreckPhase: team.wreckPhase || null,
+            wreckBurstTurn: Number(team.wreckBurstTurn) || 0,
+            matchActive: team.matchActive !== false,
+            pilotId: team.pilotId || null,
+            callsign: team.callsign || null,
+            voiceSetId: team.voiceSetId || null,
             pendingPitch: team.pendingPitch,
             pendingYaw: team.pendingYaw,
             pendingRoll: team.pendingRoll,
@@ -459,11 +480,20 @@ window.GameContext = {
     },
 
     getSerializableBattleState() {
+        const cfg = this.getMatchConfig ? this.getMatchConfig() : null;
         return {
             activeTeamId: this.state.activeTeamId,
             currentTurn: this.state.currentTurn,
             isAnimating: this.state.isAnimating,
             replayMode: this.state.replayMode,
+            matchConfig: cfg ? {
+                mode: cfg.mode,
+                spawnAltitude: cfg.spawnAltitude,
+                spawnSeparation: cfg.spawnSeparation,
+                playerFaction: cfg.playerFaction || 'red',
+                challengeId: cfg.challengeId || 'skirmish',
+                mapId: cfg.mapId || null
+            } : null,
             teams: Object.fromEntries(
                 (this.getRosterIds ? this.getRosterIds() : ['red', 'blue']).map((id) => [id, this.getSerializableTeamState(id)])
             )

@@ -193,6 +193,20 @@ const CONFIG = {
                 rotZ: 0
             }
         },
+        /**
+         * Rocket pod stub (A2A/A2G). Not wired to decide / SMS fire.
+         * Phase B must close before an AI weapon knife. Sanitize still maps unknown → fox2;
+         * keep this id out of live pylons until then.
+         */
+        'rocket': {
+            id: 'rocket',
+            name: '火箭巢（佔位）',
+            aiEnabled: false,
+            dualRole: true,
+            damage: 18,
+            range: 55,
+            count: 7
+        },
         'flare': {
             id: 'flare',
             name: '熱焰彈',

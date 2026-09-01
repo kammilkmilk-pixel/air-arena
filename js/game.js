@@ -707,6 +707,7 @@ window.startCombatAnimation = function() {
     GameContext.setReplayMode(false);
     isReplayingAuto = false;
     GameContext.state.animProgress = 0.0;
+    GameContext.state._awaitingRadio = false;
     GameContext.state._shakeFiredSteps = Object.create(null);
     GameContext.setAnimating(true);
     // Human matches: restore remembered multi-view only while combat plays.
@@ -847,8 +848,13 @@ function animate() {
     // ==========================================
     if (GameContext.isAnimating() && teams.red.flightCurve && teams.blue.flightCurve) {
         try {
-            GameContext.state.animProgress += 0.012;
-            if (GameContext.state.animProgress > 1.0) GameContext.state.animProgress = 1.0;
+            if (!GameContext.state._awaitingRadio) {
+                const step = (window.AirArenaBatchRun && typeof AirArenaBatchRun.animStep === 'function')
+                    ? AirArenaBatchRun.animStep()
+                    : 0.012;
+                GameContext.state.animProgress += (Number(step) > 0 ? Number(step) : 0.012);
+                if (GameContext.state.animProgress > 1.0) GameContext.state.animProgress = 1.0;
+            }
             let currentLog = battleLog.length > 0 ? battleLog[battleLog.length - 1] : null; 
             if (currentLog && typeof renderCombatFrame === 'function') renderCombatFrame(currentLog, GameContext.state.animProgress);
             if (typeof updateReplayTags === 'function') updateReplayTags(currentLog, GameContext.state.animProgress);
@@ -893,15 +899,29 @@ function animate() {
             }
 
             if (GameContext.state.animProgress >= 1.0 && typeof finishTurnSimultaneously === 'function') {
-                let tagR = document.getElementById('replay-tag-red');
-                let tagB = document.getElementById('replay-tag-blue');
-                if (tagR) tagR.style.display = 'none';
-                if (tagB) tagB.style.display = 'none';
-
-                finishTurnSimultaneously();
+                if (!GameContext.state._awaitingRadio) {
+                    GameContext.state._awaitingRadio = true;
+                    const proceed = () => {
+                        if (!GameContext.isAnimating()) return;
+                        GameContext.state._awaitingRadio = false;
+                        let tagR = document.getElementById('replay-tag-red');
+                        let tagB = document.getElementById('replay-tag-blue');
+                        if (tagR) tagR.style.display = 'none';
+                        if (tagB) tagB.style.display = 'none';
+                        finishTurnSimultaneously();
+                    };
+                    if (window.AirArenaBatchRun && typeof AirArenaBatchRun.skipVoiceWait === 'function' && AirArenaBatchRun.skipVoiceWait()) {
+                        proceed();
+                    } else if (window.AirArenaAudio && typeof AirArenaAudio.waitForVoiceIdle === 'function') {
+                        AirArenaAudio.waitForVoiceIdle(proceed, 12000);
+                    } else {
+                        proceed();
+                    }
+                }
             }
         } catch (err) { 
             console.error("戰鬥播放崩潰，已強制跳轉:", err); 
+            GameContext.state._awaitingRadio = false;
             if(typeof finishTurnSimultaneously === 'function') finishTurnSimultaneously(); 
         }
     } else if (!GameContext.isReplayMode()) {
@@ -1021,7 +1041,9 @@ document.addEventListener("DOMContentLoaded", () => {
     let sld = document.getElementById('replay-slider');
     if (sld) {
         sld.addEventListener('input', (e) => {
-            enterReplayMode(); 
+            if (!e.isTrusted) return;
+            enterReplayMode();
+            if (window.AirArenaAudio && AirArenaAudio.stopVoice) AirArenaAudio.stopVoice(); 
             
             if (e.isTrusted && isReplayingAuto) {
                 isReplayingAuto = false;

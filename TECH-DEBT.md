@@ -4,7 +4,7 @@
 **Context:** Post Phase 1–3 bake OS + Phase B thin knife + midair/undercroft P0–P1 + UI polish（交戰開始／收納不自動彈／鏡頭下移 10%）。Prior waves: soft-aiMap / typed CM / FOX-1 SARH / chase-cam-8 / top-bar fold / standard 2×F1+2×F2。  
 **Purpose:** Living debt list. **High** = silent wrong combat/AI **or** curriculum safety gate collapse; Medium = UX or maintainability; Low = cleanup.
 
-**Canonical docs:** `README.md`（系統字典）· 本檔（債）· `docs/Arena-Map-Onboarding-Memo.md`（**新場地：bake + envelope**）· `docs/PilotAI-Portability-Memo.md`（**PilotAI／引擎預先準備 · 現行 2026-08-05**）· `docs/Urban-Survival-Convergence.md`（**城區生存收斂 · 現行 2026-08-09**）· `docs/Tactical-Development-Memo.md`（**歷史備忘，已過時**）
+**Canonical docs:** `README.md`（系統字典）· 本檔（債）· `docs/Arena-Map-Onboarding-Memo.md`（**新場地：bake + envelope**）· `docs/PilotAI-Portability-Memo.md`（**PilotAI／引擎預先準備 · 現行 2026-08-05**）· `docs/Urban-Survival-Convergence.md`（**城區生存收斂 · 現行 2026-08-09**）· `docs/Path-Cooperation-Roadmap.md`（**接敵走廊／雙機／武器機體 · 現行 2026-08-28**）· `docs/Tactical-Development-Memo.md`（**歷史備忘，已過時**）
 
 ### 新場地提醒（勿跳過）
 
@@ -25,7 +25,7 @@
 | Severity | Count | Focus |
 |----------|------:|-------|
 | High     | 1     | Urban AI regression safety plateau（H7 — C / G-hybrid） |
-| Medium   | ~20 open／partial | M23–M24 UX/CM；M17 mega-file；M4–M7 ACMI/wingman；M8 完整角色層；M18/M21 T38／beam |
+| Medium   | ~19 open／partial | M23–M24 UX/CM；M17 mega-file；M4–M7 ACMI/wingman；M18/M21 T38／beam |
 | Low      | 10    | Debris cleanup, naming/units, deprecated aliases, dump-tag comments, trail forensics |
 
 **2026-08-05 audit:** Smokes（decide / building-risk / phase3 / envelope / doctrine / SARH / ai-map）預期綠；`npm run test:ai` 城區安全門仍 **未全綠**（H7 plateau）。M4–M7 / M10 / M23–M24 **仍在程式碼中成立**（已複核）。
@@ -41,14 +41,20 @@
 | H7 energy ECO + F opening yield | **Landed** | F / G-heur PASS; C + G-hybrid plateau |
 | Typed CM + chaff VFX + snapshot ammo | **Done** | Residual: M24 urban escape no chaff |
 | Chase cam + top-bar fold | **Done** | Dist 8; seat frame −10% viewport (no-lock); fold no auto-expand on engage |
-| Phase B thin knife (M8) | **Landed 2026-08-05** | `applyEnemyPredictCombatScore` + `rngTie` near-tie; full role FSM deferred |
-| Urban survival convergence | **Active 2026-08-09** | See `docs/Urban-Survival-Convergence.md` — class-based overhead; **no dump-ban oscillation**; Phase B full roles blocked until pass gate |
+| Phase B thin knife (M8) | **B0/B0b 完成** · **B1：A.0 優先目錄＋回退** · **B2 生存可對看、五角色等 A.2** | 見 baseline；不加大 ±28 |
+| Urban survival convergence | **Active 2026-08-09** | See `docs/Urban-Survival-Convergence.md` — class-based overhead; **tableGlue/collapse + dirtBleed thawed 2026-08-28** |
 | Midair yield beside-tall (T9) | **Landed 2026-08-05** | `canYieldToMidairBreak` → `isTrueUnderRoof`（非裸 roof&lt;0） |
 | Undercroft stick P1 | **Landed 2026-08-05** | `P1 undercroftBoost` — dirt gate + lateral/skim（dump 待再驗） |
 | Arena envelope ≠ AI core | **Done** | `arena-envelope.js` + map `envelope` |
 | Map catalog / editor | **Landed (WIP)** | AI hazard tags deferred (M22) |
 | Combat UX / CM (M23, M24) | **Open** | Ring vs 70m fire; no `chaffWhileEscape` |
-| Freeze / tag backup | **You are here** | 2026-08-05 備份點 |
+| Radio cues / ACMI 電台 | **Landed thin** | 凍結 6 事件；字幕＋2D 半身＋TTS 測試；錄音包後補 |
+| 起始頁目錄 | **Landed** | 玩家目錄＋「測試」；Host／Join／快速配對（`npm run room`） |
+| 結算卡頓 | **Partial** | hitch marks（decide／paths／resolve）；火花改 seed 不進 log |
+| 序列化 B / 房主權威 | **Landed** | `turn-log-serialize` + netplay protocol；Host/Join／queue；`npm run room`；`?hostRoom=` BC |
+| 音訊 mixer | **Landed stub** | master／music／sfx／voice；BGM 尚未掛檔 |
+| 火箭巢 | **Stub only** | `CONFIG.weapons.rocket`；decide／SMS **不讀**；插入點見 `docs/Path-Cooperation-Roadmap.md`（A.0 TAP 窗穩後、單獨武器刀） |
+| Freeze / tag backup | **You are here** | 2026-08-25 下一波軌道落地 |
 
 ---
 
@@ -57,6 +63,8 @@
 | Item | Notes |
 |------|--------|
 | ✅ Phase B thin + rngTie | predict soft-score; `tacticalTieEps=12`; needle `phaseB:` / `rngTie:` |
+| ✅ Phase B full roles (M8) | B1 碼＋A.0 目錄閘（`tapRoleGate`）；`deferred=seekAngle` 已證實。B2 生存切線可對看；五角色等 A.2 |
+| ✅ Merge diverge hold (T88) | 3-turn bank commit; needle `mergeDiverge:` — mesh away still wins |
 | ✅ Midair P0 (T9) | bare `roof<0` @ long cov 不再擋 midair；`deferred=trueUndercroft\|nearDirt` |
 | ✅ Undercroft P1 | dirtEmbed `alt<16`；側推 auth／skim joyY；needle `P1 undercroftBoost` |
 | ✅ Stick priority align | dirt → undercroft/T38 → diveClosing → scored → climb → handoff → weapons |
@@ -103,26 +111,28 @@
 ### M3. LCOS / HUD fragility
 - DOM injection; `setInterval(2000)` rebind; lerp / `400` snap; bank lag from `joyX` not `pendingRoll`; missile “in range” = seeker flight; lead clamped to nose.
 
-### M4. ACMI wreck debris missing from replay — **reconfirmed 2026-08-05**
-- Live: `spawnAircraftDebris` from wreck mixin / soft-kill ground burst only.
-- Replay: `renderCombatFrame` plays `vfxTriggers` but never logs a debris trigger.
+### M4. ACMI wreck debris missing from replay — **partial 2026-08-25**
+- Live: `spawnAircraftDebris` from wreck mixin / soft-kill ground burst.
+- Replay: hard-collision deaths now log `vfxTriggers` `type:'debris'` and `renderCombatFrame` spawns on first age frames. Soft-wreck delayed burst still live-only.
 
-### M5. `wreckPhase` / `wreckBurstTurn` not serialized — **reconfirmed 2026-08-05**
-- Present on team state; absent from `getSerializableTeamState` return object.
+### M5. `wreckPhase` / `wreckBurstTurn` not serialized — **mitigated 2026-08-25**
+- `getSerializableTeamState` now includes `wreckPhase`, `wreckBurstTurn`, `matchActive`, `pilotId` / `callsign`.
+- Round-trip hydrate of live `wrapper` pose still needs host-authority apply (not a full restore API).
 
-### M6. `aircraftDebris` not cleared on new match — **reconfirmed 2026-08-05**
-- Module `const aircraftDebris = []` in `render.js`; no reset on `applyMatchConfig`.
+### M6. `aircraftDebris` not cleared on new match — **closed 2026-09-01**
+- `clearAircraftDebris()` on `applyMatchConfig` (batch rematch / setup). Live spawn path unchanged.
 
-### M7. Wingman orphan / status noise — **reconfirmed 2026-08-05**
-- Default `wingmanOrder: 'follow'`; `getWingmanLeadId` only returns **human** lead.
-- Any AI with no human ally appends `｜無長機自由作戰` (1v1 AI vs AI false positive).
-- Order label maps duplicated (`state-machine.js` + `pilot-ai.js`).
+### M7. Wingman orphan / status noise — **mitigated 2026-09-01**
+- `getWingmanLeadId` still only returns a **human** lead (formation FSM unchanged).
+- `｜無長機自由作戰` only when the faction actually has a human seat that is gone. All-AI 1v1/2v2 no longer tags every dump.
+- Order label maps still duplicated (`state-machine.js` + `pilot-ai.js`). Frozen brains not edited.
 
-### M8. Phase B tactical roles — **thin knife landed 2026-08-05** · full layer **blocked on survival gate**
-- Soft: `applyEnemyPredictCombatScore` on `scoreTacticalApproach` only; softYield under survival pressure.
-- Near-tie RNG: `pickTacticalNearTie` / `tacticalTieEps` / `tacticalTieRandom`.
-- **Still open:** lead/lag/beam role FSM；kill-efficiency vs survival dump validation.
-- **Do not expand** until [`docs/Urban-Survival-Convergence.md`](./docs/Urban-Survival-Convergence.md) pass definition holds (3× T150, ≤1 building death/match).
+### M8. Phase B tactical roles — **B0/B0b 完成** · **B1 A.0 目錄閘** · **B2 生存可對看、五角色等 A.2**
+- **目標：** TAP 外層角色，不是 stick、不是武器刀。詳 `docs/AI-Control-Baseline.md`「現行驗收（2026-09-01）」。
+- **B0 / B0b：** 已在 Rei_03。
+- **B1：** `deferred=seekAngle` 過。A.0：`seek_angle` 優先 lag／beam，不安全回退全目錄（針 `tapRoleGate:`）。不加大 ±28。生存閘當選不當 B1 失敗。
+- **B2：** 切線全席兩邊都有 3×T150 GATE；生存可對看。五角色交戰像等 A.2，**不寫過關**。
+- **非 M8：** merge diverge；`kills/mslQ`；出生幾何是量測。
 
 ### M9. `StateMachine` mega-API + `window.*` globals
 - AI doctrine, pilot input, HUD debug coupled.
@@ -147,9 +157,11 @@
 ### M16. Multiple overlapping side-commitment systems — **mitigated**
 - Single `resolveAvoidSideAuthority`; residual: `navClimbOut.side` still separate.
 
-### M17. `pilot-ai.js` mega-file + dump-tagged branches — **~14.1k lines (2026-08-05)**
-- Avoid-side extracted. Next: escape-stick / route-plan after dumps stay clean.
-- Doctrine: 少強制、優選路 · Portability memo.
+### M17. `pilot-ai.js` mega-file + dump-tagged branches — **~23.4k lines（2026-08-29 複檢）**
+- 8/5 快照 ~14.1k；之後又長約 9k。Avoid-side／bake／envelope／building-risk **已外置**，但 `decide` 本體與 TAP／stick／僚機／Phase B 仍在同一物件。
+- **分類可維修：** `js/core` · `logic` · `ai` · `view` · `tools` 分層清楚；電台／serialize／match 是新檔，不是倒回單體。
+- **義大利麵條是單點、不是全庫：** 危險在 live 巨石 + 凍結整份拷貝（`rei_03`／`_02`／`_01` 各 ~21–23k，`index.html` 全載），不是資料夾分錯。`ui.js` ~3.4k（setup／net／僚機／debug 同檔）次要。`decide-pipeline.js` 只鎖 gate 名，handler 仍在巨檔。
+- **現在不要拆。** A.0（B1 dump／B2）期間切檔會讓凍結腦對不齊。之後改：對地／編隊開**新層**（envelope／`pair-doctrine`），不要把 23k 切成互相 `window` 呼叫的碎片；凍結腦維持整份快照、不手改。詳 [`docs/Path-Cooperation-Roadmap.md`](./docs/Path-Cooperation-Roadmap.md)「檔案可維修性」。
 
 ### M18. Route horizon / beam underused — **partial** (feeds H7)
 - Gap asymmetry / facade bias landed; residual: early `risk=low` skips beam; T38 glue fallback.
@@ -226,15 +238,15 @@
 4. **M24** — `chaffWhileEscape` when inbound FOX-1 / paint  
 
 ### Product / maintainability
-5. **M8 remainder** — Phase B full roles（僅在 thin knife dump 穩後）  
-6. **M17** — continue split（Portability：集中 pose／障礙入口）  
-7. **M7** — orphan wingman label  
-8. **M4–M6** — ACMI debris + serialize + clear  
+5. **M8 B1/B2** — A.0 目錄閘落地後：TAP 窗 dump ＋金標生存不退步。其後 A.1。B2 五角色等 A.2。禁止加大 ±28。  
+6. **M17** — **之後再拆**（A.0 不切檔）。新層（對地／編隊）另檔；不把 live 23k 碎切。Portability：集中 pose／障礙入口仍有效。  
+7. **M7** — all-AI 誤標已收；label map 重複仍在  
+8. **M4–M5** — ACMI debris replay／serialize；**M6 已關**（新場清碎片）  
 9. **M3 / M10 / L3** — HUD harden + dead aliases  
 
 ### Auto / health
 - `npm run test:ai`（smoke + curriculum）  
-- Dump needles: `phaseB:` / `rngTie:` / `P1 undercroftBoost` / `deferred=trueUndercroft` / `deferred=engageHandoff`
+- Dump needles: `phaseB:` / `phaseBRole:` / `rngTie:` / `mergeDiverge:` / `P1 undercroftBoost` / `deferred=trueUndercroft` / `deferred=engageHandoff`
 
 ---
 
@@ -252,10 +264,10 @@
 - [x] Phase 1–3 bake OS / path / combat soft-yield  
 - [x] H7 energy ECO + F opening yield（F / G-heur PASS）  
 - [x] Phase B thin knife + near-tie RNG  
+- [x] **Phase B B1 role FSM 碼** — 2026-08-25 live `test_01`（有效性／A/B 仍開）  
 - [x] Midair P0 + undercroft P1 sticks  
 - [x] UI: 交戰開始 ▶  
 - [ ] **Urban AI regression safety green (H7)** — C + G-hybrid；**live 實測**  
-- [ ] Phase B full tactical role layer (M8 remainder)  
 - [ ] FOX-1 fire vs ring UX (M23)  
 - [ ] Chaff under urban escape (M24)  
 - [x] **User save / tag release backup** — 本快照（2026-08-05）  
