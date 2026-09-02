@@ -44,6 +44,12 @@ assert(q2.spawnAltitude !== q.spawnAltitude || q2.spawnSeparation !== q.spawnSep
 
 const locked = Batch.parseSearch('?brains=test_01&alt=60&sep=200');
 assert(locked.spawnAltitude === 60 && locked.spawnSeparation === 200 && locked.spawnMix === false, 'spawn lock');
+const gold = Batch.parseSearch(
+    '?skipSetup=1&lab=1&mode=2v2&arena=dense-urban&map=citymap&brains=test_01&batch=3&alt=80&sep=200&spawnFormation=cross&spawnFacing=tangent&spawnMix=0'
+);
+assert(gold.spawnAltitude === 80 && gold.spawnSeparation === 200, 'gold 80/200 lock');
+assert(gold.spawnFormation === 'cross' && gold.spawnFacing === 'tangent', 'gold cross tangent');
+assert(gold.batchN === 3 && gold.spawnMix === false, 'gold n=3 no mix');
 
 const nomix = Batch.parseSearch('?brains=test_01&spawnMix=0');
 assert(nomix.spawnFormation === 'cross', 'mix-off still cross');

@@ -165,8 +165,9 @@ Soft gate **3/3**. T136 building death is `collapseLevel` stick — **not thawed
 | **量測幾何** | dense-urban 2v2、City Map、十字切線、屋頂 80／92、sep 100／140／200 | **夠用，停改出生** | 否 |
 | **B2 生存** | 全席 `test_01` vs `Rei_03`；金標 T150、building ≤1；兩邊都有過連續 3 場 | **量測已過、可對看；不單獨寫 B2 過關** | 否（不為生存再開 stick） |
 | **B1 觀察（已證實）** | `alignFirstGate: deferred=seekAngle` 會觸發；`phaseBRole: seek_angle` dump 可讀 | **過** | — |
-| **B1 當選** | TAP **真正擁有 stick** 時，`seek_angle` 走**優先目錄** lag／beam；全滅或不安全才回退 cruise／perch | **碼已上**（`pickSeekAngleTacticalWinner`／`tapRoleGate:`）。T92 分型：cruise 291 仍應選 lag。金標 TAP 窗 dump 確認；生存閘當選不當失敗 | 否（本刀已落地）。金標 building 不退步仍要 dump |
-| **B2 五角色** | 生存不差 **且** press／extend／recommit 也像角色 | **未過關** — 等 **A.2**，不綁 A.0 一刀 | 等 A.2 |
+| **B1 當選** | TAP **真正擁有 stick** 時，`seek_angle` 走**優先目錄** lag／beam；全滅或不安全才回退 cruise／perch | **碼已上**（`pickSeekAngleTacticalWinner`／`tapRoleGate:`）。T92 分型：cruise 291 仍應選 lag。生存閘當選不當失敗 | 否（A.0 已落地） |
+| **A.1 接敵走廊** | bake／dual 朝預測敵 XZ；L／R 能成形較不漏斗；金標 n=3 building 不退步 | **碼已上**（`resolveInterceptCorridorHeading`／`bakeDualHt: goal=`）。逃生 WP 仍沿機鼻 | 否（本刀已落地）。等 n=3 dump |
+| **B2 五角色** | 生存不差 **且** press／extend／recommit 也像角色 | **未過關** — 等 **A.2**，不綁 A.1 一刀 | 等 A.2 |
 
 **舊門作廢：** 「Ctrl+F5 金標 T150 看到 `seek_angle` → lag／beam 就算有效性過」——被模擬分擋住，再刷 6 格只會克隆。**也不要把 ±28 加大到數百**（dump 調參、逼 lag 進樓）。A.0 用目錄閘＋安全回退。
 
@@ -179,15 +180,16 @@ Soft gate **3/3**. T136 building death is `collapseLevel` stick — **not thawed
 | 開門（生存） | **軟門關** 2026-08-25 | Rei_03 T83/T65/T136 **3/3**。Gold T150 可選；已有 16:46 **0/0/2**。Stick 仍凍。 |
 | B1 角色 FSM | **碼已上** live `test_01` | `evaluateTacticalRole` / hold 2 / TAP 偏置 / 輕 thr clamp。快照 `tacticalRole`；TAP 當選才有 `phaseBRole:`。凍結腦**沒有**這層。 |
 | B1 有效性 | **目錄閘刀（A.0）** | `pickSeekAngleTacticalWinner`：`seek_angle` 先 lag／beam；針 `tapRoleGate:`。T92 舊場若重跑應 `fallback=0` 選 lag／beam，除非優先集不安全。 |
+| A.1 接敵走廊 | **碼已上**（等金標 n=3 dump） | `resolveInterceptCorridorHeading`：有接觸且非逃生壓力時，bake／dual 朝預測敵 XZ；L／R 選能成形較不漏斗。針 `bakeDualHt: goal=`。 |
 | B2 A/B | **生存可對看；五角色未過關** | 切線後兩邊連續 3×T150 GATE。五角色等 A.2。舊 pair／對頭／T&lt;60／克隆不當 A/B。 |
 
 **同週但不是 Phase B：** merge diverge hold — `buildCloseMidairBreakAction` 路徑 `divergeHold=1` 有生效（T9 保住符號）。**缺口：** `Inbound missile too close: hard break` 不走 builder，不寫 memory（03:28 藍 T6→T7 仍翻邊）。Hold 到期後可再跟 localX 翻（T10）。樹針 `mergeDiverge:` 只在 engagement TAP 前那條 merge；trail `divergeHold=` 才穩。
 
 ### 下一刀（只准一條）
 
-A.0 目錄閘落地後：金標 T150 確認 building 不退步，並抽 TAP 窗 `tapRoleGate: fallback=0`。**不要**再開 ±28 或出生。確認後才 A.1（bake 接敵終點）。press／extend 留 A.2。
+A.1 接敵走廊已落地：bake／dual 終點為預測敵 XZ（針 `bakeDualHt: goal=`）。**不要**再開 ±28、出生、TAP 目錄閘。金標 n=3 dump building 不退步後才 A.2（press／extend lead）。
 
-其後總序：**單機空戰完成 → 對地武器 → 編隊 AI**（現停在單機空戰 A.0）。見 [`Path-Cooperation-Roadmap.md`](./Path-Cooperation-Roadmap.md)。
+其後總序：**單機空戰完成 → 對地武器 → 編隊 AI**（現停在單機空戰 A.1）。見 [`Path-Cooperation-Roadmap.md`](./Path-Cooperation-Roadmap.md)。
 
 ---
 

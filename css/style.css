@@ -541,9 +541,55 @@ html.startup-lock body {
     margin-bottom: 8px;
 }
 .match-net-row .match-map-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.match-net-mode-row {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 8px;
+    margin-bottom: 6px;
+    align-items: stretch;
+}
+.match-net-mode-label {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 12px;
+    color: #aaa;
+}
+.match-net-mode-select {
+    min-height: 40px;
+    letter-spacing: 0;
+    text-transform: none;
+}
+.match-net-join-row {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 8px;
+    margin-bottom: 6px;
+    align-items: stretch;
+}
+.match-join-input {
+    min-height: 44px;
+    padding: 8px 12px;
+    font-size: 16px; /* iOS: avoid zoom-on-focus */
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: #e8e8e8;
+    background: #121212;
+    border: 1px solid #3a3a3a;
+    border-radius: 2px;
+    box-sizing: border-box;
+    touch-action: manipulation;
+    -webkit-user-select: text;
+    user-select: text;
+}
+.match-join-input:focus {
+    outline: none;
+    border-color: #00bcd4;
+}
 .match-net-status {
     margin: 0.35rem 0 0.55rem;
     min-height: 1.2em;
+    word-break: break-word;
 }
 .match-net-status.is-error { color: #ff6688; }
 .match-net-status.is-ok { color: #7dffb3; }

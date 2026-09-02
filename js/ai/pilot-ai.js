@@ -11632,6 +11632,49 @@ window.AirArenaAI = {
     },
 
     /**
+     * A.1: combat-corridor heading toward predicted intercept XZ.
+     * Survival pressure / no goal / intercept behind or too close → keep nose.
+     * Dual L/R pick may still use intercept XZ when the contact is ahead or abeam.
+     */
+    resolveInterceptCorridorHeading(selfPos, noseFwd, opts = {}) {
+        const nx0 = Number(noseFwd && noseFwd.x) || 0;
+        const nz0 = Number(noseFwd && noseFwd.z) || 0;
+        const nlen = Math.hypot(nx0, nz0);
+        const nx = nlen > 1e-4 ? nx0 / nlen : 0;
+        const nz = nlen > 1e-4 ? nz0 / nlen : 1;
+        const out = {
+            x: nx,
+            z: nz,
+            goalSource: 'nose',
+            goalDist: 0,
+            useGoalPick: false
+        };
+        if (opts.survivalPressure) return out;
+        const gx = Number(opts.goalX);
+        const gz = Number(opts.goalZ);
+        const sx = Number(selfPos && selfPos.x);
+        const sz = Number(selfPos && selfPos.z);
+        if (!Number.isFinite(gx) || !Number.isFinite(gz) || !Number.isFinite(sx) || !Number.isFinite(sz)) {
+            return out;
+        }
+        const dx = gx - sx;
+        const dz = gz - sz;
+        const glen = Math.hypot(dx, dz);
+        out.goalDist = glen;
+        if (glen < 12) return out;
+        const ix = dx / glen;
+        const iz = dz / glen;
+        const dot = nx * ix + nz * iz;
+        out.useGoalPick = true;
+        if (dot >= 0.15) {
+            out.x = nx * 0.4 + ix * 0.6;
+            out.z = nz * 0.4 + iz * 0.6;
+            out.goalSource = 'intercept';
+        }
+        return out;
+    },
+
+    /**
      * Phase 1 spatial OS read from baked AI map.
      * Authority for soft clear / sky / local roof. Never hard-forces sticks —
      * AABB/raycast remain hard-contact only. mapLane ≠ flightBand (altitudeLane).
@@ -11697,6 +11740,13 @@ window.AirArenaAI = {
         let survivalWaypoints = null;
         let survivalPath = null;
         let dualHomotopyCorridors = null;
+        const interceptH = this.resolveInterceptCorridorHeading(selfPos, fwd, {
+            goalX: opts.goalX,
+            goalZ: opts.goalZ,
+            survivalPressure: opts.survivalPressure
+        });
+        const combatX = interceptH.x;
+        const combatZ = interceptH.z;
         if (
             fwd &&
             typeof AirArenaAiMap !== 'undefined'
@@ -11724,8 +11774,8 @@ window.AirArenaAI = {
                         mapWp,
                         selfPos.x,
                         selfPos.z,
-                        Number(fwd.x) || 0,
-                        Number(fwd.z) || 0,
+                        combatX,
+                        combatZ,
                         alt,
                         {
                             margin: 8,
@@ -11734,7 +11784,7 @@ window.AirArenaAI = {
                         }
                     );
                 }
-                // Wave 2 seed: if A* path weak, try flyable corridor graph toward forward goal.
+                // Wave 2 seed: if A* path weak, try flyable corridor graph toward intercept/nose goal.
                 if (
                     (!survivalPath || !survivalPath.ok) &&
                     AirArenaAiMap.buildFlyableCorridorGraph &&
@@ -11748,8 +11798,18 @@ window.AirArenaAI = {
                     }
                     if (mapWp._corridorGraph && mapWp._corridorGraph.ok) {
                         const goalDist = Number(opts.pathGoalDist) || (Number(mapWp.cellSize) || 10) * 10;
-                        const gx = selfPos.x + (Number(fwd.x) || 0) * goalDist;
-                        const gz = selfPos.z + (Number(fwd.z) || 0) * goalDist;
+                        let hx = combatX;
+                        let hz = combatZ;
+                        const hlen = Math.hypot(hx, hz);
+                        if (hlen > 1e-4) {
+                            hx /= hlen;
+                            hz /= hlen;
+                        }
+                        const cap = interceptH.useGoalPick && interceptH.goalDist > 0
+                            ? Math.min(goalDist, interceptH.goalDist)
+                            : goalDist;
+                        const gx = selfPos.x + hx * cap;
+                        const gz = selfPos.z + hz * cap;
                         const gPath = AirArenaAiMap.findCorridorGraphPath(
                             mapWp._corridorGraph,
                             selfPos.x,
@@ -11768,8 +11828,7 @@ window.AirArenaAI = {
                                 targetAlt: null
                             });
                             const w0 = gPath.waypoints[0];
-                            const crossY = (Number(fwd.x) || 0) * (w0.z - selfPos.z)
-                                - (Number(fwd.z) || 0) * (w0.x - selfPos.x);
+                            const crossY = hx * (w0.z - selfPos.z) - hz * (w0.x - selfPos.x);
                             if (Math.abs(crossY) > 4) {
                                 survivalPath.preferredSide = crossY > 0 ? -1 : 1;
                             }
@@ -11777,20 +11836,29 @@ window.AirArenaAI = {
                     }
                 }
                 if (AirArenaAiMap.sampleDualHomotopyCorridors) {
+                    const dualOpts = {
+                        steps: opts.dualSteps || 5,
+                        stepDist: opts.dualStepDist,
+                        lateral: opts.dualLateral,
+                        margin: 8
+                    };
+                    if (interceptH.useGoalPick) {
+                        dualOpts.goalX = Number(opts.goalX);
+                        dualOpts.goalZ = Number(opts.goalZ);
+                    }
                     dualHomotopyCorridors = AirArenaAiMap.sampleDualHomotopyCorridors(
                         mapWp,
                         selfPos.x,
                         selfPos.z,
-                        Number(fwd.x) || 0,
-                        Number(fwd.z) || 0,
+                        combatX,
+                        combatZ,
                         alt,
-                        {
-                            steps: opts.dualSteps || 5,
-                            stepDist: opts.dualStepDist,
-                            lateral: opts.dualLateral,
-                            margin: 8
-                        }
+                        dualOpts
                     );
+                    if (dualHomotopyCorridors) {
+                        dualHomotopyCorridors.goalSource = interceptH.goalSource;
+                        dualHomotopyCorridors.goalDist = interceptH.goalDist;
+                    }
                 }
             }
         }
@@ -16693,11 +16761,6 @@ window.AirArenaAI = {
         const acConfig = (typeof CONFIG !== 'undefined' && CONFIG.aircrafts) ? CONFIG.aircrafts[self.type || 'mig21'] : null;
         const maxPitchCmd = acConfig ? acConfig.maxPitch : Math.PI / 3;
         const coverInfo = this.getCoverInfo(selfPos, selfForward, self.ap || self.speed || 120);
-        const aiMapCtx = this.sampleAiMapContext(selfPos, {
-            altitude: selfPos.y,
-            radius: 80,
-            forward: selfForward
-        });
         const obstacleStressMode = arenaMode === 'obstacle-stress';
 
         const trackedEnemyForward = sensor.seenNow
@@ -16715,6 +16778,14 @@ window.AirArenaAI = {
             : null;
         const enemyLeadPos = this.predictEnemyPosition(teamId, trackedEnemyPos, 0.8, sensor.seenNow, assistedVelocity);
         const toEnemy = enemyLeadPos.clone().sub(selfPos);
+        const aiMapCtx = this.sampleAiMapContext(selfPos, {
+            altitude: selfPos.y,
+            radius: 80,
+            forward: selfForward,
+            goalX: sensor.hasContact ? enemyLeadPos.x : undefined,
+            goalZ: sensor.hasContact ? enemyLeadPos.z : undefined,
+            survivalPressure: this.shouldUseSurvivalWaypoints(coverInfo, {})
+        });
         const distance = toEnemy.length();
         const toEnemyNorm = toEnemy.clone().normalize();
         const localToEnemy = toEnemyNorm.clone();
@@ -17389,7 +17460,11 @@ window.AirArenaAI = {
                             : 'n/a'} ` +
                         `R=${urbanRouteCtx.dualHomotopyCorridors && urbanRouteCtx.dualHomotopyCorridors.right
                             ? Number(urbanRouteCtx.dualHomotopyCorridors.right.pocketRisk).toFixed(2)
-                            : 'n/a'}`
+                            : 'n/a'} ` +
+                        `goal=${(urbanRouteCtx.dualHomotopyCorridors && urbanRouteCtx.dualHomotopyCorridors.goalSource) || 'nose'} ` +
+                        `d=${urbanRouteCtx.dualHomotopyCorridors && Number.isFinite(Number(urbanRouteCtx.dualHomotopyCorridors.goalDist))
+                            ? Math.round(Number(urbanRouteCtx.dualHomotopyCorridors.goalDist))
+                            : 0}`
                     );
                 }
             }

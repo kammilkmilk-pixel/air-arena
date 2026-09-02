@@ -79,10 +79,23 @@
         </div>
         <div id="startup-setup-footer" hidden>
             <div class="match-net-row">
-                <button type="button" id="btn-match-host" class="match-map-btn" title="建立私人房間（WebSocket 邀請碼；本機可用 ?hostRoom=test&netRole=host）">建立房間</button>
-                <button type="button" id="btn-match-join" class="match-map-btn" title="輸入邀請碼加入">加入</button>
+                <button type="button" id="btn-match-host" class="match-map-btn" title="建立私人房間">建立房間</button>
+                <button type="button" id="btn-match-join" class="match-map-btn" title="用下方邀請碼加入">加入</button>
                 <button type="button" id="btn-match-queue" class="match-map-btn" title="公開 1v1 排隊配對">快速配對</button>
                 <button type="button" id="btn-match-reconnect" class="match-map-btn" title="用上次 seat token 重連" hidden>重連</button>
+            </div>
+            <div class="match-net-mode-row">
+                <label class="match-net-mode-label">連線
+                    <select id="match-net-mode" class="match-join-input match-net-mode-select" aria-label="連線模式">
+                        <option value="lan">LAN（電腦開服）</option>
+                        <option value="cloud">雲端 BaaS（Supabase）</option>
+                    </select>
+                </label>
+                <button type="button" id="btn-match-cloud-cfg" class="match-map-btn" title="設定 Supabase URL／anon key">雲端設定</button>
+            </div>
+            <div class="match-net-join-row">
+                <input type="text" id="match-join-code" class="match-join-input" maxlength="8" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="邀請碼" inputmode="text" aria-label="房間邀請碼">
+                <button type="button" id="btn-match-copy-invite" class="match-map-btn" title="複製給手機開啟的邀請連結" hidden>複製連結</button>
             </div>
             <div id="match-net-status" class="match-setup-hint match-net-status" hidden></div>
             <button type="button" id="btn-match-engage" class="match-engage-btn">ENGAGE</button>
@@ -459,6 +472,10 @@
     <script src="js/core/match-challenges.js"></script>
     <script src="js/core/turn-log-serialize.js"></script>
     <script src="js/core/netplay-protocol.js"></script>
+    <script src="js/core/supabase-config.js"></script>
+    <script src="js/core/supabase-config.local.js" onerror="this.onerror=null;this.src='js/core/supabase-config.local.example.js'"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.8/dist/umd/supabase.min.js"></script>
+    <script src="js/core/netplay-transports.js"></script>
     <script src="js/core/host-authority.js"></script>
     <script src="js/core/team-state.js"></script>
     <script src="js/core/compat-aliases.js"></script>

@@ -46,7 +46,10 @@ function waitMsg(inbox, type, ms = 3000) {
 
 async function main() {
     const child = spawn(process.execPath, [path.join(ROOT, 'tools', 'room-server.js')], {
-        env: Object.assign({}, process.env, { ROOM_PORT: String(PORT) }),
+        env: Object.assign({}, process.env, {
+            ROOM_PORT: String(PORT),
+            SERVE_STATIC: '0'
+        }),
         stdio: ['ignore', 'pipe', 'pipe']
     });
     let boot = '';

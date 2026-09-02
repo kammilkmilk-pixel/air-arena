@@ -41,7 +41,7 @@
 | H7 energy ECO + F opening yield | **Landed** | F / G-heur PASS; C + G-hybrid plateau |
 | Typed CM + chaff VFX + snapshot ammo | **Done** | Residual: M24 urban escape no chaff |
 | Chase cam + top-bar fold | **Done** | Dist 8; seat frame −10% viewport (no-lock); fold no auto-expand on engage |
-| Phase B thin knife (M8) | **B0/B0b 完成** · **B1：A.0 優先目錄＋回退** · **B2 生存可對看、五角色等 A.2** | 見 baseline；不加大 ±28 |
+| Phase B thin knife (M8) | **B0/B0b 完成** · **B1：A.0 優先目錄＋回退** · **A.1 接敵走廊碼已上** · **B2 生存可對看、五角色等 A.2** | 見 baseline；不加大 ±28 |
 | Urban survival convergence | **Active 2026-08-09** | See `docs/Urban-Survival-Convergence.md` — class-based overhead; **tableGlue/collapse + dirtBleed thawed 2026-08-28** |
 | Midair yield beside-tall (T9) | **Landed 2026-08-05** | `canYieldToMidairBreak` → `isTrueUnderRoof`（非裸 roof&lt;0） |
 | Undercroft stick P1 | **Landed 2026-08-05** | `P1 undercroftBoost` — dirt gate + lateral/skim（dump 待再驗） |
@@ -49,11 +49,11 @@
 | Map catalog / editor | **Landed (WIP)** | AI hazard tags deferred (M22) |
 | Combat UX / CM (M23, M24) | **Open** | Ring vs 70m fire; no `chaffWhileEscape` |
 | Radio cues / ACMI 電台 | **Landed thin** | 凍結 6 事件；字幕＋2D 半身＋TTS 測試；錄音包後補 |
-| 起始頁目錄 | **Landed** | 玩家目錄＋「測試」；Host／Join／快速配對（`npm run room`） |
+| 起始頁目錄 | **Landed** | 玩家目錄＋「測試」；LAN／雲端連線模式；Host／Join／快速配對 |
 | 結算卡頓 | **Partial** | hitch marks（decide／paths／resolve）；火花改 seed 不進 log |
-| 序列化 B / 房主權威 | **Landed** | `turn-log-serialize` + netplay protocol；Host/Join／queue；`npm run room`；`?hostRoom=` BC |
+| 序列化 B / 房主權威 | **Landed** | turn-log + transports（WS／BC／Supabase BaaS）；LAN `npm start`；雲端可選 |
 | 音訊 mixer | **Landed stub** | master／music／sfx／voice；BGM 尚未掛檔 |
-| 火箭巢 | **Stub only** | `CONFIG.weapons.rocket`；decide／SMS **不讀**；插入點見 `docs/Path-Cooperation-Roadmap.md`（A.0 TAP 窗穩後、單獨武器刀） |
+| 火箭巢 | **Stub only** | `CONFIG.weapons.rocket`；decide／SMS **不讀**；插入點見 `docs/Path-Cooperation-Roadmap.md`（A.1 dump 穩後、單獨武器刀） |
 | Freeze / tag backup | **You are here** | 2026-08-25 下一波軌道落地 |
 
 ---
@@ -63,7 +63,7 @@
 | Item | Notes |
 |------|--------|
 | ✅ Phase B thin + rngTie | predict soft-score; `tacticalTieEps=12`; needle `phaseB:` / `rngTie:` |
-| ✅ Phase B full roles (M8) | B1 碼＋A.0 目錄閘（`tapRoleGate`）；`deferred=seekAngle` 已證實。B2 生存切線可對看；五角色等 A.2 |
+| ✅ Phase B full roles (M8) | B1 碼＋A.0 目錄閘（`tapRoleGate`）；A.1 接敵走廊碼已上（`bakeDualHt: goal=`）。B2 生存切線可對看；五角色等 A.2 |
 | ✅ Merge diverge hold (T88) | 3-turn bank commit; needle `mergeDiverge:` — mesh away still wins |
 | ✅ Midair P0 (T9) | bare `roof<0` @ long cov 不再擋 midair；`deferred=trueUndercroft\|nearDirt` |
 | ✅ Undercroft P1 | dirtEmbed `alt<16`；側推 auth／skim joyY；needle `P1 undercroftBoost` |
@@ -127,10 +127,11 @@
 - `｜無長機自由作戰` only when the faction actually has a human seat that is gone. All-AI 1v1/2v2 no longer tags every dump.
 - Order label maps still duplicated (`state-machine.js` + `pilot-ai.js`). Frozen brains not edited.
 
-### M8. Phase B tactical roles — **B0/B0b 完成** · **B1 A.0 目錄閘** · **B2 生存可對看、五角色等 A.2**
+### M8. Phase B tactical roles — **B0/B0b 完成** · **B1 A.0 目錄閘** · **A.1 接敵走廊碼已上** · **B2 生存可對看、五角色等 A.2**
 - **目標：** TAP 外層角色，不是 stick、不是武器刀。詳 `docs/AI-Control-Baseline.md`「現行驗收（2026-09-01）」。
 - **B0 / B0b：** 已在 Rei_03。
 - **B1：** `deferred=seekAngle` 過。A.0：`seek_angle` 優先 lag／beam，不安全回退全目錄（針 `tapRoleGate:`）。不加大 ±28。生存閘當選不當 B1 失敗。
+- **A.1：** live bake／dual 朝預測敵 XZ；L／R 選能成形較不漏斗（針 `bakeDualHt: goal=`）。逃生 WP 仍沿機鼻。等金標 n=3 dump。
 - **B2：** 切線全席兩邊都有 3×T150 GATE；生存可對看。五角色交戰像等 A.2，**不寫過關**。
 - **非 M8：** merge diverge；`kills/mslQ`；出生幾何是量測。
 
@@ -238,8 +239,8 @@
 4. **M24** — `chaffWhileEscape` when inbound FOX-1 / paint  
 
 ### Product / maintainability
-5. **M8 B1/B2** — A.0 目錄閘落地後：TAP 窗 dump ＋金標生存不退步。其後 A.1。B2 五角色等 A.2。禁止加大 ±28。  
-6. **M17** — **之後再拆**（A.0 不切檔）。新層（對地／編隊）另檔；不把 live 23k 碎切。Portability：集中 pose／障礙入口仍有效。  
+5. **M8 B1/B2** — A.1 接敵走廊碼已上：金標 n=3 dump building 不退步後 A.2。B2 五角色等 A.2。禁止加大 ±28。  
+6. **M17** — **之後再拆**（A.1 dump 不切檔）。新層（對地／編隊）另檔；不把 live 23k 碎切。Portability：集中 pose／障礙入口仍有效。  
 7. **M7** — all-AI 誤標已收；label map 重複仍在  
 8. **M4–M5** — ACMI debris replay／serialize；**M6 已關**（新場清碎片）  
 9. **M3 / M10 / L3** — HUD harden + dead aliases  

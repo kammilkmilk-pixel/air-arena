@@ -687,12 +687,58 @@ function uiBindNetplayControlsOnce() {
     if (uiBindNetplayControlsOnce._bound) return;
     uiBindNetplayControlsOnce._bound = true;
 
+    const persistNet = () => {
+        try {
+            if (!window.AirArenaNetplay) return;
+            if (AirArenaNetplay.getRoom()) {
+                sessionStorage.setItem('aa-net-room', AirArenaNetplay.getRoom());
+                sessionStorage.setItem('aa-net-reconnect', AirArenaNetplay.getReconnectToken() || '');
+                sessionStorage.setItem('aa-net-seat', AirArenaNetplay.getLocalSeatId() || 'red');
+                sessionStorage.setItem('aa-net-role', AirArenaNetplay.getRole() || '');
+            }
+            sessionStorage.setItem('aa-net-cloud', uiNetplayPreferCloud() ? '1' : '0');
+        } catch (_) { /* ignore */ }
+    };
+
+    function uiNetplayPreferCloud() {
+        const sel = document.getElementById('match-net-mode');
+        if (sel) return sel.value === 'cloud';
+        return !!(window.AirArenaNetplayPreferCloud);
+    }
+
+    function uiApplyNetplayModeUi() {
+        const cloud = uiNetplayPreferCloud();
+        if (window.AirArenaNetplay && AirArenaNetplay.setPreferCloud) {
+            AirArenaNetplay.setPreferCloud(cloud);
+        } else {
+            window.AirArenaNetplayPreferCloud = cloud;
+        }
+        const cfgBtn = document.getElementById('btn-match-cloud-cfg');
+        if (cfgBtn) cfgBtn.disabled = !cloud;
+        if (cloud && window.AirArenaNetplay && AirArenaNetplay.isCloudConfigured
+            && !AirArenaNetplay.isCloudConfigured()) {
+            uiSetNetStatus('雲端模式：尚未設定 Supabase URL／anon key（按「雲端設定」）', 'error');
+        }
+    }
+
+    const showInviteUi = (room, inviteUrl) => {
+        const codeInput = document.getElementById('match-join-code');
+        const copyBtn = document.getElementById('btn-match-copy-invite');
+        if (codeInput && room) codeInput.value = String(room).toUpperCase();
+        if (copyBtn) {
+            copyBtn.hidden = !inviteUrl;
+            copyBtn.dataset.inviteUrl = inviteUrl || '';
+        }
+    };
+
     window.addEventListener('AirArenaNetplayStatus', (e) => {
         const d = e.detail || {};
         const kind = d.error ? 'error' : (d.peerConnected || d.matched ? 'ok' : null);
         let text = d.status || '';
-        if (d.room && window.AirArenaNetplay && AirArenaNetplay.isHost && AirArenaNetplay.isHost()) {
+        if (d.room && window.AirArenaNetplay && AirArenaNetplay.isHost && AirArenaNetplay.isHost() && !d.error) {
             text = `房間碼 ${d.room}${d.peerConnected ? ' · 對手已入房' : ' · 等待加入'} — ${d.status || ''}`.trim();
+            const invite = AirArenaNetplay.inviteJoinUrl ? AirArenaNetplay.inviteJoinUrl(d.room) : '';
+            showInviteUi(d.room, invite);
         }
         uiSetNetStatus(text, kind);
         uiRefreshNetReconnectBtn();
@@ -704,10 +750,50 @@ function uiBindNetplayControlsOnce() {
         if (engage) engage.disabled = false;
     });
 
+    const modeSel = document.getElementById('match-net-mode');
+    if (modeSel) {
+        try {
+            const pref = sessionStorage.getItem('aa-net-cloud') === '1'
+                || new URLSearchParams(window.location.search || '').get('cloud') === '1';
+            if (pref) modeSel.value = 'cloud';
+            else if (window.AirArenaNetplay && AirArenaNetplay.isCloudConfigured
+                && AirArenaNetplay.isCloudConfigured()) {
+                // Keep LAN default; user opts into cloud.
+            }
+        } catch (_) { /* ignore */ }
+        modeSel.addEventListener('change', () => uiApplyNetplayModeUi());
+        uiApplyNetplayModeUi();
+    }
+
+    const cfgBtn = document.getElementById('btn-match-cloud-cfg');
+    if (cfgBtn) {
+        cfgBtn.addEventListener('click', () => {
+            const cur = (typeof AirArenaSupabaseConfig !== 'undefined' && AirArenaSupabaseConfig.resolve)
+                ? AirArenaSupabaseConfig.resolve()
+                : null;
+            const url = window.prompt('Supabase Project URL', (cur && cur.url) || '');
+            if (url == null) return;
+            const key = window.prompt('Supabase anon key', (cur && cur.anonKey) || '');
+            if (key == null) return;
+            if (typeof AirArenaSupabaseConfig !== 'undefined' && AirArenaSupabaseConfig.saveLocal) {
+                AirArenaSupabaseConfig.saveLocal(String(url).trim(), String(key).trim());
+            }
+            window.AIRARENA_SUPABASE = { url: String(url).trim(), anonKey: String(key).trim() };
+            uiSetNetStatus('雲端設定已儲存（本機）', 'ok');
+            uiApplyNetplayModeUi();
+        });
+    }
+
+    const cloudOpts = () => ({ preferCloud: uiNetplayPreferCloud(), transport: uiNetplayPreferCloud() ? 'supabase' : 'websocket' });
+
     const hostBtn = document.getElementById('btn-match-host');
     if (hostBtn) {
         hostBtn.addEventListener('click', () => {
             if (!window.AirArenaNetplay) return;
+            if (uiNetplayPreferCloud() && AirArenaNetplay.isCloudConfigured && !AirArenaNetplay.isCloudConfigured()) {
+                uiSetNetStatus('請先按「雲端設定」填入 Supabase URL／anon key', 'error');
+                return;
+            }
             const draft = uiReadMatchSetupFromDom();
             const netCfg = (AirArenaNetplayProtocol && AirArenaNetplayProtocol.defaultNetMatchConfig)
                 ? Object.assign(AirArenaNetplayProtocol.defaultNetMatchConfig('red'), {
@@ -716,33 +802,38 @@ function uiBindNetplayControlsOnce() {
                     spawnSeparation: draft.spawnSeparation
                 })
                 : draft;
-            let ok = AirArenaNetplay.startHostRoom({
-                matchConfig: netCfg,
-                transport: 'websocket'
-            });
-            if (!ok) {
-                ok = AirArenaNetplay.startHostRoom({
-                    matchConfig: netCfg,
-                    transport: 'broadcast'
-                });
-                uiSetNetStatus(
-                    ok
-                        ? `本機房間 ${AirArenaNetplay.getRoom()}（BroadcastChannel）。對手開 ?hostRoom=${AirArenaNetplay.getRoom()}&netRole=guest`
-                        : '無法建立房間（需 npm run room 或支援 BroadcastChannel）',
-                    ok ? 'ok' : 'error'
-                );
-            } else {
-                uiSetNetStatus(`已建立房間 ${AirArenaNetplay.getRoom()} — 對手按「加入」輸入此碼（需 npm run room）`, 'ok');
-            }
-            uiRefreshNetReconnectBtn();
-            try {
-                if (AirArenaNetplay.getRoom()) {
-                    sessionStorage.setItem('aa-net-room', AirArenaNetplay.getRoom());
-                    sessionStorage.setItem('aa-net-reconnect', AirArenaNetplay.getReconnectToken() || '');
-                    sessionStorage.setItem('aa-net-seat', AirArenaNetplay.getLocalSeatId() || 'red');
-                    sessionStorage.setItem('aa-net-role', 'host');
+            uiSetNetStatus(uiNetplayPreferCloud() ? '正在連線雲端房間…' : '正在連線房間伺服器…');
+            hostBtn.disabled = true;
+            const run = AirArenaNetplay.startHostRoomAsync
+                ? AirArenaNetplay.startHostRoomAsync(Object.assign({ matchConfig: netCfg }, cloudOpts()))
+                : Promise.resolve({ ok: AirArenaNetplay.startHostRoom(Object.assign({ matchConfig: netCfg }, cloudOpts())) });
+            run.then((res) => {
+                hostBtn.disabled = false;
+                if (!res || !res.ok) {
+                    uiSetNetStatus(
+                        (res && (res.hint || res.error)) ||
+                        (uiNetplayPreferCloud()
+                            ? '雲端連線失敗。檢查 Supabase Realtime／Anonymous Auth。'
+                            : '連線失敗。請在電腦執行 npm start，手機用同一 Wi‑Fi 開 LAN 網址。'),
+                        'error'
+                    );
+                    return;
                 }
-            } catch (_) { /* ignore */ }
+                const room = res.room || (AirArenaNetplay.getRoom && AirArenaNetplay.getRoom());
+                const invite = res.inviteUrl || (AirArenaNetplay.inviteJoinUrl && room
+                    ? AirArenaNetplay.inviteJoinUrl(room)
+                    : '');
+                showInviteUi(room, invite);
+                uiSetNetStatus(
+                    `房間 ${room} 已建立（${res.transport || (uiNetplayPreferCloud() ? 'supabase' : 'lan')}）。對手加入此碼或開啟複製連結。`,
+                    'ok'
+                );
+                persistNet();
+                uiRefreshNetReconnectBtn();
+            }).catch((err) => {
+                hostBtn.disabled = false;
+                uiSetNetStatus(String(err && err.message || err), 'error');
+            });
         });
     }
 
@@ -750,12 +841,48 @@ function uiBindNetplayControlsOnce() {
     if (joinBtn) {
         joinBtn.addEventListener('click', () => {
             if (!window.AirArenaNetplay) return;
-            let code = window.prompt('輸入房間邀請碼', sessionStorage.getItem('aa-net-room') || '');
-            if (!code) return;
+            if (uiNetplayPreferCloud() && AirArenaNetplay.isCloudConfigured && !AirArenaNetplay.isCloudConfigured()) {
+                uiSetNetStatus('請先按「雲端設定」填入 Supabase URL／anon key', 'error');
+                return;
+            }
+            const codeInput = document.getElementById('match-join-code');
+            let code = codeInput ? String(codeInput.value || '').trim() : '';
+            if (!code) {
+                try {
+                    code = window.prompt('輸入房間邀請碼', sessionStorage.getItem('aa-net-room') || '') || '';
+                } catch (_) {
+                    code = '';
+                }
+            }
             code = String(code).trim().toUpperCase();
-            const ok = AirArenaNetplay.joinRoom(code, { transport: 'websocket' });
-            uiSetNetStatus(ok ? `正在加入 ${code}…` : '加入失敗', ok ? 'ok' : 'error');
-            uiRefreshNetReconnectBtn();
+            if (!code) {
+                uiSetNetStatus('請先輸入邀請碼', 'error');
+                if (codeInput) codeInput.focus();
+                return;
+            }
+            if (codeInput) codeInput.value = code;
+            uiSetNetStatus(`正在加入 ${code}…`);
+            joinBtn.disabled = true;
+            const run = AirArenaNetplay.joinRoomAsync
+                ? AirArenaNetplay.joinRoomAsync(code, cloudOpts())
+                : Promise.resolve({ ok: AirArenaNetplay.joinRoom(code, cloudOpts()) });
+            run.then((res) => {
+                joinBtn.disabled = false;
+                if (!res || !res.ok) {
+                    uiSetNetStatus(
+                        (res && (res.hint || res.error)) ||
+                        '加入失敗。確認房主房間仍在，且雙方使用相同連線模式（LAN 或雲端）。',
+                        'error'
+                    );
+                    return;
+                }
+                uiSetNetStatus(`已加入 ${res.room || code} — 等待開局設定後 ENGAGE`, 'ok');
+                persistNet();
+                uiRefreshNetReconnectBtn();
+            }).catch((err) => {
+                joinBtn.disabled = false;
+                uiSetNetStatus(String(err && err.message || err), 'error');
+            });
         });
     }
 
@@ -763,8 +890,27 @@ function uiBindNetplayControlsOnce() {
     if (queueBtn) {
         queueBtn.addEventListener('click', () => {
             if (!window.AirArenaNetplay) return;
-            const ok = AirArenaNetplay.joinQueue({ mode: '1v1' });
-            uiSetNetStatus(ok ? '排隊配對中…（需 npm run room）' : '無法連線房間伺服器', ok ? 'ok' : 'error');
+            if (uiNetplayPreferCloud() && AirArenaNetplay.isCloudConfigured && !AirArenaNetplay.isCloudConfigured()) {
+                uiSetNetStatus('請先按「雲端設定」填入 Supabase URL／anon key', 'error');
+                return;
+            }
+            uiSetNetStatus(uiNetplayPreferCloud() ? '雲端排隊中…' : '排隊配對中…');
+            queueBtn.disabled = true;
+            const run = AirArenaNetplay.joinQueueAsync
+                ? AirArenaNetplay.joinQueueAsync(Object.assign({ mode: '1v1' }, cloudOpts()))
+                : Promise.resolve({ ok: AirArenaNetplay.joinQueue(Object.assign({ mode: '1v1' }, cloudOpts())) });
+            run.then((res) => {
+                queueBtn.disabled = false;
+                if (!res || !res.ok) {
+                    uiSetNetStatus((res && (res.hint || res.error)) || '無法連線', 'error');
+                    return;
+                }
+                uiSetNetStatus(res.room ? `配對中／已進房 ${res.room}` : '排隊中，等待對手…', 'ok');
+                persistNet();
+            }).catch((err) => {
+                queueBtn.disabled = false;
+                uiSetNetStatus(String(err && err.message || err), 'error');
+            });
         });
     }
 
@@ -772,29 +918,49 @@ function uiBindNetplayControlsOnce() {
     if (reconBtn) {
         reconBtn.addEventListener('click', () => {
             if (!window.AirArenaNetplay) return;
-            try {
-                if (!AirArenaNetplay.getReconnectToken()) {
-                    const tok = sessionStorage.getItem('aa-net-reconnect');
-                    const room = sessionStorage.getItem('aa-net-room');
-                    const seat = sessionStorage.getItem('aa-net-seat') || 'red';
-                    const role = sessionStorage.getItem('aa-net-role') || 'guest';
-                    if (tok && room) {
-                        AirArenaNetplay.start({
-                            role,
-                            room,
-                            seatId: seat,
-                            action: 'reconnect',
-                            transport: 'websocket',
-                            reconnectToken: tok
-                        });
-                    }
-                } else {
-                    AirArenaNetplay.tryReconnect();
-                }
-            } catch (_) { /* ignore */ }
             uiSetNetStatus('嘗試重連…');
+            const run = AirArenaNetplay.tryReconnectAsync
+                ? AirArenaNetplay.tryReconnectAsync()
+                : Promise.resolve({ ok: !!AirArenaNetplay.tryReconnect() });
+            run.then((res) => {
+                if (!res || !res.ok) uiSetNetStatus((res && res.error) || '重連失敗', 'error');
+                else uiSetNetStatus('重連成功', 'ok');
+                uiRefreshNetReconnectBtn();
+            });
         });
     }
+
+    const copyBtn = document.getElementById('btn-match-copy-invite');
+    if (copyBtn) {
+        copyBtn.addEventListener('click', async () => {
+            const url = copyBtn.dataset.inviteUrl
+                || (window.AirArenaNetplay && AirArenaNetplay.getRoom && AirArenaNetplay.inviteJoinUrl
+                    ? AirArenaNetplay.inviteJoinUrl(AirArenaNetplay.getRoom())
+                    : '');
+            if (!url) {
+                uiSetNetStatus('尚無邀請連結', 'error');
+                return;
+            }
+            try {
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    await navigator.clipboard.writeText(url);
+                } else {
+                    window.prompt('複製此連結到手機開啟', url);
+                }
+                uiSetNetStatus('邀請連結已複製', 'ok');
+            } catch (_) {
+                window.prompt('複製此連結到手機開啟', url);
+            }
+        });
+    }
+
+    // Prefill join code from URL/session for mobile
+    try {
+        const params = new URLSearchParams(window.location.search || '');
+        const pre = params.get('room') || params.get('hostRoom') || sessionStorage.getItem('aa-net-room');
+        const codeInput = document.getElementById('match-join-code');
+        if (codeInput && pre) codeInput.value = String(pre).toUpperCase();
+    } catch (_) { /* ignore */ }
 }
 
 function uiShowMatchSetup() {

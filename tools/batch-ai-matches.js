@@ -6,6 +6,7 @@
  *   node tools/batch-ai-matches.js --brains test_01 --n 3
  *   node tools/batch-ai-matches.js --brains Rei_03 --n 3
  *   node tools/batch-ai-matches.js --ab --n 3
+ *   node tools/batch-ai-gold.js --brains test_01
  *   node tools/batch-ai-matches.js --smoke
  *
  * Leaves the game window open. Each match reloads after game_over POST.

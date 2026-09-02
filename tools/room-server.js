@@ -1,47 +1,58 @@
 #!/usr/bin/env node
 'use strict';
 /**
- * Air Arena WEGO room relay + invite codes + public queue.
+ * Air Arena play + room server (static files + WebSocket on ONE port).
+ * Mobile / LAN: open http://<pc-lan-ip>:8080/ on phone; WS uses same origin.
+ *
  * Usage: node tools/room-server.js
- * Env: ROOM_PORT=8081
+ * Env: ROOM_PORT=8080  SERVE_STATIC=0  (disable static → WS-only legacy)
  */
 const http = require('http');
 const crypto = require('crypto');
+const fs = require('fs');
 const path = require('path');
+const os = require('os');
+const { URL } = require('url');
 
 const Proto = require(path.join(__dirname, '..', 'js', 'core', 'netplay-protocol.js'));
 
-const PORT = Number(process.env.ROOM_PORT || 8081);
+const ROOT = path.resolve(__dirname, '..');
+const PORT = Number(process.env.ROOM_PORT || process.env.PORT || 8080);
+const SERVE_STATIC = process.env.SERVE_STATIC !== '0';
 const PROTOCOL = Proto.PROTOCOL;
 const ROOM_TTL_MS = Proto.ROOM_TTL_MS || 45 * 60 * 1000;
 const RECONNECT_TTL_MS = Proto.RECONNECT_TTL_MS || 120000;
 
-/** @type {Map<string, Room>} */
+/** @type {Map<string, object>} */
 const rooms = new Map();
 /** @type {{ ws: import('ws').WebSocket, mode: string, joinedAt: number }[]} */
 const queue = [];
 
-/**
- * @typedef {object} Seat
- * @property {import('ws').WebSocket|null} ws
- * @property {string} seatToken
- * @property {string} reconnectToken
- * @property {string} role
- * @property {number} lastSeen
- */
-
-/**
- * @typedef {object} Room
- * @property {string} code
- * @property {Seat|null} host
- * @property {Seat|null} guest
- * @property {number} createdAt
- * @property {number} expiresAt
- * @property {object|null} lastMatchConfig
- */
+const MIME = {
+    '.html': 'text/html; charset=utf-8',
+    '.js': 'text/javascript; charset=utf-8',
+    '.css': 'text/css; charset=utf-8',
+    '.json': 'application/json; charset=utf-8',
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.webp': 'image/webp',
+    '.gif': 'image/gif',
+    '.svg': 'image/svg+xml',
+    '.glb': 'model/gltf-binary',
+    '.gltf': 'model/gltf+json',
+    '.wasm': 'application/wasm',
+    '.mp3': 'audio/mpeg',
+    '.ogg': 'audio/ogg',
+    '.wav': 'audio/wav',
+    '.ico': 'image/x-icon',
+    '.map': 'application/json',
+    '.txt': 'text/plain; charset=utf-8',
+    '.md': 'text/plain; charset=utf-8'
+};
 
 function log(...args) {
-    console.log('[room-server]', ...args);
+    console.log('[play-server]', ...args);
 }
 
 function makeCode() {
@@ -189,9 +200,6 @@ function reconnectSeat(ws, payload) {
         return null;
     }
     const seat = seatOf(room, role);
-    if (Date.now() - (seat.lastSeen || 0) > RECONNECT_TTL_MS && seat.ws && seat.ws.readyState === 1) {
-        // still connected elsewhere
-    }
     seat.ws = ws;
     seat.lastSeen = Date.now();
     room.expiresAt = Date.now() + ROOM_TTL_MS;
@@ -221,7 +229,6 @@ function tryMatchQueue() {
             continue;
         }
         const room = createRoom(a.ws);
-        // createRoom already welcomed a as host — now attach b as guest
         room.guest = {
             ws: b.ws,
             seatToken: makeToken(),
@@ -308,7 +315,6 @@ function onMessage(ws, raw) {
         return;
     }
     if (msg.clientVersion && msg.clientVersion !== Proto.CLIENT_VERSION) {
-        // Soft warn — still allow same PROTOCOL for now
         log('version skew', msg.clientVersion, '!=', Proto.CLIENT_VERSION);
     }
 
@@ -328,7 +334,6 @@ function onMessage(ws, raw) {
         reconnectSeat(ws, msg.payload || {});
         return;
     }
-    // Relay game traffic
     if (
         msg.type === Proto.MSG.MATCH_CONFIG
         || msg.type === Proto.MSG.TURN_INTENT
@@ -355,6 +360,80 @@ function onClose(ws) {
     }
 }
 
+function lanAddresses() {
+    const out = [];
+    const ifaces = os.networkInterfaces();
+    Object.keys(ifaces).forEach((name) => {
+        (ifaces[name] || []).forEach((info) => {
+            if (info.family === 'IPv4' && !info.internal) out.push(info.address);
+        });
+    });
+    return out;
+}
+
+function safeStaticPath(urlPath) {
+    let decoded = urlPath.split('?')[0].split('#')[0];
+    try {
+        decoded = decodeURIComponent(decoded);
+    } catch (e) {
+        return null;
+    }
+    if (!decoded || decoded === '/') decoded = '/index.html';
+    if (decoded.includes('\0')) return null;
+    const rel = decoded.replace(/^\/+/, '');
+    const abs = path.normalize(path.join(ROOT, rel));
+    if (!abs.startsWith(ROOT)) return null;
+    return abs;
+}
+
+function sendStatic(req, res) {
+    const u = new URL(req.url || '/', `http://${req.headers.host || '127.0.0.1'}`);
+    if (u.pathname === '/health') {
+        res.writeHead(200, {
+            'Content-Type': 'application/json; charset=utf-8',
+            'Access-Control-Allow-Origin': '*'
+        });
+        res.end(JSON.stringify({
+            ok: true,
+            protocol: PROTOCOL,
+            rooms: rooms.size,
+            queue: queue.length,
+            static: SERVE_STATIC,
+            port: PORT
+        }));
+        return;
+    }
+
+    if (!SERVE_STATIC) {
+        res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end(`Air Arena room WS only (:${PORT})\nSet SERVE_STATIC=1 or use npm start for game+WS.\n`);
+        return;
+    }
+
+    const filePath = safeStaticPath(u.pathname);
+    if (!filePath) {
+        res.writeHead(400);
+        res.end('bad path');
+        return;
+    }
+
+    fs.stat(filePath, (err, st) => {
+        if (err || !st.isFile()) {
+            res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+            res.end('Not found');
+            return;
+        }
+        const ext = path.extname(filePath).toLowerCase();
+        const type = MIME[ext] || 'application/octet-stream';
+        res.writeHead(200, {
+            'Content-Type': type,
+            'Cache-Control': ext === '.html' || ext === '.js' ? 'no-cache' : 'public, max-age=120',
+            'Access-Control-Allow-Origin': '*'
+        });
+        fs.createReadStream(filePath).pipe(res);
+    });
+}
+
 async function main() {
     let WebSocketServer;
     try {
@@ -365,30 +444,36 @@ async function main() {
     }
 
     const server = http.createServer((req, res) => {
-        if (req.url === '/health') {
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({
-                ok: true,
-                protocol: PROTOCOL,
-                rooms: rooms.size,
-                queue: queue.length
-            }));
+        // CORS preflight for health from other origins
+        if (req.method === 'OPTIONS') {
+            res.writeHead(204, {
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Methods': 'GET,OPTIONS',
+                'Access-Control-Allow-Headers': 'Content-Type'
+            });
+            res.end();
             return;
         }
-        res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
-        res.end(`Air Arena room server (${PROTOCOL})\nWS on same port\nRooms: ${rooms.size} Queue: ${queue.length}\n`);
+        sendStatic(req, res);
     });
 
     const wss = new WebSocketServer({ server });
-    wss.on('connection', (ws) => {
+    wss.on('connection', (ws, req) => {
         ws.on('message', (data) => onMessage(ws, data));
         ws.on('close', () => onClose(ws));
+        // Lightweight hello log for mobile debugging
+        const ip = (req && req.socket && req.socket.remoteAddress) || '?';
+        log('ws connect', ip);
     });
 
     setInterval(purgeExpired, 30000);
 
     server.listen(PORT, '0.0.0.0', () => {
-        log(`listening on :${PORT} protocol=${PROTOCOL}`);
+        const lans = lanAddresses();
+        log(`listening 0.0.0.0:${PORT} protocol=${PROTOCOL} static=${SERVE_STATIC ? 'on' : 'off'}`);
+        log(`local  http://127.0.0.1:${PORT}/`);
+        lans.forEach((ip) => log(`mobile http://${ip}:${PORT}/   (same Wi‑Fi)`));
+        if (!lans.length) log('no LAN IPv4 found — check Wi‑Fi / firewall');
     });
 }
 

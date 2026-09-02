@@ -640,8 +640,12 @@
 
         const left = sampleSide(-1);
         const right = sampleSide(1);
-        const preferredHomotopyId =
-            Number(left.pocketRisk) <= Number(right.pocketRisk) ? 'L' : 'R';
+        const preferredHomotopyId = pickDualHomotopyTowardGoal(
+            left,
+            right,
+            opts.goalX,
+            opts.goalZ
+        );
         return {
             ok: true,
             left,
@@ -649,6 +653,33 @@
             preferredHomotopyId,
             corridors: [left, right]
         };
+    }
+
+    /**
+     * A.1: among dual L/R streets, pick formable / less-funnel and closer to intercept XZ.
+     * No goal → lower pocketRisk (pre-A.1). Both funnel → pocket still dominates.
+     */
+    function pickDualHomotopyTowardGoal(left, right, goalX, goalZ) {
+        const pocketPref =
+            Number(left && left.pocketRisk) <= Number(right && right.pocketRisk) ? 'L' : 'R';
+        const gx = Number(goalX);
+        const gz = Number(goalZ);
+        if (!Number.isFinite(gx) || !Number.isFinite(gz)) return pocketPref;
+
+        function towardScore(c) {
+            const wps = c && c.waypoints;
+            const last = wps && wps.length ? wps[wps.length - 1] : null;
+            const d = last
+                ? Math.hypot(Number(last.x) - gx, Number(last.z) - gz)
+                : 1e9;
+            let s = d;
+            s += (Number(c && c.pocketRisk) || 0) * 55;
+            if (c && c.isFunnel) s += 70;
+            if (!(c && c.corridorOpen)) s += 32;
+            return s;
+        }
+
+        return towardScore(left) <= towardScore(right) ? 'L' : 'R';
     }
 
     /**
@@ -1555,6 +1586,7 @@
         sampleLocalRoofMax,
         samplePlannerCorridor,
         sampleDualHomotopyCorridors,
+        pickDualHomotopyTowardGoal,
         sampleSurvivalWaypoints,
         findBakePath,
         scoreWaypointChainPocket,

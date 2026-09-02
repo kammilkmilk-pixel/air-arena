@@ -93,6 +93,7 @@ for (const needle of [
     'lastReplanWhy',
     'bakeDualHt:',
     'dualHomotopyCorridors',
+    'resolveInterceptCorridorHeading',
     'combatGoal',
     'bakeDualPref',
     // tableGlue: earlier same-side hit flip (2026-08-12); single catastrophic (2026-08-13)
@@ -124,6 +125,9 @@ if (typeof aiMap.scoreWaypointChainPocket !== 'function') {
 }
 if (typeof aiMap.sampleDualHomotopyCorridors !== 'function') {
     fails.push('ai-map.js missing: sampleDualHomotopyCorridors');
+}
+if (typeof aiMap.pickDualHomotopyTowardGoal !== 'function') {
+    fails.push('ai-map.js missing: pickDualHomotopyTowardGoal');
 }
 if (typeof aiMap.buildFlyableCorridorGraph !== 'function') {
     fails.push('ai-map.js missing: buildFlyableCorridorGraph');
@@ -231,6 +235,34 @@ assert.ok(dual.ok && dual.left && dual.right, 'dual homotopy corridors');
 assert.ok(dual.left.homotopyId === 'L' && dual.right.homotopyId === 'R', 'dual L/R ids');
 assert.ok(typeof dual.left.pocketRisk === 'number' && typeof dual.right.pocketRisk === 'number');
 assert.ok(dual.preferredHomotopyId === 'L' || dual.preferredHomotopyId === 'R', 'preferred homotopy');
+assert.strictEqual(
+    dual.preferredHomotopyId,
+    Number(dual.left.pocketRisk) <= Number(dual.right.pocketRisk) ? 'L' : 'R',
+    'no-goal dual still prefers lower pocketRisk (Rei_03 unchanged)'
+);
+{
+    const fakeL = {
+        pocketRisk: 0.22,
+        isFunnel: false,
+        corridorOpen: true,
+        waypoints: [{ x: -20, z: 0 }]
+    };
+    const fakeR = {
+        pocketRisk: 0.20,
+        isFunnel: false,
+        corridorOpen: true,
+        waypoints: [{ x: 80, z: 0 }]
+    };
+    assert.strictEqual(aiMap.pickDualHomotopyTowardGoal(fakeL, fakeR, -30, 0), 'L');
+    assert.strictEqual(aiMap.pickDualHomotopyTowardGoal(fakeL, fakeR, 90, 0), 'R');
+    const funnelL = {
+        pocketRisk: 0.10,
+        isFunnel: true,
+        corridorOpen: false,
+        waypoints: [{ x: -5, z: 0 }]
+    };
+    assert.strictEqual(aiMap.pickDualHomotopyTowardGoal(funnelL, fakeR, -5, 0), 'R');
+}
 
 // Wave-2 seed: flyable corridor graph has nodes/edges; path finds a chain.
 const graph = aiMap.buildFlyableCorridorGraph(city, { refAlt: 55, margin: 8 });

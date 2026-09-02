@@ -86,13 +86,46 @@
         try {
             const params = new URLSearchParams(window.location.search || '');
             const override = params.get('roomServer') || params.get('ws');
-            if (override) return override;
             const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             const host = window.location.hostname || '127.0.0.1';
-            const port = params.get('roomPort') || '8081';
-            return `${proto}//${host}:${port}`;
+            if (override) {
+                const o = String(override).trim();
+                if (/^wss?:\/\//i.test(o)) return o;
+                if (o.startsWith('/')) {
+                    const portPart = window.location.port ? `:${window.location.port}` : '';
+                    return `${proto}//${host}${portPart}${o}`;
+                }
+                // host:port form
+                if (o.indexOf('://') < 0) return `${proto}//${o}`;
+                return o;
+            }
+            // Same origin as the page (required for phone ↔ PC LAN).
+            // Legacy split: ?roomPort=8081 when static is on another port.
+            if (params.get('roomPort')) {
+                return `${proto}//${host}:${params.get('roomPort')}`;
+            }
+            const portPart = window.location.port ? `:${window.location.port}` : '';
+            return `${proto}//${host}${portPart}`;
         } catch (e) {
-            return 'ws://127.0.0.1:8081';
+            return 'ws://127.0.0.1:8080';
+        }
+    }
+
+    function inviteJoinUrl(code) {
+        try {
+            const u = new URL(window.location.href);
+            u.searchParams.set('room', String(code || '').toUpperCase());
+            u.searchParams.set('join', '1');
+            u.searchParams.delete('hostRoom');
+            u.searchParams.delete('netRole');
+            u.searchParams.delete('bc');
+            if (typeof window !== 'undefined' && window.AirArenaNetplayPreferCloud) {
+                u.searchParams.set('cloud', '1');
+            }
+            return u.toString();
+        } catch (e) {
+            const cloud = (typeof window !== 'undefined' && window.AirArenaNetplayPreferCloud) ? '&cloud=1' : '';
+            return `?room=${encodeURIComponent(code)}&join=1${cloud}`;
         }
     }
 
@@ -253,6 +286,13 @@
     }
 
     function createBroadcastTransport(roomId) {
+        const T = typeof AirArenaNetplayTransports !== 'undefined' ? AirArenaNetplayTransports : null;
+        if (T && T.createBroadcastTransport) {
+            return T.createBroadcastTransport({
+                roomId,
+                onMessage: handleMessage
+            });
+        }
         if (typeof BroadcastChannel === 'undefined') return null;
         const channel = new BroadcastChannel(`airarena-host-${roomId}`);
         const selfId = `tab_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
@@ -264,63 +304,42 @@
         return {
             kind: 'broadcast',
             send(msg) {
-                const out = Object.assign({}, msg, { _from: selfId, room: roomId });
-                channel.postMessage(out);
+                channel.postMessage(Object.assign({}, msg, { _from: selfId, room: roomId }));
             },
             close() {
                 if (channel.close) channel.close();
-            }
+            },
+            whenReady() { return Promise.resolve(); }
         };
     }
 
     function createWsTransport(url) {
-        let ws = null;
-        let closed = false;
-        const queue = [];
-        function flush() {
-            while (ws && ws.readyState === 1 && queue.length) {
-                ws.send(JSON.stringify(queue.shift()));
-            }
+        const T = typeof AirArenaNetplayTransports !== 'undefined' ? AirArenaNetplayTransports : null;
+        if (T && T.createWebSocketTransport) {
+            return T.createWebSocketTransport({
+                url,
+                onMessage: handleMessage,
+                onStatus: (text, extra) => setStatus(text, extra)
+            });
         }
-        try {
-            ws = new WebSocket(url);
-        } catch (e) {
-            return null;
-        }
-        ws.onopen = () => {
-            flush();
-            setStatus('WebSocket 已連線');
-            // hello / create / join is sent by start()
-        };
-        ws.onmessage = (ev) => {
-            let data = null;
-            try {
-                data = JSON.parse(ev.data);
-            } catch (e) {
-                return;
-            }
-            handleMessage(data);
-        };
-        ws.onclose = () => {
-            if (!closed) setStatus('連線中斷 — 可嘗試重連', { disconnected: true });
-        };
-        ws.onerror = () => {
-            lastError = 'WebSocket 錯誤';
-        };
-        return {
-            kind: 'websocket',
-            send(msg) {
-                const raw = JSON.stringify(msg);
-                if (ws && ws.readyState === 1) ws.send(raw);
-                else queue.push(msg);
-            },
-            close() {
-                closed = true;
-                try { if (ws) ws.close(); } catch (e) { /* ignore */ }
-                ws = null;
-            },
-            getWs() { return ws; }
-        };
+        return null;
+    }
+
+    function createSupabaseTransport(opts) {
+        const T = typeof AirArenaNetplayTransports !== 'undefined' ? AirArenaNetplayTransports : null;
+        if (!T || !T.createSupabaseTransport) return null;
+        return T.createSupabaseTransport(Object.assign({
+            onMessage: handleMessage,
+            onStatus: (text, extra) => setStatus(text, extra || {})
+        }, opts || {}));
+    }
+
+    function preferredTransportKind(o) {
+        const T = typeof AirArenaNetplayTransports !== 'undefined' ? AirArenaNetplayTransports : null;
+        if (o && o.transport) return o.transport;
+        if (T && T.resolveKind) return T.resolveKind(o);
+        if (o && (o.action === 'create' || o.action === 'join' || o.action === 'queue')) return 'websocket';
+        return 'broadcast';
     }
 
     function sendHello(action, extra) {
@@ -516,7 +535,7 @@
 
     /**
      * Start netplay transport.
-     * opts: { role, room, seatId, transport: 'broadcast'|'websocket', wsUrl, action, matchConfig, matchSeed }
+     * opts: { role, room, seatId, transport: 'broadcast'|'websocket'|'supabase', wsUrl, action, matchConfig, matchSeed, preferCloud }
      */
     function start(opts) {
         stop();
@@ -537,19 +556,41 @@
         engaged = false;
         lastError = null;
 
-        const preferWs = o.transport === 'websocket'
-            || o.wsUrl
-            || (typeof window !== 'undefined' && /[?&](roomServer|ws|roomPort)=/.test(window.location.search || ''))
-            || (o.action === 'create' || o.action === 'join' || o.action === 'queue');
+        const kind = preferredTransportKind(Object.assign({}, o, {
+            preferCloud: o.preferCloud != null ? o.preferCloud : (typeof window !== 'undefined' && window.AirArenaNetplayPreferCloud)
+        }));
 
-        if (preferWs && o.transport !== 'broadcast') {
+        if (kind === 'supabase') {
+            const action = o.action || (role === 'guest' ? 'join' : 'create');
+            if (!room && action === 'create' && p && p.makeInviteCode) {
+                room = p.makeInviteCode();
+            }
+            transport = createSupabaseTransport({
+                action,
+                room,
+                role,
+                seatId: localSeatId,
+                seatToken,
+                reconnectToken,
+                mode: o.mode || '1v1'
+            });
+            if (!transport) {
+                setStatus('無法開啟 Supabase 傳輸（檢查雲端設定）', { error: true });
+                return false;
+            }
+            // Sync tokens/room from transport after boot via welcome; provisional room for UI
+            if (transport.getRoom && transport.getRoom()) room = transport.getRoom();
+            setStatus(action === 'queue' ? '雲端排隊中…' : `雲端連線中（${room || '新房間'}）…`);
+            return true;
+        }
+
+        if (kind === 'websocket') {
             const url = o.wsUrl || defaultWsUrl();
             transport = createWsTransport(url);
             if (!transport) {
-                setStatus('無法開啟 WebSocket');
+                setStatus('無法開啟 WebSocket', { error: true });
                 return false;
             }
-            // Defer hello until socket may be open — queue in transport.
             const action = o.action || (role === 'guest' ? 'join' : 'create');
             if (!room && action === 'create' && p && p.makeInviteCode) {
                 room = p.makeInviteCode();
@@ -558,42 +599,146 @@
                 mode: o.mode || '1v1',
                 queue: !!o.queue
             });
-            setStatus(action === 'queue' ? '排隊配對中…' : `連線中（${room || '新房間'}）…`);
+            setStatus(action === 'queue' ? '排隊配對中…' : `連線中 ${url}（${room || '新房間'}）…`);
             return true;
         }
 
-        // BroadcastChannel local proof
+        // BroadcastChannel: same-browser tabs only (NOT phones).
         if (!room) room = 'local';
         transport = createBroadcastTransport(room);
         if (!transport) {
-            setStatus('BroadcastChannel 不可用');
+            setStatus('BroadcastChannel 不可用', { error: true });
             return false;
         }
-        peerConnected = true; // same-origin tabs announce via peer-status
+        peerConnected = true;
         const p2 = Proto();
         const m = MSG();
         post(p2
             ? p2.envelope(m.PEER_STATUS || 'peer-status', { connected: true, seatId: localSeatId, role }, { room })
             : { type: 'peer-status', protocol: PROTOCOL(), payload: { connected: true } });
-        if (role === 'host') {
-            // Fake welcome for BC
-            setStatus(`本機房間 ${room}（BroadcastChannel）`);
-        } else {
-            setStatus(`已加入本機房間 ${room}`);
-        }
+        setStatus(role === 'host'
+            ? `本機房間 ${room}（僅同瀏覽器分頁）`
+            : `已加入本機房間 ${room}`);
         return true;
+    }
+
+    /**
+     * Async start: waits for transport ready (and optionally WELCOME).
+     */
+    function startAsync(opts) {
+        const started = start(opts);
+        if (!started) {
+            return Promise.resolve({
+                ok: false,
+                error: lastError || statusText || 'start failed',
+                url: null,
+                room: null
+            });
+        }
+        const kind = transport && transport.kind;
+        if (kind === 'broadcast') {
+            return Promise.resolve({
+                ok: true,
+                room,
+                url: null,
+                transport: 'broadcast',
+                inviteUrl: room ? inviteJoinUrl(room) : null
+            });
+        }
+        const url = transport.url || (kind === 'supabase' ? 'supabase' : defaultWsUrl());
+        const readyFn = transport.whenReady
+            ? transport.whenReady()
+            : Promise.resolve();
+        return readyFn.then(() => {
+            if (transport.getRoom && transport.getRoom()) room = transport.getRoom();
+            if (transport.getRole && transport.getRole()) role = transport.getRole();
+            if (transport.getSeatId && transport.getSeatId()) {
+                localSeatId = transport.getSeatId();
+                remoteSeatId = localSeatId === 'red' ? 'blue' : 'red';
+            }
+            if (transport.getSeatToken && transport.getSeatToken()) seatToken = transport.getSeatToken();
+            if (transport.getReconnectToken && transport.getReconnectToken()) {
+                reconnectToken = transport.getReconnectToken();
+            }
+            return new Promise((resolve) => {
+                let done = false;
+                const finish = (ok, extra) => {
+                    if (done) return;
+                    done = true;
+                    clearTimeout(timer);
+                    window.removeEventListener('AirArenaHostMessage', onMsg);
+                    resolve(Object.assign({
+                        ok,
+                        room,
+                        url,
+                        transport: kind,
+                        inviteUrl: room ? inviteJoinUrl(room) : null
+                    }, extra || {}));
+                };
+                const timer = setTimeout(() => {
+                    finish(true, { warn: 'welcome-timeout' });
+                }, kind === 'supabase' ? 6000 : 4000);
+                function onMsg(ev) {
+                    const data = ev && ev.detail;
+                    if (!data) return;
+                    if (data.type === 'welcome' || data.type === (MSG().WELCOME || 'welcome')) {
+                        if (data.payload && data.payload.room) room = data.payload.room;
+                        finish(true);
+                    }
+                    if (data.type === 'queue-matched' || data.type === (MSG().QUEUE_MATCHED || 'queue-matched')) {
+                        if (data.payload && data.payload.room) room = data.payload.room;
+                        finish(true, { matched: true });
+                    }
+                    if (data.type === 'error' || data.type === (MSG().ERROR || 'error')) {
+                        const msg = (data.payload && data.payload.message) || 'server error';
+                        lastError = msg;
+                        setStatus(msg, { error: true });
+                        finish(false, { error: msg });
+                    }
+                }
+                window.addEventListener('AirArenaHostMessage', onMsg);
+            });
+        }).catch((err) => {
+            const hint = kind === 'supabase'
+                ? `無法連線 Supabase：${String(err && err.message || err)}。請檢查專案 URL／anon key，並啟用 Anonymous Auth + Realtime。`
+                : `無法連線房間伺服器（${url}）。請在電腦執行 npm start，手機用同一 Wi‑Fi 開啟電腦顯示的 http://LAN-IP:埠/ ，不要用 127.0.0.1。`;
+            lastError = String(err && err.message || err);
+            setStatus(hint, { error: true });
+            try { stop(); } catch (e) { /* ignore */ }
+            return { ok: false, error: lastError, url, room: null, hint };
+        });
     }
 
     function startHostRoom(opts) {
         const p = Proto();
         const code = (opts && opts.room) || (p && p.makeInviteCode && p.makeInviteCode()) || 'ROOM';
-        const useWs = !opts || opts.transport !== 'broadcast';
+        const cloud = !!(opts && (opts.preferCloud || opts.transport === 'supabase'));
         return start(Object.assign({
             role: 'host',
             room: code,
             seatId: 'red',
             action: 'create',
-            transport: useWs ? 'websocket' : 'broadcast',
+            transport: cloud ? 'supabase' : ((opts && opts.transport) || 'websocket'),
+            preferCloud: cloud,
+            matchSeed: p && p.makeMatchSeed ? p.makeMatchSeed() : 1,
+            matchConfig: (opts && opts.matchConfig) || (p && p.defaultNetMatchConfig
+                ? p.defaultNetMatchConfig('red')
+                : null)
+        }, opts || {}));
+    }
+
+    function startHostRoomAsync(opts) {
+        const p = Proto();
+        const code = (opts && opts.room) || (p && p.makeInviteCode && p.makeInviteCode()) || 'ROOM';
+        const cloud = !!(opts && (opts.preferCloud || opts.transport === 'supabase'
+            || (typeof window !== 'undefined' && window.AirArenaNetplayPreferCloud)));
+        return startAsync(Object.assign({
+            role: 'host',
+            room: code,
+            seatId: 'red',
+            action: 'create',
+            transport: cloud ? 'supabase' : 'websocket',
+            preferCloud: cloud,
             matchSeed: p && p.makeMatchSeed ? p.makeMatchSeed() : 1,
             matchConfig: (opts && opts.matchConfig) || (p && p.defaultNetMatchConfig
                 ? p.defaultNetMatchConfig('red')
@@ -603,23 +748,58 @@
 
     function joinRoom(code, opts) {
         const p = Proto();
+        const cloud = !!(opts && (opts.preferCloud || opts.transport === 'supabase'));
         return start(Object.assign({
             role: 'guest',
             room: String(code || '').trim().toUpperCase(),
             seatId: 'blue',
             action: 'join',
-            transport: 'websocket',
+            transport: cloud ? 'supabase' : 'websocket',
+            preferCloud: cloud,
+            matchConfig: p && p.defaultNetMatchConfig ? p.defaultNetMatchConfig('blue') : null
+        }, opts || {}));
+    }
+
+    function joinRoomAsync(code, opts) {
+        const p = Proto();
+        const cloud = !!(opts && (opts.preferCloud || opts.transport === 'supabase'
+            || (typeof window !== 'undefined' && window.AirArenaNetplayPreferCloud)));
+        return startAsync(Object.assign({
+            role: 'guest',
+            room: String(code || '').trim().toUpperCase(),
+            seatId: 'blue',
+            action: 'join',
+            transport: cloud ? 'supabase' : 'websocket',
+            preferCloud: cloud,
             matchConfig: p && p.defaultNetMatchConfig ? p.defaultNetMatchConfig('blue') : null
         }, opts || {}));
     }
 
     function joinQueue(opts) {
+        const cloud = !!(opts && (opts.preferCloud || opts.transport === 'supabase'
+            || (typeof window !== 'undefined' && window.AirArenaNetplayPreferCloud)));
         return start(Object.assign({
-            role: 'host', // server assigns
+            role: 'host',
             room: null,
             seatId: 'red',
             action: 'queue',
-            transport: 'websocket',
+            transport: cloud ? 'supabase' : 'websocket',
+            preferCloud: cloud,
+            queue: true,
+            mode: (opts && opts.mode) || '1v1'
+        }, opts || {}));
+    }
+
+    function joinQueueAsync(opts) {
+        const cloud = !!(opts && (opts.preferCloud || opts.transport === 'supabase'
+            || (typeof window !== 'undefined' && window.AirArenaNetplayPreferCloud)));
+        return startAsync(Object.assign({
+            role: 'host',
+            room: null,
+            seatId: 'red',
+            action: 'queue',
+            transport: cloud ? 'supabase' : 'websocket',
+            preferCloud: cloud,
             queue: true,
             mode: (opts && opts.mode) || '1v1'
         }, opts || {}));
@@ -627,12 +807,40 @@
 
     function tryReconnect() {
         if (!reconnectToken || !room) return false;
+        const cloud = !!(typeof window !== 'undefined' && window.AirArenaNetplayPreferCloud);
         return start({
             role: role || 'guest',
             room: room,
             seatId: localSeatId,
             action: 'reconnect',
-            transport: 'websocket',
+            transport: cloud ? 'supabase' : 'websocket',
+            preferCloud: cloud,
+            seatToken: seatToken,
+            reconnectToken: reconnectToken
+        });
+    }
+
+    function tryReconnectAsync() {
+        if (!reconnectToken && typeof sessionStorage !== 'undefined') {
+            try {
+                reconnectToken = sessionStorage.getItem('aa-net-reconnect') || reconnectToken;
+                room = room || sessionStorage.getItem('aa-net-room');
+                localSeatId = localSeatId || sessionStorage.getItem('aa-net-seat') || 'red';
+                role = role || sessionStorage.getItem('aa-net-role') || 'guest';
+            } catch (e) { /* ignore */ }
+        }
+        if (!reconnectToken || !room) {
+            return Promise.resolve({ ok: false, error: '無重連 token' });
+        }
+        const cloud = !!(typeof window !== 'undefined' && window.AirArenaNetplayPreferCloud)
+            || (typeof sessionStorage !== 'undefined' && sessionStorage.getItem('aa-net-cloud') === '1');
+        return startAsync({
+            role: role || 'guest',
+            room: room,
+            seatId: localSeatId,
+            action: 'reconnect',
+            transport: cloud ? 'supabase' : 'websocket',
+            preferCloud: cloud,
             seatToken: seatToken,
             reconnectToken: reconnectToken
         });
@@ -650,22 +858,42 @@
         queueMode = null;
     }
 
-    // Auto-boot from URL for dual-tab BC debug
+    // URL boot: cross-device join uses WebSocket or Supabase; BC only with ?bc=1
     if (typeof window !== 'undefined') {
         window.addEventListener('DOMContentLoaded', () => {
-            const r = roomFromUrl();
-            const netRole = roleFromUrl();
-            if (r && netRole) {
-                start({
-                    role: netRole,
-                    room: r,
-                    seatId: seatFromUrl() || (netRole === 'guest' ? 'blue' : 'red'),
-                    transport: 'broadcast'
-                });
-            } else if (r && !netRole) {
-                // Legacy: hostRoom alone → host BC
-                start({ role: 'host', room: r, transport: 'broadcast' });
-            }
+            try {
+                const params = new URLSearchParams(window.location.search || '');
+                if (params.get('cloud') === '1' || params.get('baas') === '1') {
+                    window.AirArenaNetplayPreferCloud = true;
+                }
+                const r = roomFromUrl();
+                const netRole = roleFromUrl();
+                const wantBc = params.get('bc') === '1';
+                const wantJoin = params.get('join') === '1' || netRole === 'guest';
+                const cloud = !!window.AirArenaNetplayPreferCloud
+                    && (typeof AirArenaSupabaseConfig !== 'undefined' && AirArenaSupabaseConfig.isConfigured());
+                if (r && wantJoin && !wantBc) {
+                    startAsync({
+                        role: 'guest',
+                        room: r,
+                        seatId: seatFromUrl() || 'blue',
+                        action: 'join',
+                        transport: cloud ? 'supabase' : 'websocket',
+                        preferCloud: cloud
+                    }).then((res) => {
+                        if (res && res.ok) setStatus(`已加入房間 ${res.room || r}，等待／按 ENGAGE`);
+                    });
+                    return;
+                }
+                if (r && wantBc) {
+                    start({
+                        role: netRole || 'host',
+                        room: r,
+                        seatId: seatFromUrl() || ((netRole === 'guest') ? 'blue' : 'red'),
+                        transport: 'broadcast'
+                    });
+                }
+            } catch (e) { /* ignore */ }
         });
     }
 
@@ -676,10 +904,15 @@
         encodeTurn,
         decodeTurn,
         start,
+        startAsync,
         startHostRoom,
+        startHostRoomAsync,
         joinRoom,
+        joinRoomAsync,
         joinQueue,
+        joinQueueAsync,
         tryReconnect,
+        tryReconnectAsync,
         stop,
         broadcastTurn,
         sendMatchConfig,
@@ -692,6 +925,19 @@
         isGuest,
         shouldInterceptReady,
         shouldBlockLocalResolve,
+        inviteJoinUrl,
+        preferredTransportKind,
+        isCloudConfigured() {
+            return !!(typeof AirArenaSupabaseConfig !== 'undefined' && AirArenaSupabaseConfig.isConfigured
+                && AirArenaSupabaseConfig.isConfigured());
+        },
+        setPreferCloud(on) {
+            if (typeof window !== 'undefined') window.AirArenaNetplayPreferCloud = !!on;
+            try { sessionStorage.setItem('aa-net-cloud', on ? '1' : '0'); } catch (e) { /* ignore */ }
+        },
+        getPreferCloud() {
+            return !!(typeof window !== 'undefined' && window.AirArenaNetplayPreferCloud);
+        },
         getRole() { return role; },
         getRoom() { return room; },
         getLocalSeatId() { return localSeatId; },

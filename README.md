@@ -9,11 +9,11 @@
 ### 下一波軌道（2026-08-25）
 
 - **電台 A：** ACMI 播放中稀疏 `radioCues`（照明／發射／逃城／擊墜／僚機被擊墜）；2D 半身＋通話燈；字幕對齊 `step`；前期 TTS，發行走錄音包。
-- **目錄：** 預設玩家目錄（人工／AI、呼號、陣營）。選「測試」還原原本 Match Setup（人工／Rei_03／test_01）。`?lab=1` 直接開測試。Host／Join／快速配對已開放（需 `npm run room`）。
-- **連線 B／C：** 回合 log JSON 剝 THREE（`AirArenaTurnLogSerialize`）；Host 權威 netplay（`AirArenaNetplay`）；`npm run room` 邀請碼／配對；本機 `?hostRoom=&netRole=` BroadcastChannel。
+- **目錄：** 預設玩家目錄（人工／AI、呼號、陣營）。選「測試」還原原本 Match Setup（人工／Rei_03／test_01）。`?lab=1` 直接開測試。Host／Join／快速配對已開放。
+- **連線 B／C／BaaS：** `npm start` = 同埠靜態 + LAN WebSocket。目錄可選 **雲端 BaaS（Supabase）**：匿名 Auth + Realtime Broadcast／Presence 私人房與排隊；「雲端設定」存 URL／anon key。協定仍為 `airarena-wego-v1` 房主權威。可選 SQL：`tools/supabase/schema.sql`。
 - **結算卡頓：** `window.AirArenaHitchLast`（decide／paths／resolve ms）；火花改 seed 不寫速度陣列。
 - **音訊：** 三軌 mixer（music／sfx／voice）。BGM 尚未掛檔。
-- **AI：** Phase B 單刀繼續；`CONFIG.weapons.rocket` 僅佔位，**不進 decide**。總序：**單機空戰完成 → 對地武器 → 編隊 AI**（現停在單機空戰 A.0）。見 [`docs/Path-Cooperation-Roadmap.md`](./docs/Path-Cooperation-Roadmap.md)。
+- **AI：** Phase B 單刀繼續；`CONFIG.weapons.rocket` 僅佔位，**不進 decide**。總序：**單機空戰完成 → 對地武器 → 編隊 AI**（現停在單機空戰 A.1）。見 [`docs/Path-Cooperation-Roadmap.md`](./docs/Path-Cooperation-Roadmap.md)。
 - **對地：** 地圖地面目標 schema 仍未開；編隊契約 `strike_cover` 預留到對地開火之後。
 
 ### 已完成（v2.2 基礎）
@@ -80,11 +80,11 @@
 ### 目前技術債（摘要）
 
 - **High（1）：** 城區 AI 回歸安全門（H7）— B／D／F／G-heur 已綠；**C + G-hybrid** plateau；優先 live dump。
-- **Medium 優先：** FOX-1 照射環 vs 發射窗（M23）；城區逃生無 chaff（M24）；T38／beam（M18/M21）；ACMI 碎片（M4–M5）；`pilot-ai` 巨型檔（M17 ~23k，A.0 不拆）。 **M8：** B1 A.0 優先目錄＋回退（`tapRoleGate`）；B2 生存可對看、五角色等 A.2。 **M6／M7：** 新場清碎片；全 AI 不再誤標「無長機」。
+- **Medium 優先：** FOX-1 照射環 vs 發射窗（M23）；城區逃生無 chaff（M24）；T38／beam（M18/M21）；ACMI 碎片（M4–M5）；`pilot-ai` 巨型檔（M17 ~23k，A.1 dump 不拆）。 **M8：** B1 A.0 優先目錄＋回退（`tapRoleGate`）；A.1 接敵走廊碼已上（`bakeDualHt: goal=`）；B2 生存可對看、五角色等 A.2。 **M6／M7：** 新場清碎片；全 AI 不再誤標「無長機」。
 - **詳表：** [`TECH-DEBT.md`](./TECH-DEBT.md)（快照 **2026-08-05**）。
 - **新地圖必讀：** [`docs/Arena-Map-Onboarding-Memo.md`](./docs/Arena-Map-Onboarding-Memo.md)。
 - **PilotAI／引擎預先準備：** [`docs/PilotAI-Portability-Memo.md`](./docs/PilotAI-Portability-Memo.md)。
-- **接敵路徑／雙機／武器機體順序：** [`docs/Path-Cooperation-Roadmap.md`](./docs/Path-Cooperation-Roadmap.md)（A 單機空戰 → B 對地 → C 編隊；現停在 A.0）。
+- **接敵路徑／雙機／武器機體順序：** [`docs/Path-Cooperation-Roadmap.md`](./docs/Path-Cooperation-Roadmap.md)（A 單機空戰 → B 對地 → C 編隊；現停在 A.1）。
 - **歷史備忘（勿當架構）：** `docs/Tactical-Development-Memo.md`。
 
 ### Phase 1 架構（烘焙 = 空間 OS）
@@ -122,7 +122,7 @@ Air-Arena-v2.2-Stable/          # 目錄名保留；文件版本 v3.0+
 ├── docs/
 │   ├── Arena-Map-Onboarding-Memo.md   # 新場地：bake + envelope 檢查清單（現行）
 │   ├── PilotAI-Portability-Memo.md   # PilotAI 優先／引擎預先準備（現行）
-│   ├── Path-Cooperation-Roadmap.md  # 單機空戰 → 對地 → 編隊（現行；現停 A.0）
+│   ├── Path-Cooperation-Roadmap.md  # 單機空戰 → 對地 → 編隊（現行；現停 A.1）
 │   └── Tactical-Development-Memo.md  # 歷史備忘（已過時）
 ├── map-editor/                 # 地圖編輯器（WIP polish）
 ├── js/

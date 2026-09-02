@@ -22,7 +22,7 @@
 | Bake 航點、A*、巷口圖、左右 homotopy、`pocketRisk` | 從出生點到敵機的任務 A* |
 | 貼樓／桌板 **stick**（逃生評分；tableGlue／collapse hold、dirtBleed yield／gap 已於 2026-08-28 解凍） | 用路徑覆寫 pitch owner |
 | TAP lead／lag／beam；`combatGoal` 只在逃生時偏戰鬥側 | 「這回合算出最快接敵走廊」 |
-| Phase B：`deferred=seekAngle` 已證實；A.0 為 `seek_angle` 優先 lag／beam、全滅回退全目錄 | 角色真的決定走哪條巷（**A.1**） |
+| Phase B：`deferred=seekAngle` 已證實；A.0 為 `seek_angle` 優先 lag／beam、全滅回退全目錄；A.1 接敵終點已進 bake／dual | 巷內時間／能量、五角色交戰像（**A.2**） |
 | 人長機＋AI 僚機槽位（跟隨／掩護／攻擊我的目標） | 兩架 AI 互相當編隊（契約見下；`getWingmanLeadId` 只認人類） |
 
 `dirtBleed` 已於 2026-08-28 解凍。**B2 生存**（切線全席 vs `Rei_03`）量測可對看、不單獨寫關。**B2 五角色交戰像**等 A.2。火箭佔位、對地 schema 未開。全 AI 2v2 仍各打各的。
@@ -35,7 +35,7 @@
 
 | 階段 | 內容 | 現況 |
 |------|------|------|
-| **A 單機空戰** | A.0：`seek_angle` 優先目錄＋回退；其後 A.1 接敵走廊、A.2 時間／能量。可選新 A2A（佔位、不進 `decide`） | **停在 A.0** |
+| **A 單機空戰** | A.0：`seek_angle` 優先目錄＋回退；A.1 接敵走廊（碼已上）；其後 A.2 時間／能量。可選新 A2A（佔位、不進 `decide`） | **停在 A.1** |
 | **B 對地武器** | 地圖地面目標 schema；bake 終點可改地面點；單機 A2G envelope＋decide | schema 未開 |
 | **C 編隊 AI** | 兩架 AI 共用契約（不是人類 HUD）；A2G 已上才可選 `strike_cover` | 全 AI 仍各打各的 |
 
@@ -52,10 +52,10 @@ A 單機空戰 → B 對地武器 → C 編隊 AI
 | 步 | 內容 | 驗收 | 非目標 |
 |----|------|------|--------|
 | **0 現役收尾** | `seek_angle` 擁有 TAP 時**優先目錄** `{lag, beam}`；全滅／不安全則**回退全目錄**（含 cruise／perch）。B2 生存已可對看；五角色交戰像等 A.2 | TAP 窗：`tacticalApproach: selected=` 為 lag／beam 且 `phaseBRole: seek_angle`；針 `tapRoleGate:`。生存閘當選不當 B1 失敗。金標 T150 building 不退步。**不寫 B2 五角色關** | 不把 ±28 加大到數百；不改 stick／武器／出生／press／extend；不上編隊；不再用「金標必出 lag」當再 dump 就過的門 |
-| **1 單機接敵走廊** | bake 終點改為可飛接敵點；L／R 選「能成形且較不漏斗」的巷 | TAP 已聽 `seek_angle` 之後：更少空 cruise／`alignFirst`；building 不退步 | 不新寫全球 A*、不改 stick、不重開 TAP 目錄閘 |
-| **2 時間／能量** | A.0（必要時 A.1）過後：`extend` 禁 lead、`press` 才 lead；薄「這條巷多久有射界」 | 對頭少直衝、遠距才 recommit。**之後**才寫 B2 五角色 | 不新模擬器 |
+| **1 單機接敵走廊** | bake／dual 終點改為可飛接敵點；L／R 選「能成形且較不漏斗」的巷。逃生 WP 仍沿機鼻 | TAP 已聽 `seek_angle` 之後：更少空 cruise／`alignFirst`；金標 n=3 building 不退步。針 `bakeDualHt: goal=intercept\|nose` | 不新寫全球 A*、不改 stick、不重開 TAP 目錄閘／±28 |
+| **2 時間／能量** | A.1 dump 過後：`extend` 禁 lead、`press` 才 lead；薄「這條巷多久有射界」 | 對頭少直衝、遠距才 recommit。**之後**才寫 B2 五角色 | 不新模擬器 |
 
-**現在停在 A.0：** 目錄閘已上（`tapRoleGate:`）。舊門作廢。等金標 TAP 窗 dump（`fallback=0` 選 lag／beam）且 building 不退步，再 A.1。B2 生存量測已過；B2 五角色等 A.2。不要跳 A.1／B／C，不要再開出生、不要加大 ±28。
+**現在停在 A.1：** 接敵終點已進 live dual-homotopy／bake heading（`bakeDualHt: goal=`）。逃生壓力仍走機鼻。等金標 n=3 dump building 不退步，再 A.2。B2 生存量測已過；B2 五角色等 A.2。不要跳 B／C，不要再開出生、不要加大 ±28、不要重開 TAP 目錄閘。
 
 ---
 
@@ -63,7 +63,7 @@ A 單機空戰 → B 對地武器 → C 編隊 AI
 
 先有地圖地面目標 schema，再單機 A2G envelope＋`decide`。bake 終點從敵機改成地面點。
 
-- 不插進 A.0。改射界會讓 stick／角色 A/B 失效。
+- 不插進 A.1 dump 週期。改射界會讓 stick／角色 A/B 失效。
 - `CONFIG.weapons.rocket` 已佔位（A2A／A2G dualRole），**不進 `decide`** 直到單獨武器刀。只加 envelope＋CONFIG，對 Rei_03 看 `kills/mslQ`。
 - FOX-1 照射環、逃生箔條（M23／M24）是現有彈種 UX，可在 A 旁邊穿插，不是本階段。
 
@@ -101,15 +101,15 @@ A 與 B 都過之後才實作。第一刀是 **`split` + 分側**，不是跟隨
 
 ## 新武器、新機體放哪
 
-都不插進 **A.0**。
+都不插進 **A.1 dump**。
 
 | 東西 | 插入點 | 規則 |
 |------|--------|------|
 | FOX-1 照射環、逃生箔條（M23／M24） | **A 旁邊**，可穿插 UX | 現有彈種，不是新武器 |
-| **新 A2A**（火箭等） | **A.0 TAP 窗穩了之後**；可在 A.1 之前或剛做完 | 佔位不進 `decide` 直到單獨武器刀；不綁「B2 五角色全文」 |
+| **新 A2A**（火箭等） | **A.1 dump 穩了之後**；可在 A.2 之前或剛做完 | 佔位不進 `decide` 直到單獨武器刀；不綁「B2 五角色全文」 |
 | **對地（A2G）** | **階段 B**（A 完成之後、C 之前） | 先 schema，再單機开火；編隊的 `strike_cover` 等 C |
 | **新機體外觀／掛架 UI** | 隨時 | 不進 `decide` |
-| **新機體飛性／HP／AP** | **A.0 穩了，最好 A.1 也過了** | 現在全場 `mig21`。換飛性＝換 stick 與接敵時間，須先凍結一架對照 |
+| **新機體飛性／HP／AP** | **A.1 dump 穩了，最好 A.2 也過了** | 現在全場 `mig21`。換飛性＝換 stick 與接敵時間，須先凍結一架對照 |
 | **混機種雙機** | **階段 C 的 split／分側之後** | 先同機種分側 |
 
 ---
@@ -134,7 +134,7 @@ A 與 B 都過之後才實作。第一刀是 **`split` + 分側**，不是跟隨
 - 把 `strike_cover` 做成人類 HUD 第六鍵。
 - 為火箭／對地／編隊在 `pilot-ai.js` 先堆空 if；讀 `weapon-envelope`／`CONFIG.aircrafts`。
 - 同把刀混 tableGlue、B1、武器。
-- **A.0 期間拆 `pilot-ai.js`**（M17 等之後；見上節）。
+- **A.1 dump 期間拆 `pilot-ai.js`**（M17 等之後；見上節）。
 
 ---
 
