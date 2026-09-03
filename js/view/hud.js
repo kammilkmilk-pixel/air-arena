@@ -839,6 +839,28 @@ window.updateDynamicHUD = function() {
         return;
     }
 
+    const splitView = !!(window.AirArenaMultiView
+        && typeof window.AirArenaMultiView.isSplit === 'function'
+        && window.AirArenaMultiView.isSplit());
+    // Split uses per-pane cameras; a single full-window lock box would sit on the wrong pane.
+    // Per-pane clones would cost more (N projections + N DOM). Hide lock HUD and skip LOS/FOX-1 work.
+    if (splitView) {
+        if (dynamicHud) dynamicHud.style.display = 'none';
+        if (ghostHud) ghostHud.style.display = 'none';
+        if (lcosPipper) lcosPipper.style.display = 'none';
+        const lockLabel = document.getElementById('hud-tgt-lock');
+        if (lockLabel) {
+            lockLabel.classList.remove('is-on');
+            lockLabel.hidden = true;
+        }
+        window.isDraggingLcosRing = false;
+        updateLcosGunHeatRing(null, 50, 50, 37.4, false);
+        updateMissileSeekerBrackets({ visible: false });
+        if (typeof updateFox1SupportHud === 'function') updateFox1SupportHud(null, null, null, null, true);
+        if (typeof uiUpdateSmsRadarLockWarn === 'function') uiUpdateSmsRadarLockWarn(t);
+        return;
+    }
+
     let myGhostPos = (t.pathPoints && t.pathPoints.length > 0) ? t.pathPoints[t.pathPoints.length - 1] : t.wrapper.position;
     let myGhostQuat = (t.pathQuats && t.pathQuats.length > 0) ? t.pathQuats[t.pathQuats.length - 1] : t.wrapper.quaternion;
     

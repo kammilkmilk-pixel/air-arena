@@ -94,7 +94,7 @@ applyPilotAction / simulateFlight / ACMI 播放
 
 - 整包脫 Three 或上 Godot 重寫  
 - 為「可移植」重寫整份 `pilot-ai.js`  
-- **A.1 dump 期間拆 mega-file**（M17：live ~23.4k，2026-08-29）。分類可維修、麵條是單點；之後對地／編隊開新層，不碎切凍結腦。見 Path-Cooperation「檔案可維修性」。
+- **A.2 dump 期間拆 mega-file**（M17：live ~23.4k，2026-08-29）。分類可維修、麵條是單點；之後對地／編隊開新層，不碎切凍結腦。見 Path-Cooperation「檔案可維修性」。
 - 用引擎物理／`RayCast3D` 重寫城區感知取代現有 bake＋評分  
 - 未對齊 regression 就改 hard-contact 語義  
 - 讓 live decide 與 `tools/ai-regression.js` surrogate 長期分叉卻不在 `TECH-DEBT` 記一筆

@@ -107,8 +107,9 @@ function executeTurnSimultaneously() {
                 if (ctx.death[id] !== -1) {
                     if (typeof drawTrajectoryLine === 'function') drawTrajectoryLine(t);
                     if (trajectoryMeshes[id]) {
+                        const splitHide = !!(window.AirArenaMultiView && window.AirArenaMultiView.isSplit && window.AirArenaMultiView.isSplit());
                         let isCurrentPlayer = (typeof tAct !== 'undefined' && id === tAct) || (id === window.tAct);
-                        trajectoryMeshes[id].visible = isCurrentPlayer ? true : !!(t.userData && t.userData.showEnvelope);
+                        trajectoryMeshes[id].visible = splitHide ? false : (isCurrentPlayer ? true : !!(t.userData && t.userData.showEnvelope));
                     }
                 }
             });
@@ -306,8 +307,9 @@ function finishTurnSimultaneously() {
             if (typeof drawTrajectoryLine === 'function') {
                 drawTrajectoryLine(t);
                 if (trajectoryMeshes[id]) {
+                    const splitHide = !!(window.AirArenaMultiView && window.AirArenaMultiView.isSplit && window.AirArenaMultiView.isSplit());
                     let isCurrentPlayer = (typeof tAct !== 'undefined' && id === tAct) || (id === window.tAct);
-                    trajectoryMeshes[id].visible = isCurrentPlayer ? true : !!(t.userData && t.userData.showEnvelope);
+                    trajectoryMeshes[id].visible = splitHide ? false : (isCurrentPlayer ? true : !!(t.userData && t.userData.showEnvelope));
                 }
             }
         });

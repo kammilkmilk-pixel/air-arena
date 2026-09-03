@@ -113,8 +113,9 @@ function processFlightPaths(ctx) {
 
         if (typeof drawTrajectoryLine === 'function') drawTrajectoryLine(t);
         if (trajectoryMeshes[id]) {
+            const splitHide = !!(window.AirArenaMultiView && window.AirArenaMultiView.isSplit && window.AirArenaMultiView.isSplit());
             let isCurrentPlayer = (typeof tAct !== 'undefined' && id === tAct) || (id === window.tAct);
-            trajectoryMeshes[id].visible = isCurrentPlayer ? true : !!(t.userData && t.userData.showEnvelope);
+            trajectoryMeshes[id].visible = splitHide ? false : (isCurrentPlayer ? true : !!(t.userData && t.userData.showEnvelope));
         }
 
         t.flightCurve = new THREE.CatmullRomCurve3(t.pathPoints, false, 'catmullrom', 0);

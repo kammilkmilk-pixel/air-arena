@@ -7,7 +7,8 @@
  *   npm.cmd run batch:ai:gold -- --brains Rei_03
  *   npm.cmd run batch:ai:gold -- --ab
  *
- * Extra args are forwarded; gold spawn/n always win. Ctrl+F5 the game tab first.
+ * Extra args are forwarded; gold spawn/n always win.
+ * Uses an isolated Chrome profile (not your daily tabs). Restart ingest if it warns "old".
  */
 const { spawn } = require('child_process');
 const path = require('path');

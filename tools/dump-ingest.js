@@ -42,6 +42,51 @@ function listJson(dir) {
         .map((n) => path.join(dir, n));
 }
 
+function roundPos(p) {
+    if (!p) return '';
+    if (Array.isArray(p)) return p.map((n) => Math.round(Number(n))).join(',');
+    if (typeof p === 'object') {
+        return [p.x, p.y, p.z].map((n) => Math.round(Number(n))).join(',');
+    }
+    return String(p);
+}
+
+function unitTrailPos(u) {
+    if (!u) return '';
+    const t = (u.decisionTrail && u.decisionTrail[0]) || (u.deathTrail && u.deathTrail[0]);
+    return roundPos(t && t.pos);
+}
+
+/** Gameplay fingerprint — ignores session / seed / batchIndex. */
+function rosterFingerprint(roster) {
+    if (!roster || typeof roster !== 'object') return '';
+    const units = roster.units || {};
+    const summary = roster.rosterSummary || [];
+    const causeOf = {};
+    for (let i = 0; i < summary.length; i++) {
+        const r = summary[i];
+        if (r && r.id) causeOf[r.id] = String(r.deathCause || '');
+    }
+    const ids = Object.keys(units).sort();
+    const parts = ids.map((id) => {
+        const u = units[id];
+        return id + '@' + unitTrailPos(u) + ':' + (causeOf[id] || '') + ':T' + String(roster.turn || '');
+    });
+    return parts.join('|');
+}
+
+function sessionFingerprints(dir) {
+    const seen = {};
+    listJson(dir).forEach((file) => {
+        try {
+            const j = JSON.parse(fs.readFileSync(file, 'utf8'));
+            const fp = rosterFingerprint(j);
+            if (fp) seen[fp] = path.basename(file);
+        } catch (_) { /* skip unreadable */ }
+    });
+    return seen;
+}
+
 function cors(res) {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
@@ -72,6 +117,20 @@ function handlePostDump(req, res, body) {
     ensureDir(dir);
     const filename = safeFilename(payload.filename);
     const dest = path.join(dir, filename);
+    const fp = rosterFingerprint(payload.roster);
+    const seen = sessionFingerprints(dir);
+    if (fp && seen[fp]) {
+        const files = listJson(dir);
+        console.log('[dump-ingest]', sid, 'duplicate skip', filename, 'same as', seen[fp], 'n=' + files.length);
+        sendJson(res, 200, {
+            ok: true,
+            duplicate: true,
+            sessionId: sid,
+            filename,
+            count: files.length
+        });
+        return;
+    }
     fs.writeFileSync(dest, JSON.stringify(payload.roster, null, 2), 'utf8');
     const files = listJson(dir);
     console.log('[dump-ingest]', sid, filename, 'n=' + files.length);
@@ -87,7 +146,7 @@ function handle(req, res) {
         return;
     }
     if (req.method === 'GET' && (url.pathname === '/health' || url.pathname === '/')) {
-        sendJson(res, 200, { ok: true, host: HOST, port: PORT, root: ROOT });
+        sendJson(res, 200, { ok: true, host: HOST, port: PORT, root: ROOT, dedup: true });
         return;
     }
     if (req.method === 'GET' && url.pathname === '/status') {
@@ -145,6 +204,7 @@ module.exports = {
     sanitizeToken,
     safeFilename,
     sessionDir,
+    rosterFingerprint,
     ROOT,
     PORT,
     HOST

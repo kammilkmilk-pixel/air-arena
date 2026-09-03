@@ -1885,6 +1885,35 @@ function uiParseAltitudeLaneFromTree(tree) {
     };
 }
 
+/**
+ * Dump-only TAP compact fields from the decide tree.
+ * tap: sel=<state> | skip=<why> | none=<why>
+ * tapGate: remainder of tapRoleGate: (catalog needle when TAP picked)
+ */
+function uiParseTapDumpFromTree(tree) {
+    if (!Array.isArray(tree)) return { tap: null, tapGate: null };
+    let tap = null;
+    let tapGate = null;
+    for (let i = tree.length - 1; i >= 0; i--) {
+        const s = String(tree[i] || '');
+        if (!tapGate && s.indexOf('tapRoleGate:') === 0) {
+            tapGate = s.replace(/^tapRoleGate:\s*/, '') || null;
+        }
+        if (!tap && s.indexOf('tacticalApproach:') === 0) {
+            const sel = s.match(/\bselected=([A-Za-z0-9_]+)/);
+            const skip = s.match(/\btapSkip=([A-Za-z0-9_]+)/);
+            const none = s.match(/\btapNone=([A-Za-z0-9_]+)/);
+            if (sel) tap = 'sel=' + sel[1];
+            else if (skip) tap = 'skip=' + skip[1];
+            else if (none) tap = 'none=' + none[1];
+            else if (/\bskipped=1\b/.test(s)) tap = 'skip=other';
+            else if (/\bnone\b/.test(s)) tap = 'none=unknown';
+        }
+        if (tap && tapGate) break;
+    }
+    return { tap, tapGate };
+}
+
 function uiBuildCompactDecisionFrame(teamId, action) {
     const team = uiGetAIDebugTeam(teamId);
     if (!team || !action) return null;
@@ -1895,6 +1924,7 @@ function uiBuildCompactDecisionFrame(teamId, action) {
     const fwdInfo = uiGetAircraftForward(team);
     const ur = action.urbanRoute || dbg.urbanRoute || null;
     const laneInfo = uiParseAltitudeLaneFromTree(tree);
+    const tapInfo = uiParseTapDumpFromTree(tree);
     return {
         turn,
         state: action.state || null,
@@ -1924,7 +1954,10 @@ function uiBuildCompactDecisionFrame(teamId, action) {
         chaff: dbg.shouldChaffNow ? 1 : 0,
         flare: dbg.shouldFlareNow ? 1 : (dbg.flare ? 1 : 0),
         chaffAmmo: dbg.chaffReserve != null ? dbg.chaffReserve : (team.chaffAmmo != null ? team.chaffAmmo : null),
-        reason: action.reason || null
+        reason: action.reason || null,
+        role: team.aiTacticalRole || null,
+        tap: tapInfo.tap || null,
+        tapGate: tapInfo.tapGate || null
     };
 }
 
@@ -2271,7 +2304,8 @@ function uiFormatAIDebugText(teamId, opts = {}) {
             lines.push(
                 `- T${f.turn} ${f.state || '-'} thr=${f.thr} joy=${f.joyX},${f.joyY} alt=${f.alt} ap=${f.ap} ` +
                 `cvr=${f.coverDist}/${f.coverFwd} roof=${f.roof} risk=${f.risk} gate=${f.gate || '-'} ` +
-                `src=${f.urbanSrc || '-'} sc=${f.straightClimb ?? '-'} fac=${f.facade ?? '-'}`
+                `src=${f.urbanSrc || '-'} sc=${f.straightClimb ?? '-'} fac=${f.facade ?? '-'} ` +
+                `role=${f.role || '-'} tap=${f.tap || '-'}${f.tapGate ? ` tapGate=${f.tapGate}` : ''}`
             );
         });
     }

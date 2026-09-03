@@ -11106,6 +11106,23 @@ window.AirArenaAI = {
         return st === 'tacticalLagPursuit' || st === 'tacticalBeamReposition';
     },
 
+    isPressPreferredTapState(state) {
+        const st = String(state || '');
+        return st === 'tacticalLeadIntercept' || st === 'tacticalCorridorCut';
+    },
+
+    isExtendPreferredTapState(state) {
+        const st = String(state || '');
+        return st === 'tacticalEnergyCruise' || st === 'tacticalEnergyCruiseCut';
+    },
+
+    isRolePreferredTapState(role, state) {
+        if (role === 'seek_angle') return this.isSeekAnglePreferredTapState(state);
+        if (role === 'press') return this.isPressPreferredTapState(state);
+        if (role === 'extend') return this.isExtendPreferredTapState(state);
+        return false;
+    },
+
     tapApproachEntryUsable(entry) {
         if (!entry || !entry.evalResult || !entry.candidate) return false;
         const score = Number(entry.score);
@@ -11116,11 +11133,38 @@ window.AirArenaAI = {
     },
 
     /**
-     * A.0: seek_angle prefers lag/beam. Empty or unusable preferred set falls back to full TAP pool.
+     * Dump-only first-true skip clause. Order matches skipTacticalApproach.
+     */
+    nameTacticalApproachSkip(flags = {}) {
+        if (flags.climb) return 'climb';
+        if (flags.ground) return 'ground';
+        if (flags.energy) return 'energy';
+        if (flags.msl) return 'msl';
+        if (flags.merge) return 'merge';
+        if (flags.knife) return 'knife';
+        if (flags.highCover) return 'highCover';
+        if (flags.gun) return 'gun';
+        if (flags.earlyLock) return 'earlyLock';
+        if (flags.steepDive) return 'steepDive';
+        return 'other';
+    },
+
+    tapDumpHeldRoleSuffix(teamId) {
+        const team = (typeof GameContext !== 'undefined' && GameContext.getTeam)
+            ? GameContext.getTeam(teamId)
+            : null;
+        const role = team && team.aiTacticalRole;
+        return role ? ` tapRole=${role}` : '';
+    },
+
+    /**
+     * A.0 / A.2a: role preferred TAP catalog + safety fallback.
+     * seek_angle → lag/beam. press → lead/cut. extend → cruise (lead banned unless fallback).
      * Does not change catalog scores. Dump needle tapRoleGate:
      */
-    pickSeekAngleTacticalWinner(scored, opts = {}) {
+    pickRoleCatalogWinner(scored, opts = {}) {
         const list = Array.isArray(scored) ? scored : [];
+        const role = opts.role || 'seek_angle';
         const tieEnabled = !!opts.tieEnabled;
         const tieOpts = {
             eps: opts.eps,
@@ -11137,14 +11181,15 @@ window.AirArenaAI = {
                 note: null
             };
         };
-        const preferred = list.filter((e) => this.isSeekAnglePreferredTapState(e.candidate && e.candidate.state));
+        const preferred = list.filter((e) => this.isRolePreferredTapState(role, e.candidate && e.candidate.state));
         const prefTied = pickFrom(preferred);
+        const rolePrefix = role === 'seek_angle' ? '' : `role=${role} `;
         if (this.tapApproachEntryUsable(prefTied.pick)) {
             const st = prefTied.pick.candidate.state;
             return {
                 entry: prefTied.pick,
                 rngTieNote: prefTied.note,
-                gateNote: `tapRoleGate: pref=${st} n=${preferred.length} fallback=0`
+                gateNote: `tapRoleGate: ${rolePrefix}pref=${st} n=${preferred.length} fallback=0`
             };
         }
         const fullTied = pickFrom(list);
@@ -11152,24 +11197,38 @@ window.AirArenaAI = {
         return {
             entry: fullTied.pick,
             rngTieNote: fullTied.note,
-            gateNote: `tapRoleGate: pref=none n=${preferred.length} fallback=1 pick=${fb}`
+            gateNote: `tapRoleGate: ${rolePrefix}pref=none n=${preferred.length} fallback=1 pick=${fb}`
         };
+    },
+
+    /**
+     * A.0: seek_angle prefers lag/beam. Empty or unusable preferred set falls back to full TAP pool.
+     */
+    pickSeekAngleTacticalWinner(scored, opts = {}) {
+        return this.pickRoleCatalogWinner(scored, Object.assign({}, opts, { role: 'seek_angle' }));
     },
 
     planTacticalApproach(teamId, ctx) {
         const team = (typeof GameContext !== 'undefined' && GameContext.getTeam) ? GameContext.getTeam(teamId) : null;
         if (!team || !ctx) return null;
+        const fail = (why) => {
+            ctx._tapNone = why;
+            return null;
+        };
         // Allow memory / passive bearing search — not only live contact (T112 searchIntercept joy≈0).
-        if (!ctx.sensorContact && !ctx.sensorMemory && !ctx.passiveSearch) return null;
-        if (ctx.navClimbOutActive || ctx.groundRisk || ctx.energyCritical) return null;
-        if (ctx.actualMissileThreat) return null;
-        if (ctx.mandatoryMergeBreak || ctx.knifeMidair) return null;
-        if (ctx.collisionRisk === 'high') return null;
-        if (ctx.reliableShootWindow) return null;
+        if (!ctx.sensorContact && !ctx.sensorMemory && !ctx.passiveSearch) return fail('noSensor');
+        if (ctx.navClimbOutActive) return fail('climb');
+        if (ctx.groundRisk) return fail('ground');
+        if (ctx.energyCritical) return fail('energy');
+        if (ctx.actualMissileThreat) return fail('msl');
+        if (ctx.mandatoryMergeBreak) return fail('merge');
+        if (ctx.knifeMidair) return fail('knife');
+        if (ctx.collisionRisk === 'high') return fail('highCover');
+        if (ctx.reliableShootWindow) return fail('gun');
         // T133: steep mid-alt dive must not lag-pursue with nose-down joyY (engagement steal).
         const fyTap = Number(ctx.forwardY);
         const altTap = Number(ctx.altitude || 0);
-        if (Number.isFinite(fyTap) && fyTap < -0.55 && altTap < 72) return null;
+        if (Number.isFinite(fyTap) && fyTap < -0.55 && altTap < 72) return fail('steepDive');
 
         if (!Number.isFinite(Number(ctx.ap))) ctx.ap = Number(team.ap);
         this.resolveTacticalRole(teamId, ctx);
@@ -11389,7 +11448,7 @@ window.AirArenaAI = {
                 phaseB: ctx._phaseBNote || null
             });
         }
-        if (!scored.length) return null;
+        if (!scored.length) return fail('emptyScored');
 
         const tieEnabled = Number(tuning.tacticalTieRandom) !== 0;
         const tieEps = Number.isFinite(Number(tuning.tacticalTieEps))
@@ -11398,8 +11457,13 @@ window.AirArenaAI = {
         let bestEntry = null;
         let rngTieNote = null;
         let tapRoleGateNote = null;
-        if (ctx._tacticalRole === 'seek_angle') {
-            const gated = this.pickSeekAngleTacticalWinner(scored, {
+        if (
+            ctx._tacticalRole === 'seek_angle' ||
+            ctx._tacticalRole === 'press' ||
+            ctx._tacticalRole === 'extend'
+        ) {
+            const gated = this.pickRoleCatalogWinner(scored, {
+                role: ctx._tacticalRole,
                 tieEnabled,
                 eps: tieEps,
                 teamId,
@@ -11419,7 +11483,7 @@ window.AirArenaAI = {
         } else {
             bestEntry = scored.reduce((a, b) => (b.score > a.score ? b : a), scored[0]);
         }
-        if (!bestEntry || !bestEntry.evalResult) return null;
+        if (!bestEntry || !bestEntry.evalResult) return fail('noWinner');
 
         const best = bestEntry.candidate;
         const bestEval = bestEntry.evalResult;
@@ -11428,9 +11492,9 @@ window.AirArenaAI = {
 
         // Reject only clearly suicidal winners.
         if (bestEval.buildingHit && Number.isFinite(bestEval.minAltitude) && bestEval.minAltitude < 12) {
-            return null;
+            return fail('buildingHit');
         }
-        if (bestScore < 20) return null;
+        if (bestScore < 20) return fail('scoreFloor');
 
         return {
             ...best,
@@ -11455,7 +11519,10 @@ window.AirArenaAI = {
     pickTacticalApproach(teamId, ctx, debugBase, tree) {
         const planned = this.planTacticalApproach(teamId, ctx);
         if (!planned) {
-            if (Array.isArray(tree)) tree.push('tacticalApproach: none');
+            if (Array.isArray(tree)) {
+                const why = ctx && ctx._tapNone ? ctx._tapNone : 'unknown';
+                tree.push(`tacticalApproach: none tapNone=${why}${this.tapDumpHeldRoleSuffix(teamId)}`);
+            }
             return null;
         }
         this.applyTacticalRoleThrottle(planned, ctx);
@@ -11632,9 +11699,8 @@ window.AirArenaAI = {
     },
 
     /**
-     * A.1: combat-corridor heading toward predicted intercept XZ.
-     * Survival pressure / no goal / intercept behind or too close → keep nose.
-     * Dual L/R pick may still use intercept XZ when the contact is ahead or abeam.
+     * A.1b: bake/dual/graph walk nose; intercept XZ is L/R pick only.
+     * Survival pressure / no goal / too close → no pick. Ahead contact labels goalSource=intercept.
      */
     resolveInterceptCorridorHeading(selfPos, noseFwd, opts = {}) {
         const nx0 = Number(noseFwd && noseFwd.x) || 0;
@@ -11666,11 +11732,7 @@ window.AirArenaAI = {
         const iz = dz / glen;
         const dot = nx * ix + nz * iz;
         out.useGoalPick = true;
-        if (dot >= 0.15) {
-            out.x = nx * 0.4 + ix * 0.6;
-            out.z = nz * 0.4 + iz * 0.6;
-            out.goalSource = 'intercept';
-        }
+        if (dot >= 0.15) out.goalSource = 'intercept';
         return out;
     },
 
@@ -11745,8 +11807,9 @@ window.AirArenaAI = {
             goalZ: opts.goalZ,
             survivalPressure: opts.survivalPressure
         });
-        const combatX = interceptH.x;
-        const combatZ = interceptH.z;
+        // A.1b: bake/dual/graph walk nose; intercept XZ is L/R pick only.
+        const sampleX = Number(fwd && fwd.x) || 0;
+        const sampleZ = Number(fwd && fwd.z) || 0;
         if (
             fwd &&
             typeof AirArenaAiMap !== 'undefined'
@@ -11758,8 +11821,8 @@ window.AirArenaAI = {
                         mapWp,
                         selfPos.x,
                         selfPos.z,
-                        Number(fwd.x) || 0,
-                        Number(fwd.z) || 0,
+                        sampleX,
+                        sampleZ,
                         alt,
                         {
                             steps: opts.wpSteps || 8,
@@ -11774,8 +11837,8 @@ window.AirArenaAI = {
                         mapWp,
                         selfPos.x,
                         selfPos.z,
-                        combatX,
-                        combatZ,
+                        sampleX,
+                        sampleZ,
                         alt,
                         {
                             margin: 8,
@@ -11784,7 +11847,7 @@ window.AirArenaAI = {
                         }
                     );
                 }
-                // Wave 2 seed: if A* path weak, try flyable corridor graph toward intercept/nose goal.
+                // Wave 2 seed: if A* path weak, try flyable corridor graph along nose.
                 if (
                     (!survivalPath || !survivalPath.ok) &&
                     AirArenaAiMap.buildFlyableCorridorGraph &&
@@ -11798,8 +11861,8 @@ window.AirArenaAI = {
                     }
                     if (mapWp._corridorGraph && mapWp._corridorGraph.ok) {
                         const goalDist = Number(opts.pathGoalDist) || (Number(mapWp.cellSize) || 10) * 10;
-                        let hx = combatX;
-                        let hz = combatZ;
+                        let hx = sampleX;
+                        let hz = sampleZ;
                         const hlen = Math.hypot(hx, hz);
                         if (hlen > 1e-4) {
                             hx /= hlen;
@@ -11850,8 +11913,8 @@ window.AirArenaAI = {
                         mapWp,
                         selfPos.x,
                         selfPos.z,
-                        combatX,
-                        combatZ,
+                        sampleX,
+                        sampleZ,
                         alt,
                         dualOpts
                     );
@@ -21974,9 +22037,22 @@ altitude,
                             const tap = this.pickTacticalApproach(teamId, buildTapCtx(), debugBase, tree);
                             if (tap) return tap;
                         } else {
-                            tree.push(
-                                `tacticalApproach: skipped=${skipTacticalApproach ? 1 : 0} eligible=${tapEligible ? 1 : 0} contact=${sensor.hasContact ? 1 : 0}`
-                            );
+                            let tapSkipNote = `tacticalApproach: skipped=${skipTacticalApproach ? 1 : 0} eligible=${tapEligible ? 1 : 0} contact=${sensor.hasContact ? 1 : 0}`;
+                            if (skipTacticalApproach) {
+                                tapSkipNote += ` tapSkip=${this.nameTacticalApproachSkip({
+                                    climb: !!navClimbOut.active,
+                                    ground: !!groundRisk,
+                                    energy: !!energyCritical,
+                                    msl: !!actualMissileThreat,
+                                    merge: !!mandatoryMergeBreak,
+                                    knife: !!knifeMidair,
+                                    highCover: coverInfo.collisionRisk === 'high',
+                                    gun: !!reliableGunWindow,
+                                    earlyLock: !!(earlyMissileLock && !frontAspectHardBan),
+                                    steepDive: Number.isFinite(selfForward.y) && selfForward.y < -0.55 && altitude < 72
+                                })}`;
+                            }
+                            tree.push(tapSkipNote + this.tapDumpHeldRoleSuffix(teamId));
                         }
 
                         if (

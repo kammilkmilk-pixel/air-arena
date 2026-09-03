@@ -703,6 +703,7 @@ GameContext.registerService('createProceduralMissileMesh', createProceduralMissi
 
 const ghostBeam = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0,0), new THREE.Vector3(0,-1,0)]), new THREE.LineBasicMaterial({color: 0xffffff, transparent: true, opacity: 0.6})); 
 scene.add(ghostBeam);
+window.ghostBeam = ghostBeam;
 
 window.hideVisualFlares = function() {
     visualFlaresPool.forEach((f) => { if (f) f.visible = false; });
@@ -961,9 +962,15 @@ window.drawStaticChaff = function() {
 GameContext.registerService('drawStaticChaff', window.drawStaticChaff);
 GameContext.registerService('updateChaffVisuals', updateChaffVisuals);
 
+function isMultiViewSplit() {
+    return !!(window.AirArenaMultiView && typeof window.AirArenaMultiView.isSplit === 'function'
+        && window.AirArenaMultiView.isSplit());
+}
+
 function updateSpatialHelpers() {
     if (!teams || typeof P === 'undefined' || !P) return;
     let isReplaying = window.replayMode || (typeof isAnimating !== 'undefined' && isAnimating);
+    const splitView = isMultiViewSplit();
     const ids = (GameContext.getActiveMatchIds && GameContext.getActiveMatchIds()) || ['red', 'blue'];
     ids.forEach(id => {
         let t = teams[id];
@@ -976,7 +983,7 @@ function updateSpatialHelpers() {
         if (id !== window.activeTeamId && !isReplaying) { if(t.realBeam) t.realBeam.visible = false; if(label) label.style.display = 'none'; return; }
         if (t.wrapper && !t.isDestroyed && t.matchActive !== false) { 
             let correctedY = t.wrapper.position.y - 0.08; t.realBeam.position.set(t.wrapper.position.x, correctedY, t.wrapper.position.z); t.realBeam.scale.set(1, Math.max(0.01, correctedY), 1); t.realBeam.visible = true; 
-            if (isReplaying) { if(label) label.style.display = 'none'; } else {
+            if (isReplaying || splitView) { if(label) label.style.display = 'none'; } else {
                 let pos = t.wrapper.position.clone(); pos.y = pos.y * 0.8; pos.project(camera);
                 if (label) { label.style.left = `${(pos.x*.5+.5)*window.innerWidth}px`; label.style.top = `${(pos.y*-.5+.5)*window.innerHeight}px`; label.style.color = colorCss; label.innerText = `${t.wrapper.position.y.toFixed(1)}m`; label.style.display = 'block'; }
             }
@@ -985,7 +992,7 @@ function updateSpatialHelpers() {
     
     let ghostLabel = document.getElementById('alt-label-ghost');
     const activeFaction = (GameContext.getFaction && GameContext.getFaction(window.activeTeamId)) || window.activeTeamId;
-    if (window.ghostWrapper && window.ghostWrapper.visible && !isReplaying) { 
+    if (window.ghostWrapper && window.ghostWrapper.visible && !isReplaying && !splitView) { 
         let correctedGhostY = window.ghostWrapper.position.y - 0.08; ghostBeam.position.set(window.ghostWrapper.position.x, correctedGhostY, window.ghostWrapper.position.z); ghostBeam.scale.set(1, Math.max(0.01, correctedGhostY), 1); ghostBeam.visible = true; 
         let pos = window.ghostWrapper.position.clone(); pos.y = pos.y * 0.8; pos.project(camera);
         if (ghostLabel) { ghostLabel.style.left = `${(pos.x*.5+.5)*window.innerWidth}px`; ghostLabel.style.top = `${(pos.y*-.5+.5)*window.innerHeight}px`; ghostLabel.style.color = activeFaction === 'blue' ? '#00bcd4' : '#ff0055'; ghostLabel.innerText = `${window.ghostWrapper.position.y.toFixed(1)}m`; ghostLabel.style.display = 'block'; }
@@ -1036,20 +1043,26 @@ function drawTrajectoryLine(teamObj) {
     scene.add(trajectoryMeshes[teamObj.id]);
 
     // 🟢 嚴格遵守 HUD 的包絡線點擊開關
+    const splitView = isMultiViewSplit();
     if (trajectoryMeshes[teamObj.id]) {
-        // 如果是自己，永遠顯示；如果是敵人，必須根據 showEnvelope 決定
-        let currentTeam = typeof tAct !== 'undefined' ? tAct : window.activeTeamId;
-        if (teamObj.id === currentTeam) {
-            trajectoryMeshes[teamObj.id].visible = true;
+        // 分屏時隱藏向前軌跡，讓每個視角只看到同一套場景元素
+        if (splitView) {
+            trajectoryMeshes[teamObj.id].visible = false;
         } else {
-            // 這是關鍵：讀取敵機的 userData 狀態
-            trajectoryMeshes[teamObj.id].visible = !!(teamObj.userData && teamObj.userData.showEnvelope);
+            // 如果是自己，永遠顯示；如果是敵人，必須根據 showEnvelope 決定
+            let currentTeam = typeof tAct !== 'undefined' ? tAct : window.activeTeamId;
+            if (teamObj.id === currentTeam) {
+                trajectoryMeshes[teamObj.id].visible = true;
+            } else {
+                // 這是關鍵：讀取敵機的 userData 狀態
+                trajectoryMeshes[teamObj.id].visible = !!(teamObj.userData && teamObj.userData.showEnvelope);
+            }
         }
     }
     
     // ============================================
     // 👇 下方保留你原本的 Ghost Plane (幽靈戰機) 邏輯
-    if (!isAnimating && !window.replayMode && teamObj.id === tAct && !teamObj.isDestroyed) {
+    if (!splitView && !isAnimating && !window.replayMode && teamObj.id === tAct && !teamObj.isDestroyed) {
         window.ghostWrapper.visible = true;
         window.ghostWrapper.position.copy(teamObj.pathPoints[teamObj.pathPoints.length - 1]);
         window.ghostWrapper.quaternion.copy(teamObj.pathQuats[teamObj.pathQuats.length - 1]);

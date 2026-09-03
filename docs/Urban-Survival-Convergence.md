@@ -2,7 +2,7 @@
 
 **Status:** Active from **2026-08-09**  
 **Scope:** Dense-urban building / ground survival in `js/ai/pilot-ai.js` (and related urban helpers).  
-**Gate for Phase B:** B0 完成；B1 碼已上 live `test_01`（`deferred=seekAngle` 已證實；A.0 **優先目錄 lag／beam＋不安全回退**，針 `tapRoleGate:`）。A.1 **接敵走廊碼已上**（`bakeDualHt: goal=`；逃生 WP 仍沿機鼻）。B2 生存可對看、五角色等 A.2。Gold T150 仍是凍結標準；soft gate 2026-08-25 已關測量波。**tableGlue / collapse 已解凍（2026-08-28）**；**dirtBleed 已解凍（2026-08-28）**。
+**Gate for Phase B:** B0 完成；B1 碼已上 live `test_01`（`deferred=seekAngle` 已證實；A.0 **優先目錄 lag／beam＋不安全回退**，針 `tapRoleGate:`）。A.1 dump **已關**。A.2a **press／extend TAP 目錄閘**（針 `tapRoleGate: role=`；trail `role`／`tap`／`tapGate`）。B2 生存可對看、五角色等 A.2。Gold T150 仍是凍結標準；soft gate 2026-08-25 已關測量波。**tableGlue / collapse 已解凍（2026-08-28）**；**dirtBleed 已解凍（2026-08-28）**。
 
 **Near-term route closed (2026-08-13):** dense-urban survival gate green on live `test_01` (3×T150 building **0/0/0**). Clean A/B vs prior control `Rei_01` was **0/0/0** vs **1/0/1**. Control freeze at that close was **`Rei_02`**.
 

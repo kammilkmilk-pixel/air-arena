@@ -103,6 +103,79 @@
         return st.viewPaneIds.filter((id) => !!liveTeam(id));
     }
 
+    /** Live split (2+ chase panes). Saved combat layout during human planning does not count. */
+    function isSplit() {
+        return getOpenIds().length > 1;
+    }
+
+    function hideSplitExclusiveScene() {
+        if (window.ghostWrapper) window.ghostWrapper.visible = false;
+        if (window.ghostBeam) window.ghostBeam.visible = false;
+        if (typeof trajectoryMeshes !== 'undefined' && trajectoryMeshes) {
+            Object.keys(trajectoryMeshes).forEach((id) => {
+                if (trajectoryMeshes[id]) trajectoryMeshes[id].visible = false;
+            });
+        }
+    }
+
+    function hideSplitExclusiveDom() {
+        const pipper = document.getElementById('lcos-pipper');
+        if (pipper) pipper.style.display = 'none';
+        const ghostHud = document.getElementById('ghost-hud');
+        if (ghostHud) ghostHud.style.display = 'none';
+        const ghostLabel = document.getElementById('alt-label-ghost');
+        if (ghostLabel) ghostLabel.style.display = 'none';
+        const shield = document.getElementById('lcos-drag-shield');
+        if (shield) shield.style.display = 'none';
+        const dynamicHud = document.getElementById('dynamic-hud');
+        if (dynamicHud) dynamicHud.style.display = 'none';
+        const fox1Ring = document.getElementById('fox1-hit-ring');
+        if (fox1Ring) fox1Ring.style.display = 'none';
+        const fox1Boxes = document.getElementById('fox1-missile-boxes');
+        if (fox1Boxes) fox1Boxes.innerHTML = '';
+        const lockLabel = document.getElementById('hud-tgt-lock');
+        if (lockLabel) {
+            lockLabel.classList.remove('is-on');
+            lockLabel.hidden = true;
+        }
+        ['red', 'red2', 'blue', 'blue2'].forEach((id) => {
+            const alt = document.getElementById(`alt-label-${id}`);
+            if (alt) alt.style.display = 'none';
+        });
+        if (typeof updateMissileSeekerBrackets === 'function') {
+            updateMissileSeekerBrackets({ visible: false });
+        }
+        if (typeof updateLcosGunHeatRing === 'function') {
+            updateLcosGunHeatRing(null, 50, 50, 37.4, false);
+        }
+        window.isDraggingLcosRing = false;
+    }
+
+    let _wasSplit = false;
+    function restorePlanningOverlays() {
+        if (typeof GameContext === 'undefined') return;
+        if (GameContext.isAnimating && GameContext.isAnimating()) return;
+        if (GameContext.isReplayMode && GameContext.isReplayMode()) return;
+        const id = GameContext.getActiveTeamId && GameContext.getActiveTeamId();
+        const t = id && GameContext.getTeam && GameContext.getTeam(id);
+        if (t && typeof window.updateTacticalPreview === 'function') {
+            window.updateTacticalPreview(t);
+        }
+    }
+
+    /** Hide aiming ring / ghost plane / planned path so every chase pane shows the same scene. */
+    function applySplitOverlayPolicy() {
+        const split = isSplit();
+        if (split) {
+            hideSplitExclusiveScene();
+            hideSplitExclusiveDom();
+        } else if (_wasSplit) {
+            restorePlanningOverlays();
+        }
+        _wasSplit = split;
+        return split;
+    }
+
     function isOpen(teamId) {
         if (!liveTeam(teamId)) return false;
         // While human planning holds split, seat chrome reflects remembered combat layout.
@@ -157,6 +230,7 @@
             st.viewPaneIds.push(teamId);
         }
         syncSavedFromLive();
+        applySplitOverlayPolicy();
         return getOpenIds();
     }
 
@@ -169,6 +243,7 @@
         } else {
             syncSavedFromLive();
         }
+        applySplitOverlayPolicy();
         return getOpenIds();
     }
 
@@ -212,6 +287,7 @@
         setOpenIds(ids);
         setSavedIds(ids);
         if (!getOpenIds().length) pruneDestroyed();
+        applySplitOverlayPolicy();
         return getOpenIds();
     }
 
@@ -229,6 +305,7 @@
         if (typeof root.uiRefreshTeamModeButtons === 'function') root.uiRefreshTeamModeButtons();
         syncOverlayLabels();
         syncStallOverlays();
+        applySplitOverlayPolicy();
         return getOpenIds();
     }
 
@@ -248,6 +325,7 @@
         if (typeof root.uiRefreshTeamModeButtons === 'function') root.uiRefreshTeamModeButtons();
         syncOverlayLabels();
         syncStallOverlays();
+        applySplitOverlayPolicy();
         return getOpenIds();
     }
 
@@ -405,6 +483,7 @@
     function render(scene, renderer) {
         if (!scene || !renderer) return false;
         pruneDestroyed();
+        applySplitOverlayPolicy();
         const ids = getOpenIds();
         if (!ids.length) {
             if (typeof camera !== 'undefined' && camera) renderer.render(scene, camera);
@@ -587,6 +666,8 @@
     root.AirArenaMultiView = {
         getOpenIds,
         getSavedIds,
+        isSplit,
+        applySplitOverlayPolicy,
         isOpen,
         open,
         close,

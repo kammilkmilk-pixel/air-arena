@@ -145,8 +145,11 @@ async function ensureGameServer(port) {
 async function ensureIngest(port) {
     const health = `http://127.0.0.1:${port}/health`;
     try {
-        await fetchJson(health);
+        const h = await fetchJson(health);
         console.log('[batch-ai] ingest already on :' + port);
+        if (!h || h.dedup !== true) {
+            console.warn('[batch-ai] ingest is old (no dump dedup). Stop the process on :' + port + ' and rerun so tools/dump-ingest.js restarts.');
+        }
         return { child: null };
     } catch (_) { /* start */ }
     console.log('[batch-ai] starting dump ingest on :' + port);
@@ -180,11 +183,28 @@ function findWindowsBrowser() {
     return null;
 }
 
-function openBrowser(url) {
+function chromeBatchProfile(session) {
+    const sid = String(session || 'anon').replace(/[^A-Za-z0-9._-]/g, '').slice(0, 80) || 'anon';
+    const dir = path.join(ROOT, 'tools', 'reports', '.chrome-batch', sid);
+    fs.mkdirSync(dir, { recursive: true });
+    return dir;
+}
+
+function openBrowser(url, session) {
+    const profile = chromeBatchProfile(session);
+    const chromeArgs = [
+        '--user-data-dir=' + profile,
+        '--no-first-run',
+        '--no-default-browser-check',
+        '--disable-session-crashed-bubble',
+        '--new-window',
+        url
+    ];
     if (process.platform === 'win32') {
         const exe = findWindowsBrowser();
         if (exe) {
-            spawn(exe, [url], { detached: true, stdio: 'ignore' }).unref();
+            console.log('[batch-ai] isolated browser profile', profile);
+            spawn(exe, chromeArgs, { detached: true, stdio: 'ignore' }).unref();
             return;
         }
         spawn('powershell', [
@@ -193,7 +213,14 @@ function openBrowser(url) {
         ], { detached: true, stdio: 'ignore' }).unref();
         return;
     }
-    spawn(process.platform === 'darwin' ? 'open' : 'xdg-open', [url], { detached: true, stdio: 'ignore' }).unref();
+    if (process.platform === 'darwin') {
+        spawn('open', ['-na', 'Google Chrome', '--args'].concat(chromeArgs), {
+            detached: true,
+            stdio: 'ignore'
+        }).unref();
+        return;
+    }
+    spawn('xdg-open', [url], { detached: true, stdio: 'ignore' }).unref();
 }
 
 function buildUrl(opts, brains, session) {
@@ -271,7 +298,7 @@ async function runSeries(opts, brains) {
         console.log('[batch-ai] spawn locked', 'alt=' + (opts.alt != null ? opts.alt : defAlt), 'sep=' + (opts.sep != null ? opts.sep : 100));
     }
     console.log('[batch-ai] open', url);
-    if (opts.open) openBrowser(url);
+    if (opts.open) openBrowser(url, session);
     else console.log('[batch-ai] --no-open: paste the URL yourself');
     const perMatch = opts.smoke ? opts.timeoutSec : opts.timeoutSec;
     const st = await waitForDumps(opts.ingestPort, session, opts.n, perMatch * opts.n);

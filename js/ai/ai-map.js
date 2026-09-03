@@ -656,7 +656,7 @@
     }
 
     /**
-     * A.1: among dual L/R streets, pick formable / less-funnel and closer to intercept XZ.
+     * A.1b: among nose-sampled dual L/R streets, pick formable / less-funnel and closer to intercept XZ.
      * No goal → lower pocketRisk (pre-A.1). Both funnel → pocket still dominates.
      */
     function pickDualHomotopyTowardGoal(left, right, goalX, goalZ) {

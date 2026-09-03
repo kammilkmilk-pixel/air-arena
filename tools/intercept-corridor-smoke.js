@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * A.1 intercept corridor: bake heading + dual L/R toward predicted enemy XZ (live pilot-ai.js).
+ * A.1b intercept corridor: bake/dual/graph walk nose; intercept XZ is L/R pick only.
  */
 'use strict';
 
@@ -20,8 +20,10 @@ check(src.includes('    resolveInterceptCorridorHeading('), 'missing resolveInte
 check(src.includes('dualHomotopyCorridors.goalSource) || \'nose\'}'), 'missing bakeDualHt goal= needle');
 check(src.includes('sensor.hasContact ? enemyLeadPos.x'), 'sampleAiMapContext must receive intercept XZ');
 check(src.includes('survivalPressure: this.shouldUseSurvivalWaypoints(coverInfo, {})'), 'survival pressure must keep nose escape');
-check(src.includes('if (dot >= 0.15)'), 'ahead-dot mix floor must stay 0.15');
-check(src.includes('out.x = nx * 0.4 + ix * 0.6'), 'nose/goal mix weights must stay 0.4/0.6');
+check(src.includes('A.1b: bake/dual/graph walk nose'), 'missing A.1b nose-walk');
+check(src.includes('intercept XZ is L/R pick only'), 'A.1b pick-only intercept');
+check(!src.includes('const combatX = interceptH.x'), 'must not walk mixed intercept heading');
+check(!src.includes('out.x = nx * 0.4 + ix * 0.6'), 'must not mix intercept into sample heading');
 check(typeof aiMap.pickDualHomotopyTowardGoal === 'function', 'ai-map missing pickDualHomotopyTowardGoal');
 
 function resolveInterceptCorridorHeading(selfPos, noseFwd, opts = {}) {
@@ -54,18 +56,14 @@ function resolveInterceptCorridorHeading(selfPos, noseFwd, opts = {}) {
     const iz = dz / glen;
     const dot = nx * ix + nz * iz;
     out.useGoalPick = true;
-    if (dot >= 0.15) {
-        out.x = nx * 0.4 + ix * 0.6;
-        out.z = nz * 0.4 + iz * 0.6;
-        out.goalSource = 'intercept';
-    }
+    if (dot >= 0.15) out.goalSource = 'intercept';
     return out;
 }
 
 const ahead = resolveInterceptCorridorHeading({ x: 0, z: 0 }, { x: 1, z: 0 }, { goalX: 80, goalZ: 0 });
-check(ahead.goalSource === 'intercept', 'ahead contact must mix intercept heading');
+check(ahead.goalSource === 'intercept', 'ahead contact labels pick as intercept');
 check(ahead.useGoalPick, 'ahead contact must enable L/R goal pick');
-check(ahead.x > 0.9 && Math.abs(ahead.z) < 1e-6, 'ahead mix stays on intercept axis');
+check(Math.abs(ahead.x - 1) < 1e-6 && Math.abs(ahead.z) < 1e-6, 'ahead sample heading stays nose');
 
 const behind = resolveInterceptCorridorHeading({ x: 0, z: 0 }, { x: 1, z: 0 }, { goalX: -80, goalZ: 0 });
 check(behind.goalSource === 'nose', 'behind contact must keep nose heading');

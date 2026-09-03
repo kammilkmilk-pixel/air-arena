@@ -41,14 +41,29 @@ assert(Ingest.sanitizeToken('a b/c', 8) === 'abc', 'token');
     const server = await Ingest.start(port, '127.0.0.1');
     const session = 'smoke-ingest';
     const filename = 'ai-debug-roster-T2-test_01-smoke.json';
+    const rosterSmoke = {
+        schema: 'air-arena-ai-debug-roster-v2',
+        turn: 2,
+        unitIds: ['red'],
+        rosterSummary: [{ id: 'red', isDestroyed: true, deathCause: 'combat' }],
+        units: { red: { decisionTrail: [{ pos: { x: 1, y: 2, z: 3 } }] } }
+    };
     const post = await req(port, 'POST', '/dump', JSON.stringify({
         filename,
         sessionId: session,
-        roster: { schema: 'air-arena-ai-debug-roster-v2', turn: 2, unitIds: ['red'] }
+        roster: rosterSmoke
     }));
     assert(post.status === 200 && post.json && post.json.ok, 'post');
     const dest = path.join(Ingest.ROOT, session, filename);
     assert(fs.existsSync(dest), 'wrote');
+    const dup = await req(port, 'POST', '/dump', JSON.stringify({
+        filename: 'ai-debug-roster-T2-test_01-smoke-dup.json',
+        sessionId: session,
+        roster: rosterSmoke
+    }));
+    assert(dup.status === 200 && dup.json && dup.json.duplicate === true, 'duplicate skipped');
+    assert(!fs.existsSync(path.join(Ingest.ROOT, session, 'ai-debug-roster-T2-test_01-smoke-dup.json')), 'dup not written');
+    assert(typeof Ingest.rosterFingerprint === 'function', 'fingerprint export');
     const st = await req(port, 'GET', '/status?session=' + session);
     assert(st.json && st.json.count >= 1, 'status count');
     const blocked = await req(port, 'POST', '/dump', JSON.stringify({ filename: 'nope.json' }));
