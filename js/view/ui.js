@@ -11,14 +11,22 @@ let uiTurnComputeBusy = false;
 
 /** Yield so the browser can paint the computing overlay before sync AI / resolution. */
 function uiYieldPaint() {
+    if (window.AirArenaBatchRun && typeof AirArenaBatchRun.isActive === 'function' && AirArenaBatchRun.isActive()) {
+        return Promise.resolve();
+    }
     return new Promise((resolve) => {
-        if (typeof requestAnimationFrame !== 'function') {
-            setTimeout(resolve, 0);
-            return;
+        let done = false;
+        const finish = () => {
+            if (done) return;
+            done = true;
+            resolve();
+        };
+        setTimeout(finish, 50);
+        if (typeof requestAnimationFrame === 'function') {
+            requestAnimationFrame(() => {
+                requestAnimationFrame(finish);
+            });
         }
-        requestAnimationFrame(() => {
-            requestAnimationFrame(() => setTimeout(resolve, 0));
-        });
     });
 }
 
@@ -1861,6 +1869,24 @@ function uiGetAircraftForward(team) {
     };
 }
 
+/** Bank in degrees (+ = right wing up) and body-up Y (< 0 = inverted), from the logical pose. */
+function uiGetAircraftBank(team, quat) {
+    const w = team && team.wrapper;
+    const q = quat || (w && ((w.userData && w.userData.logicalQuat) || w.quaternion));
+    if (!q || typeof THREE === 'undefined') return { bank: null, upY: null };
+    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(q);
+    const up = new THREE.Vector3(0, 1, 0).applyQuaternion(q);
+    const bank = Math.atan2(right.y, up.y) * 180 / Math.PI;
+    return {
+        bank: Number.isFinite(bank) ? Number(bank.toFixed(1)) : null,
+        upY: Number(up.y.toFixed(3))
+    };
+}
+
+function uiRoundOrNull(v, d) {
+    return typeof v === 'number' && Number.isFinite(v) ? Number(v.toFixed(d)) : null;
+}
+
 function uiParseAltitudeLaneFromTree(tree) {
     if (!Array.isArray(tree)) return {};
     let line = null;
@@ -1889,16 +1915,25 @@ function uiParseAltitudeLaneFromTree(tree) {
  * Dump-only TAP compact fields from the decide tree.
  * tap: sel=<state> | skip=<why> | none=<why>
  * tapGate: remainder of tapRoleGate: (catalog needle when TAP picked)
+ * prepTimeout: shoot | hang (missileGate prep-timeout needle)
+ * alleyTime: remainder of alleyTime: (A.2b notice)
  */
 function uiParseTapDumpFromTree(tree) {
-    if (!Array.isArray(tree)) return { tap: null, tapGate: null };
+    if (!Array.isArray(tree)) return { tap: null, tapGate: null, prepTimeout: null, alleyTime: null };
     let tap = null;
     let tapGate = null;
+    let prepTimeout = null;
+    let alleyTime = null;
     for (let i = tree.length - 1; i >= 0; i--) {
         const s = String(tree[i] || '');
         if (!tapGate && s.indexOf('tapRoleGate:') === 0) {
             tapGate = s.replace(/^tapRoleGate:\s*/, '') || null;
         }
+        if (!alleyTime && s.indexOf('alleyTime:') === 0) {
+            alleyTime = s.replace(/^alleyTime:\s*/, '') || null;
+        }
+        if (!prepTimeout && s.indexOf('missileGate: prepTimeoutShoot=') === 0) prepTimeout = 'shoot';
+        else if (!prepTimeout && s.indexOf('missileGate: prepTimeoutHang=') === 0) prepTimeout = 'hang';
         if (!tap && s.indexOf('tacticalApproach:') === 0) {
             const sel = s.match(/\bselected=([A-Za-z0-9_]+)/);
             const skip = s.match(/\btapSkip=([A-Za-z0-9_]+)/);
@@ -1909,9 +1944,9 @@ function uiParseTapDumpFromTree(tree) {
             else if (/\bskipped=1\b/.test(s)) tap = 'skip=other';
             else if (/\bnone\b/.test(s)) tap = 'none=unknown';
         }
-        if (tap && tapGate) break;
+        if (tap && tapGate && prepTimeout && alleyTime) break;
     }
-    return { tap, tapGate };
+    return { tap, tapGate, prepTimeout, alleyTime };
 }
 
 function uiBuildCompactDecisionFrame(teamId, action) {
@@ -1925,8 +1960,25 @@ function uiBuildCompactDecisionFrame(teamId, action) {
     const ur = action.urbanRoute || dbg.urbanRoute || null;
     const laneInfo = uiParseAltitudeLaneFromTree(tree);
     const tapInfo = uiParseTapDumpFromTree(tree);
+    const bankInfo = uiGetAircraftBank(team);
+    // setReady clears pilot inputs; the flown command survives only in the preview chain.
+    const flown = Array.isArray(team.chain) && team.chain[0] ? team.chain[0] : {};
+    const endQuat = Array.isArray(team.pathQuats) && team.pathQuats.length
+        ? team.pathQuats[team.pathQuats.length - 1]
+        : null;
+    const endInfo = endQuat ? uiGetAircraftBank(team, endQuat) : { bank: null, upY: null };
     return {
         turn,
+        bank: bankInfo.bank,
+        upY: bankInfo.upY,
+        bankEnd: endInfo.bank,
+        upYEnd: endInfo.upY,
+        rollTarget: uiRoundOrNull(action.rollTarget, 3),
+        rollCmd: uiRoundOrNull(flown.roll, 3),
+        pitchCmd: uiRoundOrNull(flown.pitch, 3),
+        yawCmd: uiRoundOrNull(flown.yaw, 3),
+        stalled: team.stalled ? 1 : 0,
+        forcedInward: team.airspaceForcedInward ? 1 : 0,
         state: action.state || null,
         thr: typeof action.throttle === 'number' ? action.throttle : null,
         joyX: typeof action.joyX === 'number' ? Number(action.joyX.toFixed(2)) : null,
@@ -1957,7 +2009,9 @@ function uiBuildCompactDecisionFrame(teamId, action) {
         reason: action.reason || null,
         role: team.aiTacticalRole || null,
         tap: tapInfo.tap || null,
-        tapGate: tapInfo.tapGate || null
+        tapGate: tapInfo.tapGate || null,
+        prepTimeout: tapInfo.prepTimeout || null,
+        alleyTime: tapInfo.alleyTime || null
     };
 }
 
@@ -1976,7 +2030,9 @@ function uiEmptyWeaponCounters() {
         flareEsc: 0,
         kills: 0,
         killsGun: 0,
-        killsMsl: 0
+        killsMsl: 0,
+        killsFox1: 0,
+        killsFox2: 0
     };
 }
 
@@ -1988,6 +2044,8 @@ function uiGetAIWeaponCounters(teamId) {
     base.kills = Number(team && team.combatKills) || Number(base.kills) || 0;
     base.killsGun = Number(team && team.combatKillsGun) || Number(base.killsGun) || 0;
     base.killsMsl = Number(team && team.combatKillsMsl) || Number(base.killsMsl) || 0;
+    base.killsFox1 = Number(team && team.combatKillsFox1) || Number(base.killsFox1) || 0;
+    base.killsFox2 = Number(team && team.combatKillsFox2) || Number(base.killsFox2) || 0;
     return base;
 }
 
@@ -2135,6 +2193,9 @@ function uiBuildAIDebugSnapshot(teamId, opts = {}) {
         combatKills: Number(team.combatKills) || 0,
         combatKillsGun: Number(team.combatKillsGun) || 0,
         combatKillsMsl: Number(team.combatKillsMsl) || 0,
+        combatKillsFox1: Number(team.combatKillsFox1) || 0,
+        combatKillsFox2: Number(team.combatKillsFox2) || 0,
+        missileShots: Array.isArray(team.missileShots) ? team.missileShots.slice() : [],
         tacticalRole: team.aiTacticalRole || null,
         tacticalRoleWhy: team.aiTacticalRoleWhy || null,
         tacticalRoleUntilTurn: Number.isFinite(Number(team.aiTacticalRoleUntilTurn))
@@ -2294,8 +2355,36 @@ function uiFormatAIDebugText(teamId, opts = {}) {
         lines.push(
             `weaponCounters: turns=${w.turns} mslQ=${w.mslQ} gunQ=${w.gunQ} illum=${w.illum}` +
             ` atk/prep=${w.mslAtk}/${w.mslPrep} chaff=${w.chaff}(${w.chaffEsc}esc) flare=${w.flare}(${w.flareEsc}esc)` +
-            ` kills=${w.kills || 0}(g${w.killsGun || 0}/m${w.killsMsl || 0})`
+            ` kills=${w.kills || 0}(g${w.killsGun || 0}/m${w.killsMsl || 0}` +
+            `/f1${w.killsFox1 || 0}/f2${w.killsFox2 || 0})`
         );
+    }
+    const shots = Array.isArray(snap.missileShots) ? snap.missileShots : [];
+    if (shots.length) {
+        const sum = (typeof summarizeMissileShots === 'function')
+            ? summarizeMissileShots(shots)
+            : null;
+        if (sum) {
+            lines.push(
+                `missileShots: n=${sum.n} fox1=${sum.fox1} fox2=${sum.fox2}` +
+                ` hit=${sum.hit} coast=${sum.coast} building=${sum.building} exhausted=${sum.exhausted}` +
+                (sum.open ? ` open=${sum.open}` : '') +
+                (sum.fox1Why ? ` f1why=${sum.fox1Why}` : '') +
+                (sum.fox2Why ? ` f2why=${sum.fox2Why}` : '')
+            );
+        }
+        shots.forEach((s) => {
+            if (!s) return;
+            const dist = Number.isFinite(Number(s.dist)) ? Number(s.dist).toFixed(0) : '-';
+            const ang = Number.isFinite(Number(s.angDeg)) ? Number(s.angDeg).toFixed(0) : '-';
+            lines.push(
+                `- T${s.turn || 0} ${s.type || 'fox2'} d=${dist} a=${ang}` +
+                ` ${s.outcome || 'open'}` +
+                (s.why ? ` why=${s.why}` : '') +
+                (s.coastSteer ? ` coastSteer=1` : '') +
+                (s.targetId ? ` tgt=${s.targetId}` : '')
+            );
+        });
     }
     if (trail.length) {
         const meta = snap.trailMeta || {};
@@ -2305,7 +2394,9 @@ function uiFormatAIDebugText(teamId, opts = {}) {
                 `- T${f.turn} ${f.state || '-'} thr=${f.thr} joy=${f.joyX},${f.joyY} alt=${f.alt} ap=${f.ap} ` +
                 `cvr=${f.coverDist}/${f.coverFwd} roof=${f.roof} risk=${f.risk} gate=${f.gate || '-'} ` +
                 `src=${f.urbanSrc || '-'} sc=${f.straightClimb ?? '-'} fac=${f.facade ?? '-'} ` +
-                `role=${f.role || '-'} tap=${f.tap || '-'}${f.tapGate ? ` tapGate=${f.tapGate}` : ''}`
+                `role=${f.role || '-'} tap=${f.tap || '-'}${f.tapGate ? ` tapGate=${f.tapGate}` : ''}` +
+                `${f.prepTimeout ? ` prepTimeout=${f.prepTimeout}` : ''}` +
+                `${f.alleyTime ? ` alleyTime=${f.alleyTime}` : ''}`
             );
         });
     }
@@ -2346,6 +2437,9 @@ function uiBuildAIRosterSnapshot() {
             deathCause: snap.deathCause || null,
             killedBy: snap.killedBy || null,
             combatKills: snap.combatKills || 0,
+            combatKillsFox1: snap.combatKillsFox1 || 0,
+            combatKillsFox2: snap.combatKillsFox2 || 0,
+            missileShots: Array.isArray(snap.missileShots) ? snap.missileShots : [],
             hp: snap.aircraft ? snap.aircraft.hp : null,
             ap: snap.aircraft ? snap.aircraft.ap : null,
             wingmanOrder: snap.wingmanOrder,
@@ -2387,12 +2481,21 @@ function uiFormatAIRosterText(roster) {
             : '';
         const kb = r.killedBy;
         const kbBit = kb && kb.attackerId ? `  killedBy=${kb.attackerId}/${kb.weapon || '-'}` : '';
+        const shotSum = (typeof summarizeMissileShots === 'function')
+            ? summarizeMissileShots(r.missileShots)
+            : null;
+        const shotBit = shotSum && shotSum.n
+            ? `  shots=${shotSum.fox1}/${shotSum.fox2} h/c/b/e=${shotSum.hit}/${shotSum.coast}/${shotSum.building}/${shotSum.exhausted}` +
+                (shotSum.fox1Why ? ` f1why=${shotSum.fox1Why}` : '') +
+                (shotSum.fox2Why ? ` f2why=${shotSum.fox2Why}` : '')
+            : '';
         lines.push(
             `- ${String(r.id).toUpperCase()}  ${r.faction}  ${String(r.control).toUpperCase()}` +
             `  ready=${r.ready} destroyed=${r.isDestroyed}` +
             `  hp=${r.hp ?? '-'} ap=${r.ap ?? '-'}` +
             `  kills=${r.combatKills ?? 0}` +
             kbBit +
+            shotBit +
             `  order=${r.wingmanOrder || '-'} lead=${r.leadId || '-'}` +
             `  target=${r.targetId || '-'} locked=${r.lockedTargetId || '-'}` +
             `  trail=${r.trailCount ?? 0}${r.trailFrozen ? 'F' : ''}` +
@@ -3102,6 +3205,58 @@ function updateJoystickPosition(e) {
 function resetJoystickUI() { const joyHandle = document.getElementById('joystick-handle'); if (joyHandle) joyHandle.style.transform = `translate(0px, 0px)`; }
 
 
+function uiTeamHasFox1Flight(team) {
+    if (typeof teamHasFox1InFlight === 'function') return teamHasFox1InFlight(team);
+    return !!(team && team.activeMissiles && team.activeMissiles.some(
+        (m) => m && m.missileType === 'fox1' && !m.exploded && Number(m.ap) > 0
+    ));
+}
+
+/** M23: FOX-1 hold/support copy lives on the tactical computer, not the ring. */
+function uiApplyFox1TacticalSms(teamObj, opts = {}) {
+    const el = document.getElementById('sms-text-content');
+    const wrap = document.getElementById('sms-text-wrap');
+    if (!el || !teamObj) return false;
+    if (wrap && wrap.classList.contains('sms-alert-force')) return false;
+    const inFlight = opts.inFlight != null ? !!opts.inFlight : uiTeamHasFox1Flight(teamObj);
+    const live = (typeof teamLiveMissileType === 'function') ? teamLiveMissileType(teamObj) : null;
+    if (!inFlight && live !== 'fox1') {
+        if (el.dataset.fox1Sms === '1') {
+            delete el.dataset.fox1Sms;
+            if (!opts.fromDashboard && typeof updateDashboardUI === 'function') {
+                updateDashboardUI(teamObj);
+            }
+        }
+        return false;
+    }
+    let distance = Number(opts.distance);
+    if (!Number.isFinite(distance) && teamObj.wrapper) {
+        const enemyId = (typeof GameContext !== 'undefined' && GameContext.getTargetId && GameContext.getTargetId(teamObj.id))
+            || (typeof GameContext !== 'undefined' && GameContext.getNearestHostileId && GameContext.getNearestHostileId(teamObj.id))
+            || (String(teamObj.id).startsWith('red') ? 'blue' : 'red');
+        const enemyObj = (typeof teams !== 'undefined') ? teams[enemyId] : null;
+        if (enemyObj && enemyObj.wrapper && !enemyObj.isDestroyed) {
+            distance = teamObj.wrapper.position.distanceTo(enemyObj.wrapper.position);
+        }
+    }
+    const sms = (typeof describeFox1SmsLine === 'function')
+        ? describeFox1SmsLine({ distance, inFlight, mode: opts.mode })
+        : { text: '' };
+    if (!sms.text) {
+        if (el.dataset.fox1Sms === '1') {
+            delete el.dataset.fox1Sms;
+            if (!opts.fromDashboard && typeof updateDashboardUI === 'function') {
+                updateDashboardUI(teamObj);
+            }
+        }
+        return false;
+    }
+    el.dataset.fox1Sms = '1';
+    el.innerText = sms.text;
+    el.style.color = sms.color || '#ffeb3b';
+    return true;
+}
+
 function updateDashboardUI(teamObj) {
     let currentTeam = uiCurrentTeamId();
     if (!teamObj || teamObj.id !== currentTeam) return;
@@ -3183,19 +3338,20 @@ function updateDashboardUI(teamObj) {
     }
 
     let isLocked = false;
+    let distance = NaN;
     const enemyId = (GameContext.getTargetId && GameContext.getTargetId(teamObj.id))
         || (GameContext.getNearestHostileId && GameContext.getNearestHostileId(teamObj.id))
         || (String(teamObj.id).startsWith('red') ? 'blue' : 'red');
     const enemyObj = teams[enemyId];
     if (teamObj.wrapper && enemyObj && enemyObj.wrapper && !enemyObj.isDestroyed) {
-        let distance = teamObj.wrapper.position.distanceTo(enemyObj.wrapper.position); let forward = new THREE.Vector3(0, 0, 1).applyQuaternion(teamObj.wrapper.quaternion).normalize(); let angle = forward.angleTo(new THREE.Vector3().subVectors(enemyObj.wrapper.position, teamObj.wrapper.position).normalize());
+        distance = teamObj.wrapper.position.distanceTo(enemyObj.wrapper.position); let forward = new THREE.Vector3(0, 0, 1).applyQuaternion(teamObj.wrapper.quaternion).normalize(); let angle = forward.angleTo(new THREE.Vector3().subVectors(enemyObj.wrapper.position, teamObj.wrapper.position).normalize());
         isLocked = teamObj.weapon === 'gun'
             ? (distance <= (typeof GUN_RANGE !== 'undefined' ? GUN_RANGE : 70) && angle <= Math.PI/12)
             : (() => {
                 const live = typeof teamLiveMissileType === 'function' ? teamLiveMissileType(teamObj) : 'fox2';
                 if (live === 'fox1') {
                     const cfg = typeof getMissileWeaponConfig === 'function' ? getMissileWeaponConfig('fox1') : (CONFIG.weapons.fox1 || {});
-                    const minR = Number(cfg.minArmingRange) || 70;
+                    const minR = Number(cfg.minArmingRange) || 50;
                     const maxR = Number(cfg.seekerRange) || 200;
                     return distance >= minR && distance <= maxR && angle <= (Number(cfg.seekerAngle) || Math.PI / 14);
                 }
@@ -3204,19 +3360,24 @@ function updateDashboardUI(teamObj) {
     }
 
     let elSmsContent = document.getElementById('sms-text-content');
-    if (elSmsContent) {
-        const liveType = teamObj.weapon === 'missile'
-            ? (typeof teamLiveMissileType === 'function' ? teamLiveMissileType(teamObj) : 'fox2')
-            : null;
-        let wpnName = teamObj.weapon === 'gun' ? '機砲' : (liveType === 'fox1' ? 'FOX-1' : 'FOX-2');
-        let statusText = '[就緒]';
-        if (teamObj.wpnQueued) { statusText = '[已排程]'; } 
-        else if (teamObj.weapon === 'missile') {
-            let armedCount = teamObj.pylons ? teamObj.pylons.filter(p => p.state === 'armed').length : 0; let poweringCount = teamObj.pylons ? teamObj.pylons.filter(p => p.state === 'powering').length : 0;
-            statusText = armedCount > 0 ? (isLocked ? '[已鎖定]' : '[就緒]') : (poweringCount > 0 ? '[開機中]' : '[未通電]');
-        } else { statusText = isLocked ? '[已鎖定]' : '[就緒]'; wpnName = `機砲 [INF]`; }
-        elSmsContent.innerText = `狀態 ${statusText} ${wpnName}`;
-        elSmsContent.style.color = '#ffeb3b';
+    const smsAlertHold = !!(document.getElementById('sms-text-wrap')
+        && document.getElementById('sms-text-wrap').classList.contains('sms-alert-force'));
+    if (elSmsContent && !smsAlertHold) {
+        const foxSmsOn = uiApplyFox1TacticalSms(teamObj, { fromDashboard: true, distance });
+        if (!foxSmsOn) {
+            const liveType = teamObj.weapon === 'missile'
+                ? (typeof teamLiveMissileType === 'function' ? teamLiveMissileType(teamObj) : 'fox2')
+                : null;
+            let wpnName = teamObj.weapon === 'gun' ? '機砲' : (liveType === 'fox1' ? 'FOX-1' : 'FOX-2');
+            let statusText = '[就緒]';
+            if (teamObj.wpnQueued) { statusText = '[已排程]'; }
+            else if (teamObj.weapon === 'missile') {
+                let armedCount = teamObj.pylons ? teamObj.pylons.filter(p => p.state === 'armed').length : 0; let poweringCount = teamObj.pylons ? teamObj.pylons.filter(p => p.state === 'powering').length : 0;
+                statusText = armedCount > 0 ? (isLocked ? '[已鎖定]' : '[就緒]') : (poweringCount > 0 ? '[開機中]' : '[未通電]');
+            } else { statusText = isLocked ? '[已鎖定]' : '[就緒]'; wpnName = `機砲 [INF]`; }
+            elSmsContent.innerText = `狀態 ${statusText} ${wpnName}`;
+            elSmsContent.style.color = '#ffeb3b';
+        }
     }
     uiUpdateSmsRadarLockWarn(teamObj);
 
@@ -3421,6 +3582,8 @@ function uiEvalHostileSarhLock(selfTeam) {
             targetPos: selfPos,
             chaffList,
             step: (typeof performance !== 'undefined' ? performance.now() * 0.06 : 0),
+            shooterId: foe.id,
+            targetId: selfId,
             losBlocked
         });
         if (support && support.supported) {
@@ -3474,8 +3637,20 @@ function uiToggleWeaponFireQueue(teamId = null) {
                 ? pylonWeaponType(t.pylons.find((p) => p.state === 'armed'))
                 : 'fox2';
             const ok = GameContext.stateMachine.toggleMissileQueue(currentTeam);
-            if (!wasQueued && !ok && liveType === 'fox1') {
-                showSMSAlert('🛑 FOX-1 需在 70–200m 內鎖定', '#ff0055');
+            if (!wasQueued && !ok) {
+                const enemyId = (GameContext.getTargetId && GameContext.getTargetId(currentTeam))
+                    || (GameContext.getNearestHostileId && GameContext.getNearestHostileId(currentTeam));
+                const enemy = enemyId && teams[enemyId];
+                const dist = (t.wrapper && enemy && enemy.wrapper && !enemy.isDestroyed)
+                    ? t.wrapper.position.distanceTo(enemy.wrapper.position)
+                    : NaN;
+                const gate = (typeof describeMissileLaunchRange === 'function')
+                    ? describeMissileLaunchRange({ missileType: liveType, distance: dist })
+                    : { reason: 'tooFar' };
+                const deny = (typeof missileLaunchRangeSms === 'function')
+                    ? missileLaunchRangeSms(gate.reason)
+                    : (gate.reason === 'tooClose' ? '少於最短射程' : '未進入射程');
+                showSMSAlert(deny || '未進入射程', '#ff0055');
             } else {
                 const label = liveType === 'fox1' ? 'FOX-1' : 'FOX-2';
                 showSMSAlert(

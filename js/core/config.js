@@ -135,7 +135,7 @@ const CONFIG = {
             seekerAngle: Math.PI / 12,
             seekerMinHeat: 16,
             fuseRange: 2.8,
-            minArmingRange: 35,
+            minArmingRange: 20,
             maxFlightRange: 120,
             frontAspectDot: 0.40,
             frontAspectHeatFloor: 0.04,
@@ -168,7 +168,7 @@ const CONFIG = {
             seekerRange: 200,
             seekerAngle: Math.PI / 14,
             fuseRange: 3.0,
-            minArmingRange: 70,
+            minArmingRange: 50,
             maxFlightRange: 200,
             /** Illumination LOS min (not arming) — keep support when closing after launch. */
             supportMinRange: 8,
@@ -229,8 +229,14 @@ const CONFIG = {
             expandPerStep: 0.11,
             /** Soft cap so turn-2+ clouds don't grow forever. */
             cloudRadiusMax: 32,
-            /** When illumination hits cloud: multiply support angle. */
+            /** When illumination hits cloud: multiply support angle (HUD / leftover shrink). */
             gateShrinkMult: 0.55,
+            /** M24: LOS through cloud may drop SARH support (nose-on can lose lock). */
+            breakSupportOnLos: true,
+            /** Trial: P(break | LOS through cloud). 1 zeroed gold FOX-1 (all why=chaff). */
+            breakChance: 0.5,
+            /** How many WEGO turns one successful break lasts before a new roll. */
+            breakTurns: 1,
             flickerHz: 14,
             /** Visual stage (turns 0-indexed ageTurn = floor(ageSteps/stepsPerTurn)). */
             visual: {
@@ -267,8 +273,9 @@ const CONFIG = {
                 requireLos: true,
                 illuminateHold: false,
                 preferStandoff: false,
-                // Soft: opening/prep spray used wider cones; keep launch near seeker.
-                maxLaunchAngleDeg: 28
+                // Rear/side fire door 10°. Front squeeze still 15×0.40≈6°. Seeker 15°.
+                // Last 6° n=6: mslQ without spawn. 11–12° waste stays gated. Pick 36° stays.
+                maxLaunchAngleDeg: 10
             },
             fox1: {
                 dualSalvoOk: false,

@@ -141,7 +141,9 @@ function executeTurnSimultaneously() {
                 AirArenaHostAuthority.broadcastTurn(ctx.log);
             }
             window.dispatchEvent(new CustomEvent('EnginePhaseChanged', { detail: { phase: 'playing', maxLog: battleLog.length } }));
-            if (GameContext.services.startCombatAnimation) {
+            if (batchFast && typeof finishTurnSimultaneously === 'function') {
+                finishTurnSimultaneously();
+            } else if (GameContext.services.startCombatAnimation) {
                 GameContext.callService('startCombatAnimation');
             } else {
                 GameContext.setAnimating(true);
@@ -158,15 +160,28 @@ function executeTurnSimultaneously() {
         }
     };
 
-    // Double-rAF + timeout: style flush, first paint of CSS spinner, then heavy sync work.
+    const batchFast = !!(window.AirArenaBatchRun && typeof AirArenaBatchRun.isActive === 'function'
+        && AirArenaBatchRun.isActive()
+        && AirArenaBatchRun.readQuery
+        && AirArenaBatchRun.readQuery().batchFast);
+    if (batchFast) {
+        runHeavy();
+        return;
+    }
+
+    let started = false;
+    const kick = () => {
+        if (started) return;
+        started = true;
+        setTimeout(runHeavy, 0);
+    };
+    setTimeout(kick, 80);
     if (typeof requestAnimationFrame === 'function') {
         requestAnimationFrame(() => {
-            requestAnimationFrame(() => {
-                setTimeout(runHeavy, 0);
-            });
+            requestAnimationFrame(kick);
         });
     } else {
-        setTimeout(runHeavy, 0);
+        kick();
     }
 }
 window.executeTurnSimultaneously = executeTurnSimultaneously;

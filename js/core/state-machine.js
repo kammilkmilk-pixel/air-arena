@@ -45,20 +45,34 @@ GameContext.stateMachine = {
         const attacker = this.getTeamOrNull(info.attackerId);
         if (!attacker) return true;
         attacker.combatKills = (Number(attacker.combatKills) || 0) + 1;
+        const mslKill = (typeof isMissileKillWeapon === 'function')
+            ? isMissileKillWeapon(info.weapon)
+            : (info.weapon === 'missile' || info.weapon === 'fox1' || info.weapon === 'fox2');
         if (info.weapon === 'gun') attacker.combatKillsGun = (Number(attacker.combatKillsGun) || 0) + 1;
-        else if (info.weapon === 'missile') attacker.combatKillsMsl = (Number(attacker.combatKillsMsl) || 0) + 1;
+        else if (mslKill) {
+            attacker.combatKillsMsl = (Number(attacker.combatKillsMsl) || 0) + 1;
+            if (info.weapon === 'fox1') {
+                attacker.combatKillsFox1 = (Number(attacker.combatKillsFox1) || 0) + 1;
+            } else if (info.weapon === 'fox2') {
+                attacker.combatKillsFox2 = (Number(attacker.combatKillsFox2) || 0) + 1;
+            }
+        }
         if (!attacker.aiWeaponCounters) {
             attacker.aiWeaponCounters = {
                 schema: 'air-arena-weapon-counters-v1',
                 turns: 0, mslQ: 0, gunQ: 0, illum: 0, mslAtk: 0, mslPrep: 0,
                 chaff: 0, flare: 0, chaffEsc: 0, flareEsc: 0,
-                kills: 0, killsGun: 0, killsMsl: 0
+                kills: 0, killsGun: 0, killsMsl: 0, killsFox1: 0, killsFox2: 0
             };
         }
         const c = attacker.aiWeaponCounters;
         c.kills = (Number(c.kills) || 0) + 1;
         if (info.weapon === 'gun') c.killsGun = (Number(c.killsGun) || 0) + 1;
-        else if (info.weapon === 'missile') c.killsMsl = (Number(c.killsMsl) || 0) + 1;
+        else if (mslKill) {
+            c.killsMsl = (Number(c.killsMsl) || 0) + 1;
+            if (info.weapon === 'fox1') c.killsFox1 = (Number(c.killsFox1) || 0) + 1;
+            else if (info.weapon === 'fox2') c.killsFox2 = (Number(c.killsFox2) || 0) + 1;
+        }
         return true;
     },
 
@@ -159,12 +173,12 @@ GameContext.stateMachine = {
         return true;
     },
 
-    /** Tangent/outbound cross spawn must not be snapped nose-on at AI enable. */
+    /** Tangent/outbound/chase lab spawn must not be snapped nose-on at AI enable. */
     keepSpawnFacing() {
         try {
             const cfg = GameContext.getMatchConfig && GameContext.getMatchConfig();
             const facing = cfg && cfg.spawnFacing;
-            return facing === 'tangent' || facing === 'outbound';
+            return facing === 'tangent' || facing === 'outbound' || facing === 'chase';
         } catch (_) {
             return false;
         }
@@ -761,9 +775,7 @@ GameContext.stateMachine = {
                 if (!this.queueAction(teamId, 'gun')) this.clearQueuedAction(teamId);
             }
             else if (action.queueAction === 'missile') {
-                const armedCount = t.pylons ? t.pylons.filter(p => p.state === 'armed').length : 0;
-                if (armedCount > 0) this.toggleMissileQueue(teamId);
-                else this.clearQueuedAction(teamId);
+                if (!this.queueMissileFromPilot(teamId, action)) this.clearQueuedAction(teamId);
             }
             else if (action.queueAction === 'flare') {
                 if (!t.flaresArmed && t.flareAmmo > 0 && this.queueAction(teamId, 'flare')) {
@@ -844,6 +856,7 @@ GameContext.stateMachine = {
         return this.queueAction(teamId, 'gun');
     },
 
+    /** Human SMS button: toggle + 綠燈 range. AI must not use this — it vetoes committed shots. */
     toggleMissileQueue(teamId) {
         const t = this.getTeamOrNull(teamId);
         if (!t || t.weapon !== 'missile' || !t.pylons) return false;
@@ -857,21 +870,47 @@ GameContext.stateMachine = {
         const liveType = typeof pylonWeaponType === 'function'
             ? pylonWeaponType(armed[0])
             : (armed[0].weaponType || 'fox2');
-        // FOX-1: require target in 70–200 envelope before queue.
-        if (liveType === 'fox1') {
-            const enemy = combatEnemyOf
-                ? combatEnemyOf(teamId)
-                : (GameContext.getNearestHostileId && teams[GameContext.getNearestHostileId(teamId)]);
-            if (!enemy || !enemy.wrapper || enemy.isDestroyed || !t.wrapper) return false;
-            const cfg = typeof getMissileWeaponConfig === 'function'
-                ? getMissileWeaponConfig('fox1')
-                : (CONFIG.weapons.fox1 || {});
-            const dist = t.wrapper.position.distanceTo(enemy.wrapper.position);
-            const minR = Number(cfg.minArmingRange) || 70;
-            const maxR = Number(cfg.seekerRange) || 200;
-            if (dist < minR || dist > maxR) return false;
-            t.fox1SupportTargetId = enemy.id;
+        const enemy = combatEnemyOf
+            ? combatEnemyOf(teamId)
+            : (GameContext.getNearestHostileId && teams[GameContext.getNearestHostileId(teamId)]);
+        const dist = (t.wrapper && enemy && enemy.wrapper && !enemy.isDestroyed)
+            ? t.wrapper.position.distanceTo(enemy.wrapper.position)
+            : NaN;
+        const gate = (typeof describeMissileLaunchRange === 'function')
+            ? describeMissileLaunchRange({ missileType: liveType, distance: dist })
+            : { ok: liveType !== 'fox1' || (Number.isFinite(dist) && dist >= 70 && dist <= 200) };
+        if (!gate.ok) return false;
+        if (liveType === 'fox1' && enemy) t.fox1SupportTargetId = enemy.id;
+        t.queuedMissileType = liveType;
+        return this.queueAction(teamId, 'missile');
+    },
+
+    /**
+     * AI apply: honor decide/fire-door commit. Do not toggle, do not SMS-range veto.
+     * Still needs an armed pylon — powering/standby cannot leave the rail.
+     */
+    queueMissileFromPilot(teamId, action = {}) {
+        const t = this.getTeamOrNull(teamId);
+        if (!t || t.isDestroyed || !t.pylons) return false;
+        if (t.weapon !== 'missile') {
+            if (!this.setWeaponMode(teamId, 'missile')) return false;
         }
+        const armed = t.pylons.filter((item) => item && item.state === 'armed');
+        if (!armed.length) return false;
+        const want = action.missileType
+            ? (typeof sanitizePylonWeapon === 'function' ? sanitizePylonWeapon(action.missileType) : action.missileType)
+            : null;
+        const typed = want
+            ? armed.filter((p) => (typeof pylonWeaponType === 'function' ? pylonWeaponType(p) : p.weaponType) === want)
+            : armed;
+        const livePylon = typed[0] || armed[0];
+        const liveType = typeof pylonWeaponType === 'function'
+            ? pylonWeaponType(livePylon)
+            : (livePylon.weaponType || 'fox2');
+        const enemy = combatEnemyOf
+            ? combatEnemyOf(teamId)
+            : (GameContext.getNearestHostileId && teams[GameContext.getNearestHostileId(teamId)]);
+        if (liveType === 'fox1' && enemy) t.fox1SupportTargetId = enemy.id;
         t.queuedMissileType = liveType;
         return this.queueAction(teamId, 'missile');
     },
@@ -1005,6 +1044,15 @@ GameContext.stateMachine = {
     pruneActiveMissiles(teamId) {
         const t = this.getTeamOrNull(teamId);
         if (!t || !t.activeMissiles) return false;
+        const turn = (GameContext.state && GameContext.state.currentTurn) || 0;
+        t.activeMissiles.forEach((m) => {
+            if (!m || m.shotClosed) return;
+            if (!m.exploded && !(Number(m.ap) <= 0)) return;
+            if (typeof closeMissileShot !== 'function') return;
+            if (m.exploded && m.lostTarget) closeMissileShot(t, m, 'coast', turn);
+            else if (Number(m.ap) <= 0 && m.lostTarget) closeMissileShot(t, m, 'coast', turn);
+            else closeMissileShot(t, m, 'exhausted', turn);
+        });
         t.activeMissiles = t.activeMissiles.filter(m => !m.exploded && m.ap > 0);
         return true;
     },

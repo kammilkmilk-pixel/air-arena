@@ -219,6 +219,34 @@ function updateMissileSeekerBrackets(opts) {
     el.style.opacity = '0.95';
 }
 
+function ensureFox1RingCaption() {
+    let cap = document.getElementById('fox1-hit-ring-cap');
+    if (cap) return cap;
+    cap = document.createElement('div');
+    cap.id = 'fox1-hit-ring-cap';
+    cap.style.cssText = 'position:fixed;pointer-events:none;z-index:8051;transform:translate(-50%,0);display:none;font:11px/1.15 "Share Tech Mono",monospace;letter-spacing:0.12em;text-shadow:0 0 5px #000;white-space:nowrap;';
+    document.body.appendChild(cap);
+    return cap;
+}
+
+function hideFox1RingCaption() {
+    const cap = document.getElementById('fox1-hit-ring-cap');
+    if (cap) cap.style.display = 'none';
+}
+
+function syncFox1RingCaption(x, y, text, color) {
+    const cap = ensureFox1RingCaption();
+    if (!text) {
+        cap.style.display = 'none';
+        return;
+    }
+    cap.textContent = text;
+    cap.style.display = 'block';
+    cap.style.left = `${x}px`;
+    cap.style.top = `${y}px`;
+    cap.style.color = color || '#9ec0dc';
+}
+
 /** FOX-1 SARH illuminate ring = unstable nose/look lock cone + missile status boxes.
  *  Separate from LCOS/方向盤 seeker brackets (those stay on for FOX-1 too). */
 function updateFox1SupportHud(team, enemy, enemyPos, enemyProj, isObscured) {
@@ -238,12 +266,15 @@ function updateFox1SupportHud(team, enemy, enemyPos, enemyProj, isObscured) {
     }
 
     const live = (typeof teamLiveMissileType === 'function') ? teamLiveMissileType(team) : null;
-    const hasFox1Flight = !!(team && team.activeMissiles && team.activeMissiles.some(
-        (m) => m && m.missileType === 'fox1' && !m.exploded && m.ap > 0 && m.active
-    ));
+    const hasFox1Flight = (typeof teamHasFox1InFlight === 'function')
+        ? teamHasFox1InFlight(team)
+        : !!(team && team.activeMissiles && team.activeMissiles.some(
+            (m) => m && m.missileType === 'fox1' && !m.exploded && Number(m.ap) > 0
+        ));
     const showFox1 = !!(team && team.weapon === 'missile' && (live === 'fox1' || hasFox1Flight));
     if (!showFox1 || !team || !team.wrapper) {
         ring.style.display = 'none';
+        hideFox1RingCaption();
         boxHost.innerHTML = '';
         return;
     }
@@ -282,6 +313,8 @@ function updateFox1SupportHud(team, enemy, enemyPos, enemyProj, isObscured) {
             targetPos: enemyPos,
             chaffList,
             step: nowStep,
+            shooterId: team && team.id,
+            targetId: enemy && enemy.id,
             losBlocked
         });
     }
@@ -298,6 +331,7 @@ function updateFox1SupportHud(team, enemy, enemyPos, enemyProj, isObscured) {
     const lookProj = lookWorld.clone().project(camera);
     if (lookProj.z > 1) {
         ring.style.display = 'none';
+        hideFox1RingCaption();
     } else {
         const sx = (lookProj.x * 0.5 + 0.5) * window.innerWidth;
         const sy = (lookProj.y * -0.5 + 0.5) * window.innerHeight;
@@ -308,21 +342,38 @@ function updateFox1SupportHud(team, enemy, enemyPos, enemyProj, isObscured) {
         if (window._fox1RingR == null) window._fox1RingR = pxR;
         window._fox1RingR += (pxR - window._fox1RingR) * 0.28;
 
-        const gateHot = !!(support.supported || (support.inRange && support.inGate));
-        const col = gateHot ? '#ff0055' : '#ffaa00';
+        const physicsHot = !!(support.supported || (support.inRange && support.inGate));
+        const ringMode = (typeof describeFox1RingMode === 'function')
+            ? describeFox1RingMode({ distance: enemyDist, inFlight: hasFox1Flight })
+            : {
+                mode: hasFox1Flight ? 'support' : ((enemyDist >= 70) ? 'fire' : 'hold'),
+                lookFire: !hasFox1Flight && enemyDist >= 70,
+                lookSupport: !!(hasFox1Flight || enemyDist < 70)
+            };
+        // M23: pre-launch <70 never looks fireable. In-flight 8–200 stays bright for support.
+        const holdLook = ringMode.mode === 'hold';
+        const lookHot = holdLook ? false : physicsHot;
+        const col = holdLook ? '#7aa2c8' : (lookHot ? '#ff0055' : '#ffaa00');
         ring.style.display = 'block';
         ring.style.left = `${sx}px`;
         ring.style.top = `${sy}px`;
         ring.style.width = `${window._fox1RingR * 2}px`;
         ring.style.height = `${window._fox1RingR * 2}px`;
+        ring.style.borderStyle = holdLook ? 'dashed' : 'solid';
+        ring.style.borderWidth = holdLook ? '1.5px' : '2px';
         ring.style.borderColor = col;
-        ring.style.opacity = String(
-            (support.breathe != null ? support.breathe : 1) *
-            (support.flicker && (Date.now() % 160 < 80) ? 0.35 : 0.88)
-        );
-        ring.style.boxShadow = gateHot
-            ? '0 0 10px rgba(255,0,85,0.55)'
-            : '0 0 6px rgba(255,170,0,0.35)';
+        const breathe = support.breathe != null ? support.breathe : 1;
+        const flickerDim = support.flicker && (Date.now() % 160 < 80) ? 0.35 : 1;
+        ring.style.opacity = String(breathe * flickerDim * (holdLook ? 0.42 : 0.88));
+        ring.style.boxShadow = holdLook
+            ? '0 0 4px rgba(122,162,200,0.28)'
+            : (lookHot
+                ? '0 0 10px rgba(255,0,85,0.55)'
+                : '0 0 6px rgba(255,170,0,0.35)');
+        hideFox1RingCaption();
+        if (typeof uiApplyFox1TacticalSms === 'function') {
+            uiApplyFox1TacticalSms(team, { distance: enemyDist, inFlight: hasFox1Flight });
+        }
     }
 
     // Missile boxes (still track missile / enemy)
@@ -916,7 +967,7 @@ window.updateDynamicHUD = function() {
             const missileLockRange = liveMsl === 'fox1'
                 ? (Number(fox1Cfg.seekerRange) || 200)
                 : ((typeof SEEKER_RANGE !== 'undefined' && SEEKER_RANGE > 0) ? SEEKER_RANGE : 120);
-            const missileLockMin = liveMsl === 'fox1' ? (Number(fox1Cfg.minArmingRange) || 70) : 0;
+            const missileLockMin = liveMsl === 'fox1' ? (Number(fox1Cfg.minArmingRange) || 50) : 0;
             const missileLockAng = liveMsl === 'fox1'
                 ? (Number(fox1Cfg.seekerAngle) || Math.PI / 14)
                 : Math.PI / 12;
@@ -1248,7 +1299,7 @@ window.updateDynamicHUD = function() {
                 const liveM = (typeof teamLiveMissileType === 'function') ? teamLiveMissileType(t) : 'fox2';
                 const fox1c = (typeof getMissileWeaponConfig === 'function') ? getMissileWeaponConfig('fox1') : {};
                 const hitMax = liveM === 'fox1' ? (Number(fox1c.seekerRange) || 200) : missileHitRange;
-                const hitMin = liveM === 'fox1' ? (Number(fox1c.minArmingRange) || 70) : 8;
+                const hitMin = liveM === 'fox1' ? (Number(fox1c.minArmingRange) || 50) : 8;
                 const hitAng = liveM === 'fox1' ? (Number(fox1c.seekerAngle) || Math.PI / 14) : missileHitAngle;
                 const inRange =
                     dist <= hitMax &&

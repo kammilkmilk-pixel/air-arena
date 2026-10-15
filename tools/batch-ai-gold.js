@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 'use strict';
 /**
- * Gold A.1 A/B cell: n=3, City Map, dense-urban 2v2, cross + tangent, alt 80 / sep 200.
+ * Gold A.1 A/B cell: n=3, City Map, dense-urban 2v2, cross + tangent, alt 80 / sep 283 (斜鄰 200).
+ * Survival / building regress only. Do not farm unique T150 for a rare needle
+ * (leftover rematch + smoke is the knife gate). Stop if batch 1 is a known leftover.
  *
  *   npm.cmd run batch:ai:gold -- --brains test_01
  *   npm.cmd run batch:ai:gold -- --brains Rei_03
@@ -17,7 +19,7 @@ const extra = process.argv.slice(2);
 const forced = [
     '--n', '3',
     '--alt', '80',
-    '--sep', '200',
+    '--sep', '283',
     '--spawn-formation', 'cross',
     '--spawn-facing', 'tangent',
     '--no-spawn-mix'

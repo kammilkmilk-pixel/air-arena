@@ -417,6 +417,24 @@ function main() {
     assert.ok(src.includes('fox1ReattackSetup'), 'pilot-ai missing fox1ReattackSetup');
     assert.ok(src.includes('peekNextMissileType'), 'pilot-ai missing peekNextMissileType');
     assert.ok(src.includes('gateFox1MissileShoot'), 'pilot-ai missing gateFox1MissileShoot');
+    assert.ok(src.includes('gateFox2MissileShoot'), 'pilot-ai missing gateFox2MissileShoot');
+    assert.ok(src.includes('fox2LaunchAngleOk'), 'pilot-ai uses launch-angle fail-closed');
+    assert.ok(src.includes("reasons.push('nogeom')"), 'FOX-2 commit fail-closed without launch geom');
+    assert.ok(!/let ang = ctx\.angleDeg/.test(src), 'FOX-2 commit must not fall back to decide angle');
+    assert.ok(src.includes('fox2IsFrontAspect') || src.includes('frontAspect'), 'pilot-ai front-aspect squeeze');
+    const pipeSrc = fs.readFileSync(path.join(__dirname, '../js/logic/combat-pipeline.js'), 'utf8');
+    assert.ok(pipeSrc.includes('fox2LaunchAngleOk'), 'pipeline blocks FOX-2 off-cone launch');
+    assert.ok(pipeSrc.includes('fox2SameTurnCommitOk'), 'pipeline honors same-turn FOX-2 commit');
+    assert.ok(src.includes('fox2LaunchCommit'), 'pilot-ai stamps FOX-2 launch commit');
+    assert.ok(pipeSrc.includes('frontAspect') || pipeSrc.includes('tgtFwd') || pipeSrc.includes('fox2ReadLaunchPose'), 'pipeline uses launch pose');
+    const smSrc = fs.readFileSync(path.join(__dirname, '../js/core/state-machine.js'), 'utf8');
+    assert.ok(smSrc.includes('queueMissileFromPilot'), 'AI missile apply has dedicated queue');
+    assert.ok(/queueAction === 'missile'[\s\S]*queueMissileFromPilot/.test(smSrc), 'AI missile apply skips SMS toggle');
+    assert.ok(smSrc.includes('toggleMissileQueue'), 'human SMS toggle stays');
+    assert.strictEqual(CONFIG.doctrine.munition.fox2.maxLaunchAngleDeg, 10, 'FOX-2 rear/side fire = 10°');
+    assert.strictEqual(CONFIG.weapons.fox2.frontAspectSeekerAngleMult, 0.40, 'front seeker squeeze stays 0.40');
+    const seekerDeg = (CONFIG.weapons.fox2.seekerAngle * 180 / Math.PI);
+    assert.ok(Math.abs(seekerDeg - 15) < 0.1, `seeker ${seekerDeg}°`);
 
     console.log('munition-doctrine-smoke: PASS');
 }

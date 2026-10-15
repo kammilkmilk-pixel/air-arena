@@ -10,6 +10,18 @@ function recordCombatHit(ctx, victimId, attackerId, weapon, step) {
     ctx.log.damageFrom[victimId] = { attackerId, weapon: weapon || 'unknown', friendly, step };
 }
 
+function combatCurrentTurn() {
+    return (typeof GameContext !== 'undefined' && GameContext.state)
+        ? GameContext.state.currentTurn
+        : 0;
+}
+
+function finishLiveMissileShot(team, missile, outcome) {
+    if (typeof closeMissileShot === 'function') {
+        closeMissileShot(team, missile, outcome, combatCurrentTurn());
+    }
+}
+
 function resolveGunsForStep(step, ratio, ctx) {
     combatActiveIds().forEach(id => {
         let t = teams[id]; let enemy = combatEnemyOf(id);
@@ -171,6 +183,27 @@ function resolveMissilesForStep(step, ratio, ctx) {
                     activeM.launchPos = activeM.pos.clone();
                     activeM.traveled = 0;
                     activeM.guided = false;
+                    const tgtId = activeM.supportTargetId
+                        || (preferredEnemy && preferredEnemy.id)
+                        || null;
+                    const tgtTeam = (tgtId && typeof teams !== 'undefined' && teams[tgtId])
+                        ? teams[tgtId]
+                        : preferredEnemy;
+                    let tgtPos = null;
+                    if (tgtTeam && tgtTeam.pathPoints && tgtTeam.pathPoints.length) {
+                        tgtPos = getPosAt(ratio, tgtTeam.pathPoints);
+                    } else if (tgtTeam && tgtTeam.wrapper && tgtTeam.wrapper.position) {
+                        tgtPos = tgtTeam.wrapper.position;
+                    }
+                    const tgtFwd = tgtTeam && tgtTeam.wrapper
+                        ? (tgtTeam.wrapper.quaternion || tgtTeam.wrapper.forward)
+                        : null;
+                    const geom = (typeof computeMissileLaunchGeometry === 'function')
+                        ? computeMissileLaunchGeometry(activeM.pos, activeM.quat, tgtPos, tgtFwd)
+                        : { dist: null, angDeg: null, frontAspect: false };
+                    if (typeof openMissileShot === 'function') {
+                        openMissileShot(t, activeM, geom, combatCurrentTurn(), tgtId);
+                    }
                     ctx.log[`${id}MslTracks`][activeM.pylonId].push({ pos: activeM.pos.clone(), quat: activeM.quat.clone() });
                     return; 
                 }
@@ -199,6 +232,9 @@ function resolveMissilesForStep(step, ratio, ctx) {
                     ratio,
                     heatSources,
                     step,
+                    turn: (typeof GameContext !== 'undefined' && GameContext.state)
+                        ? GameContext.state.currentTurn
+                        : undefined,
                     chaffList: (ctx.chaff && ctx.chaff[step]) ? ctx.chaff[step] : [],
                     illuminatorPos: getPosAt(ratio, t.pathPoints),
                     illuminatorQuat: getQuatAt(ratio, t.pathQuats)
@@ -226,6 +262,7 @@ function resolveMissilesForStep(step, ratio, ctx) {
             if (stepRes.trackKind) activeM.trackKind = stepRes.trackKind;
             if (typeof stepRes.traveled === 'number') activeM.traveled = stepRes.traveled;
             if (typeof stepRes.guided === 'boolean') activeM.guided = stepRes.guided;
+            if (stepRes.lostTarget) activeM.lostTarget = true;
 
             if (isMissileCrashedIntoBuilding) {
                 stepRes.exploded = true;
@@ -283,8 +320,18 @@ function resolveMissilesForStep(step, ratio, ctx) {
                         if (!Array.isArray(ctx.log[victimId].damageSteps)) ctx.log[victimId].damageSteps = [];
                         ctx.log[victimId].damageSteps.push(step);
                     }
-                    recordCombatHit(ctx, victimId, id, 'missile', step);
+                    recordCombatHit(ctx, victimId, id, mType, step);
+                    finishLiveMissileShot(t, activeM, 'hit');
+                } else if (isMissileCrashedIntoBuilding) {
+                    finishLiveMissileShot(t, activeM, 'building');
+                } else if (stepRes.lostTarget || stepRes.selfDestructed || activeM.lostTarget) {
+                    finishLiveMissileShot(t, activeM, 'coast');
+                } else {
+                    finishLiveMissileShot(t, activeM, 'exhausted');
                 }
+            } else if (activeM.ap <= 0) {
+                if (activeM.lostTarget || stepRes.lostTarget) finishLiveMissileShot(t, activeM, 'coast');
+                else finishLiveMissileShot(t, activeM, 'exhausted');
             }
         });
     });

@@ -20,12 +20,12 @@
         gunRange: 70,
         gunAngleRad: Math.PI / 24,
         // FOX-2 (legacy "missile*" aliases)
-        missileMinRange: 35,
+        missileMinRange: 20,
         missileMaxRange: 120,
         seekerRange: 120,
         seekerAngleRad: Math.PI / 12,
         // FOX-1
-        fox1MinRange: 70,
+        fox1MinRange: 50,
         fox1MaxRange: 200,
         fox1SeekerRange: 200,
         fox1SeekerAngleRad: Math.PI / 14
@@ -198,10 +198,9 @@
             if (inFox1Band && !inFox2Band) return 'fox1';
             if (inFox2Band && !inFox1Band) return 'fox2';
             if (inFox1Band && inFox2Band) {
-                // Overlap (~70–120): knife / loose aspect → fox2; nose-on midband → fox1 (kill Pk).
-                if (dist < 80 || (Number.isFinite(angDeg) && angDeg > 26)) return 'fox2';
-                if (Number.isFinite(angDeg) && angDeg <= 18 && dist >= 85) return 'fox1';
-                if (dist < 95) return 'fox2';
+                // Overlap 50–120: close / loose → FOX-2; 80–120 aligned → FOX-1.
+                const loose = Number.isFinite(angDeg) && angDeg > 26;
+                if (dist < 80 || loose) return 'fox2';
                 return 'fox1';
             }
             if (Number.isFinite(dist) && dist > env2.missileMaxRange && dist <= env1.missileMaxRange) {

@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 'use strict';
 /**
- * Drive real-browser T150 dumps (not tools/ai-regression.js).
+ * Drive real-browser dumps (not tools/ai-regression.js).
  *
  *   node tools/batch-ai-matches.js --brains test_01 --n 3
- *   node tools/batch-ai-matches.js --brains Rei_03 --n 3
- *   node tools/batch-ai-matches.js --ab --n 3
  *   node tools/batch-ai-gold.js --brains test_01
+ *   node tools/batch-ai-weapon.js --brains test_01
  *   node tools/batch-ai-matches.js --smoke
+ *   node tools/batch-ai-matches.js --brains test_01 --n 6 --session b2-test_01-<id>   (same-spawn A/B)
  *
  * Leaves the game window open. Each match reloads after game_over POST.
  */
@@ -37,7 +37,10 @@ function parseArgs(argv) {
         alt: null,
         sep: null,
         spawnFormation: 'cross',
-        spawnFacing: 'tangent'
+        spawnFacing: 'tangent',
+        maxTurns: null,
+        loadout: 'standard',
+        session: null
     };
     for (let i = 0; i < argv.length; i++) {
         const a = argv[i];
@@ -50,6 +53,11 @@ function parseArgs(argv) {
         else if (a === '--port') { out.port = parseInt(next, 10) || 8080; i++; }
         else if (a === '--ingest-port') { out.ingestPort = parseInt(next, 10) || 8091; i++; }
         else if (a === '--timeout') { out.timeoutSec = Math.max(30, parseInt(next, 10) || 720); i++; }
+        else if (a === '--max-turns' || a === '--maxTurns') {
+            const n = parseInt(next, 10);
+            out.maxTurns = Number.isFinite(n) ? Math.max(1, Math.min(150, n)) : null;
+            i++;
+        }
         else if (a === '--ab') out.ab = true;
         else if (a === '--smoke') {
             out.smoke = true;
@@ -62,7 +70,17 @@ function parseArgs(argv) {
         else if (a === '--sep') { out.sep = parseInt(next, 10); i++; }
         else if (a === '--spawn-formation' || a === '--formation') { out.spawnFormation = next === 'pair' ? 'pair' : 'cross'; i++; }
         else if (a === '--spawn-facing' || a === '--facing') {
-            out.spawnFacing = (next === 'face' || next === 'outbound') ? next : 'tangent';
+            out.spawnFacing = (next === 'face' || next === 'outbound' || next === 'chase' || next === 'mix')
+                ? next
+                : 'tangent';
+            i++;
+        }
+        else if (a === '--loadout') {
+            out.loadout = Batch.sanitizeLoadout ? Batch.sanitizeLoadout(next) : String(next || 'standard');
+            i++;
+        }
+        else if (a === '--session') {
+            out.session = String(next || '').replace(/[^A-Za-z0-9._-]/g, '').slice(0, 80) || null;
             i++;
         }
     }
@@ -239,15 +257,17 @@ function buildUrl(opts, brains, session) {
         batchFast: '1'
     });
     if (opts.smoke) q.set('maxTurns', '2');
+    else if (opts.maxTurns != null && Number.isFinite(opts.maxTurns)) q.set('maxTurns', String(opts.maxTurns));
     if (!opts.spawnMix) q.set('spawnMix', '0');
     if (opts.alt != null && Number.isFinite(opts.alt)) q.set('alt', String(opts.alt));
     if (opts.sep != null && Number.isFinite(opts.sep)) q.set('sep', String(opts.sep));
     q.set('spawnFormation', opts.spawnFormation === 'pair' ? 'pair' : 'cross');
-    if (opts.spawnFacing === 'face' || opts.spawnFacing === 'outbound') {
+    if (opts.spawnFacing === 'face' || opts.spawnFacing === 'outbound' || opts.spawnFacing === 'chase' || opts.spawnFacing === 'mix') {
         q.set('spawnFacing', opts.spawnFacing);
     } else {
         q.set('spawnFacing', 'tangent');
     }
+    if (opts.loadout && opts.loadout !== 'standard') q.set('loadout', opts.loadout);
     return `http://127.0.0.1:${opts.port}/?${q.toString()}`;
 }
 
@@ -280,12 +300,34 @@ function scoreFiles(label, files) {
 }
 
 async function runSeries(opts, brains) {
-    const session = `b2-${brains.replace(/[^A-Za-z0-9._-]/g, '')}-${Date.now()}`;
+    // A reused session replays the same spawn/facing/seed cycle (same-spawn A/B).
+    const session = opts.session && !opts.ab
+        ? opts.session
+        : `b2-${brains.replace(/[^A-Za-z0-9._-]/g, '')}-${Date.now()}`;
+    if (opts.session && !opts.ab) {
+        const prior = path.join(INGEST.ROOT, session);
+        const left = fs.existsSync(prior) ? fs.readdirSync(prior).filter((f) => f.endsWith('.json')) : [];
+        // Ingest dedups and counts by this folder, so old dumps would satisfy the wait.
+        if (left.length) throw new Error(`session ${session} already has ${left.length} dumps; move them aside first`);
+    }
     const url = buildUrl(opts, brains, session);
-    console.log('\n[batch-ai] =====', brains, 'n=' + opts.n, opts.smoke ? '(smoke T2)' : '(T150)');
+    console.log('\n[batch-ai] =====', brains, 'n=' + opts.n, opts.smoke ? '(smoke T2)' : (opts.maxTurns != null ? '(T' + opts.maxTurns + ')' : '(T150)'));
     console.log('[batch-ai] session', session);
+    console.log('[batch-ai] loadout', opts.loadout === 'fox2-priority' ? 'fox2-priority (4×IR)' : (opts.loadout || 'standard'));
     console.log('[batch-ai] formation', opts.spawnFormation === 'pair' ? 'pair' : 'cross');
-    console.log('[batch-ai] facing', opts.spawnFacing === 'face' || opts.spawnFacing === 'outbound' ? opts.spawnFacing : 'tangent');
+    console.log(
+        '[batch-ai] facing',
+        opts.spawnFacing === 'mix'
+            ? 'mix (tangent/face/outbound)'
+            : ((opts.spawnFacing === 'face' || opts.spawnFacing === 'outbound' || opts.spawnFacing === 'chase')
+                ? opts.spawnFacing
+                : 'tangent')
+    );
+    if (opts.spawnFacing === 'mix') {
+        for (let i = 1; i <= opts.n; i++) {
+            console.log(`[batch-ai] match ${i}/${opts.n} facing=${Batch.pickSpawnFacing(session, i)}`);
+        }
+    }
     if (opts.spawnMix && opts.alt == null && opts.sep == null) {
         const mixAlts = opts.spawnFormation === 'pair' ? Batch.SPAWN_ALTS : Batch.SPAWN_ALTS_ROOF;
         const mixSeps = opts.spawnFormation === 'pair' ? Batch.SPAWN_SEPS : Batch.SPAWN_SEPS_CROSS;

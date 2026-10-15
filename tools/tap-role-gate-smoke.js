@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * A.0 seek_angle + A.2a press/extend TAP preferred catalog + safety fallback (live pilot-ai.js).
+ * A.0 seek_angle + A.2a press/extend + B2 recommit/defend TAP preferred catalog + safety fallback.
  */
 'use strict';
 
@@ -19,10 +19,14 @@ assert(src.includes('    pickRoleCatalogWinner('), 'missing pickRoleCatalogWinne
 assert(src.includes('    isSeekAnglePreferredTapState('), 'missing isSeekAnglePreferredTapState');
 assert(src.includes('    isPressPreferredTapState('), 'missing isPressPreferredTapState');
 assert(src.includes('    isExtendPreferredTapState('), 'missing isExtendPreferredTapState');
+assert(src.includes('    isRecommitPreferredTapState('), 'missing isRecommitPreferredTapState');
+assert(src.includes('    isDefendPreferredTapState('), 'missing isDefendPreferredTapState');
 assert(src.includes('    tapApproachEntryUsable('), 'missing tapApproachEntryUsable');
 assert(src.includes("ctx._tacticalRole === 'seek_angle'"), 'planTacticalApproach missing seek_angle gate');
 assert(src.includes("ctx._tacticalRole === 'press'"), 'planTacticalApproach missing press gate');
 assert(src.includes("ctx._tacticalRole === 'extend'"), 'planTacticalApproach missing extend gate');
+assert(src.includes("ctx._tacticalRole === 'recommit'"), 'planTacticalApproach missing recommit gate');
+assert(src.includes("ctx._tacticalRole === 'defend'"), 'planTacticalApproach missing defend gate');
 assert(src.includes('tapRoleGate: ${rolePrefix}pref='), 'missing tapRoleGate needle');
 assert(src.includes('role=${role} '), 'press/extend needle must tag role=');
 assert(src.includes('    nameTacticalApproachSkip('), 'missing nameTacticalApproachSkip');
@@ -66,6 +70,8 @@ function isRolePreferredTapState(role, state) {
     if (role === 'seek_angle') return st === 'tacticalLagPursuit' || st === 'tacticalBeamReposition';
     if (role === 'press') return st === 'tacticalLeadIntercept' || st === 'tacticalCorridorCut';
     if (role === 'extend') return st === 'tacticalEnergyCruise' || st === 'tacticalEnergyCruiseCut';
+    if (role === 'recommit') return st === 'tacticalLeadIntercept' || st === 'tacticalCorridorCut';
+    if (role === 'defend') return st === 'tacticalBeamReposition';
     return false;
 }
 
@@ -178,5 +184,37 @@ const extendUnsafe = pickRoleCatalogWinner([
 ], 'extend');
 assert(extendUnsafe.entry.candidate.state === 'tacticalLeadIntercept', 'unsafe extend pref falls back to lead');
 assert(extendUnsafe.gateNote.indexOf('fallback=1') >= 0, extendUnsafe.gateNote);
+
+const recommitWin = pickRoleCatalogWinner([
+    entry('tacticalEnergyCruise', 291),
+    entry('tacticalLagPursuit', 210),
+    entry('tacticalLeadIntercept', 180),
+    entry('tacticalCorridorCut', 160)
+], 'recommit');
+assert(recommitWin.entry.candidate.state === 'tacticalLeadIntercept', 'recommit should pick lead over cruise 291 / lag 210');
+assert(recommitWin.gateNote.indexOf('role=recommit') >= 0 && recommitWin.gateNote.indexOf('fallback=0') >= 0, recommitWin.gateNote);
+
+const recommitUnsafe = pickRoleCatalogWinner([
+    entry('tacticalLagPursuit', 210),
+    entry('tacticalLeadIntercept', 80, { buildingHit: true, minAltitude: 8 }),
+    entry('tacticalCorridorCut', 15)
+], 'recommit');
+assert(recommitUnsafe.entry.candidate.state === 'tacticalLagPursuit', 'unsafe recommit pref falls back to lag');
+assert(recommitUnsafe.gateNote.indexOf('role=recommit') >= 0 && recommitUnsafe.gateNote.indexOf('fallback=1') >= 0, recommitUnsafe.gateNote);
+
+const defendWin = pickRoleCatalogWinner([
+    entry('tacticalLeadIntercept', 240),
+    entry('tacticalLagPursuit', 210),
+    entry('tacticalBeamReposition', 40)
+], 'defend');
+assert(defendWin.entry.candidate.state === 'tacticalBeamReposition', 'defend should pick beam over lead 240 / lag 210');
+assert(defendWin.gateNote.indexOf('role=defend') >= 0 && defendWin.gateNote.indexOf('fallback=0') >= 0, defendWin.gateNote);
+
+const defendUnsafe = pickRoleCatalogWinner([
+    entry('tacticalLagPursuit', 210),
+    entry('tacticalBeamReposition', 80, { buildingHit: true, minAltitude: 8 })
+], 'defend');
+assert(defendUnsafe.entry.candidate.state === 'tacticalLagPursuit', 'unsafe defend pref falls back to lag');
+assert(defendUnsafe.gateNote.indexOf('role=defend') >= 0 && defendUnsafe.gateNote.indexOf('fallback=1') >= 0, defendUnsafe.gateNote);
 
 console.log('tap-role-gate-smoke: ok');

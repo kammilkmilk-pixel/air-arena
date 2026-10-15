@@ -136,12 +136,29 @@ function processFlightPaths(ctx) {
                 let activeM = t.activeMissiles ? t.activeMissiles.find(m => m.pylonId === p.id) : null;
                 
                if (isFiringNow && !activeM) {
-                    let launchStep = fireDelayCounter * CONFIG.rules.missileLaunchDelay; 
-                    fireDelayCounter++; 
-                    singleMissileFired = true;
                     const mType = typeof pylonWeaponType === 'function'
                         ? pylonWeaponType(p)
                         : (p.weaponType || 'fox2');
+                    if (mType === 'fox2' && typeof fox2LaunchAngleOk === 'function') {
+                        const maxA = typeof fox2MaxLaunchAngleDeg === 'function' ? fox2MaxLaunchAngleDeg() : 10;
+                        const honor = typeof fox2SameTurnCommitOk === 'function' && fox2SameTurnCommitOk(t, maxA);
+                        if (!honor) {
+                            const foe = typeof combatEnemyOf === 'function' ? combatEnemyOf(id) : null;
+                            const pose = typeof fox2ReadLaunchPose === 'function'
+                                ? fox2ReadLaunchPose(t)
+                                : { pos: t.wrapper && t.wrapper.position, quat: t.wrapper && ((t.wrapper.userData && t.wrapper.userData.logicalQuat) || t.wrapper.quaternion) };
+                            const foePose = typeof fox2ReadLaunchPose === 'function'
+                                ? fox2ReadLaunchPose(foe)
+                                : { pos: foe && foe.wrapper && foe.wrapper.position, quat: foe && foe.wrapper && ((foe.wrapper.userData && foe.wrapper.userData.logicalQuat) || foe.wrapper.quaternion) };
+                            const geom = typeof computeMissileLaunchGeometry === 'function'
+                                ? computeMissileLaunchGeometry(pose.pos, pose.quat, foePose.pos, foePose.quat)
+                                : { angDeg: null, frontAspect: false };
+                            if (!fox2LaunchAngleOk(geom, maxA)) return;
+                        }
+                    }
+                    let launchStep = fireDelayCounter * CONFIG.rules.missileLaunchDelay; 
+                    fireDelayCounter++; 
+                    singleMissileFired = true;
                     const wcfg = typeof getMissileWeaponConfig === 'function'
                         ? getMissileWeaponConfig(mType)
                         : (CONFIG.weapons[mType] || CONFIG.weapons.fox2);

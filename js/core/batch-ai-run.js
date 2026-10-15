@@ -14,8 +14,9 @@
     const SPAWN_ALTS = Object.freeze([28, 45, 60, 80]);
     const SPAWN_ALTS_ROOF = Object.freeze([80, 92]);
     const SPAWN_ALTS_ALL = Object.freeze([28, 45, 60, 80, 92]);
-    const SPAWN_SEPS = Object.freeze([60, 100, 140, 200]);
+    const SPAWN_SEPS = Object.freeze([60, 100, 140, 200, 283]);
     const SPAWN_SEPS_CROSS = Object.freeze([100, 140, 200]);
+    const SPAWN_FACINGS_CROSS = Object.freeze(['tangent', 'face', 'outbound']);
 
     function parseSearch(search) {
         const q = new URLSearchParams(typeof search === 'string' ? search : '');
@@ -37,9 +38,12 @@
             ? 'pair'
             : ((hasBatchHint && mode === '2v2') ? 'cross' : 'pair');
         const facingRaw = q.get('spawnFacing') || q.get('facing');
-        const spawnFacing = (facingRaw === 'face' || facingRaw === 'outbound' || facingRaw === 'tangent')
-            ? facingRaw
-            : (spawnFormation === 'cross' ? 'tangent' : 'face');
+        const facingMix = facingRaw === 'mix' || flag('facingMix');
+        const spawnFacing = facingMix
+            ? pickSpawnFacing(session, batchIndex, SPAWN_FACINGS_CROSS)
+            : ((facingRaw === 'face' || facingRaw === 'outbound' || facingRaw === 'tangent' || facingRaw === 'chase')
+                ? facingRaw
+                : (spawnFormation === 'cross' ? 'tangent' : 'face'));
         const spawnMix = q.has('spawnMix') ? flag('spawnMix') : hasBatchHint;
         const altRaw = q.get('alt') || q.get('spawnAltitude');
         const sepRaw = q.get('sep') || q.get('spawnSeparation');
@@ -55,6 +59,7 @@
             ? sanitizeSpawnSeparation(sepRaw)
             : mixed.separation;
         const fox2AmbushSeed = hashSeed32(`${session || 'batch'}:${batchIndex}:${brains}`);
+        const loadout = sanitizeLoadout(q.get('loadout'));
         return {
             skipSetup: flag('skipSetup') || hasBatchHint,
             lab: flag('lab') || hasBatchHint,
@@ -75,8 +80,25 @@
             spawnSeparation,
             spawnFormation,
             spawnFacing,
-            fox2AmbushSeed
+            facingMix,
+            fox2AmbushSeed,
+            loadout
         };
+    }
+
+    const LOADOUTS = Object.freeze(['standard', 'gun-priority', 'fox2-priority', 'fox1-priority']);
+
+    function sanitizeLoadout(raw) {
+        const id = String(raw || 'standard').trim().toLowerCase();
+        if (id === 'fox2-only' || id === 'fox2only' || id === 'fox2') return 'fox2-priority';
+        return LOADOUTS.indexOf(id) >= 0 ? id : 'standard';
+    }
+
+    function pylonsForLoadout(loadout) {
+        if (loadout === 'gun-priority') return ['empty', 'empty', 'empty', 'empty'];
+        if (loadout === 'fox1-priority') return ['fox1', 'fox1', 'fox1', 'fox1'];
+        if (loadout === 'fox2-priority') return ['fox2', 'fox2', 'fox2', 'fox2'];
+        return ['fox1', 'fox2', 'fox2', 'fox1'];
     }
 
     function sanitizeBrain(raw) {
@@ -134,6 +156,13 @@
             h = Math.imul(h, 16777619);
         }
         return h >>> 0;
+    }
+
+    /** Cycle tangent / face / outbound by session + match index. Not chase (lab 1v1). */
+    function pickSpawnFacing(session, batchIndex, facings) {
+        const list = (facings && facings.length) ? facings : SPAWN_FACINGS_CROSS;
+        const slot = (hashSeed32((session || 'batch') + ':facing') + Math.max(0, (Number(batchIndex) || 1) - 1)) % list.length;
+        return list[slot];
     }
 
     /** Cycle the legal spawn grid by session + match index (not decide() noise). */
@@ -200,18 +229,21 @@
         cfg.spawnAltitude = o.spawnAltitude != null ? o.spawnAltitude : 45;
         cfg.spawnSeparation = o.spawnSeparation != null ? o.spawnSeparation : 100;
         cfg.spawnFormation = o.spawnFormation === 'cross' ? 'cross' : 'pair';
-        cfg.spawnFacing = (o.spawnFacing === 'face' || o.spawnFacing === 'outbound' || o.spawnFacing === 'tangent')
+        cfg.spawnFacing = (o.spawnFacing === 'face' || o.spawnFacing === 'outbound' || o.spawnFacing === 'tangent' || o.spawnFacing === 'chase')
             ? o.spawnFacing
             : (cfg.spawnFormation === 'cross' ? 'tangent' : 'face');
         const seatIds = mode === '2v2'
             ? ['red-1', 'red-2', 'blue-1', 'blue-2']
             : ['red-1', 'blue-1'];
+        const loadout = o.loadout || 'standard';
+        const pylons = pylonsForLoadout(loadout);
         seatIds.forEach((seatId) => {
             const prev = cfg.seats[seatId] || {};
             cfg.seats[seatId] = Object.assign({}, prev, {
                 control: 'ai',
                 aiModel: brains,
-                loadout: prev.loadout || 'standard'
+                loadout,
+                pylons: pylons.slice()
             });
         });
         return cfg;
@@ -232,6 +264,12 @@
         if (o.fox2AmbushSeed != null && typeof CONFIG !== 'undefined' && CONFIG.doctrine) {
             CONFIG.doctrine.fox2OpeningAmbushSeed = o.fox2AmbushSeed;
         }
+    }
+
+    /** Lab chase: rotate the pursuit line by batchIndex so n=3 dumps are not identical. */
+    function chaseHeadingRad(batchIndex) {
+        const slot = (Math.max(1, Number(batchIndex) || 1) - 1) % 4;
+        return slot * Math.PI / 2;
     }
 
     function stampName() {
@@ -262,7 +300,10 @@
             spawnSeparation: o.spawnSeparation,
             spawnFormation: o.spawnFormation || 'pair',
             spawnFacing: o.spawnFacing || 'face',
-            fox2AmbushSeed: o.fox2AmbushSeed
+            facingMix: !!o.facingMix,
+            fox2AmbushSeed: o.fox2AmbushSeed,
+            chaseYawDeg: Math.round(chaseHeadingRad(o.batchIndex) * 180 / Math.PI),
+            loadout: o.loadout || 'standard'
         };
         return next;
     }
@@ -364,10 +405,14 @@
         SPAWN_ALTS_ALL,
         SPAWN_SEPS,
         SPAWN_SEPS_CROSS,
+        SPAWN_FACINGS_CROSS,
         parseSearch,
         sanitizeBrain,
         sanitizeArena,
         pickSpawnLayout,
+        sanitizeLoadout,
+        pylonsForLoadout,
+        pickSpawnFacing,
         isActive,
         skipFirstDelay,
         skipVoiceWait,
@@ -376,6 +421,7 @@
         buildMatchConfigFrom,
         applyArena,
         exportRoster,
+        chaseHeadingRad,
         readQuery: opts,
         init
     };

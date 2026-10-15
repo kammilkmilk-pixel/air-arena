@@ -80,7 +80,7 @@
 ### 目前技術債（摘要）
 
 - **High（1）：** 城區 AI 回歸安全門（H7）— B／D／F／G-heur 已綠；**C + G-hybrid** plateau；優先 live dump。
-- **Medium 優先：** FOX-1 照射環 vs 發射窗（M23）；城區逃生無 chaff（M24）；T38／beam（M18/M21）；ACMI 碎片（M4–M5）；`pilot-ai` 巨型檔（M17 ~23k，A.2 dump 不拆）。 **M8：** B1 A.0 優先目錄＋回退（`tapRoleGate`）；A.1 dump 已關；A.2a press／extend 目錄閘（`tapRoleGate: role=`；trail `role`／`tap`／`tapGate`）；B2 生存可對看、五角色等 A.2。 **M6／M7：** 新場清碎片；全 AI 不再誤標「無長機」。
+- **Medium 優先：** M23 **已關**；包線選彈 **已關**；M24 **已關** 2026-10-10；FOX-2-only **已關** 2026-10-11（四掛 IR vs 混掛；不是 `fox2-first`）；T38／beam（M18/M21）；ACMI 碎片（M4–M5）；`pilot-ai` 巨型檔（M17 ~23k，A.2 dump 不拆）。 **M8：** B1 A.0 優先目錄＋回退（`tapRoleGate`）；A.1／A.2a dump 已關；prep 超時 booth 已關；climb defer 已關；collapse hold yield 無法過關；A.2b hang yield 可達門過；dead scored-escape 可達門過 2026-10-11。**B2 已關** 2026-10-03。B2 recommit 目錄閘 dump 已關。defend 目錄閘 **已關** 2026-10-11。clear-stick 這格飽和、未過關。**現役 FOX-2 `f2why=gate`**（解制前只在發射門內跟目標；不放寬 10°／6°）。驗收：已知巢重跑＋smoke，金標 1 批 building。 **M6／M7：** 新場清碎片；全 AI 不再誤標「無長機」。
 - **詳表：** [`TECH-DEBT.md`](./TECH-DEBT.md)（快照 **2026-08-05**）。
 - **新地圖必讀：** [`docs/Arena-Map-Onboarding-Memo.md`](./docs/Arena-Map-Onboarding-Memo.md)。
 - **PilotAI／引擎預先準備：** [`docs/PilotAI-Portability-Memo.md`](./docs/PilotAI-Portability-Memo.md)。
@@ -165,7 +165,7 @@ npm start
 開發面板：`?dev=1`  
 跳過 Match Setup：`?skipSetup=1` 或 scenario URL。  
 測試目錄（Rei_03／test_01）：`?lab=1`  
-批次真機 T150 dump（非 `ai-regression` surrogate）：`npm run batch:ai -- --brains test_01 --n 3`（再開 `--brains Rei_03 --n 3` 或一次 `--ab --n 3`）。預設 **City Map** + dense-urban 2v2 + **十字形出生**（紅北／藍南／紅2西／藍2東，順時針切線朝向，不對頭衝市中心）+ 屋頂帶高度（80／92m）+ 距離 100／140／200（十字不抽 60）。目錄手打仍用雙機編組、對頭。不改 `decide()`。瀏覽器會連打、結束自動寫入 `tools/reports/dumps/`。
+批次真機 dump（非 `ai-regression` surrogate）：生存／building 回歸用 `npm.cmd run batch:ai:gold -- --brains test_01`（一格十字切線 80／283＝斜鄰 200，n=3）。稀有枝不要用金標抽新獨特 T150：用已知巢重跑＋該刀 smoke。第 1 批已是 leftover 飽和就停。目錄手打仍用雙機編組、對頭。不改 `decide()`。瀏覽器會連打、結束自動寫入 `tools/reports/dumps/`。
 
 ---
 
@@ -411,8 +411,9 @@ processFlightPaths → processFlares
 - [x] Phase B B1 角色 FSM 碼（2026-08-25 · live `test_01`；有效性／A/B 未過）
 - [x] Envelope 單一來源 + regression 對齊
 - [ ] 城區 AI 回歸安全門（H7）
-- [ ] FOX-1 照射環 vs 發射窗 UX（M23）
-- [ ] 城區逃生 chaff（M24）
+- [x] FOX-1 照射環 vs 發射窗 UX（M23）
+- [x] FOX-1 擋線剪鎖（M24）
+- [x] FOX-2-only 四掛 IR — **已關** 2026-10-11（不是 `fox2-first`）
 
 ---
 

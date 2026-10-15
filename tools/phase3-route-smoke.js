@@ -75,6 +75,13 @@ for (const needle of [
     'pocketRisk=',
     // P0: reject dead bake WP/corridor hit=1 cuts (2026-08-12)
     'isDeadBakeRouteCut',
+    'isDeadScoredEscapeCut',
+    'deadStick=1',
+    'isClearStickSwap',
+    'clearStick=1',
+    'shouldTurnClearanceSwap',
+    'turnClear=1',
+    'turnClearProbe:',
     'breakSurvivalWpDeadCut',
     'pocketReject=',
     'replan=deadWp',

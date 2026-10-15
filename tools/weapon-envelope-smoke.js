@@ -56,14 +56,19 @@ function main() {
         'mixed load in fox1 band prefers fox1'
     );
     assert.strictEqual(
-        env.inferTeamMissileType(teamMixed, { distance: 50, angleDeg: 10 }),
+        env.inferTeamMissileType(teamMixed, { distance: 40, angleDeg: 10 }),
         'fox2',
-        'mixed load outside fox1 min prefers fox2'
+        'mixed load below fox1 min prefers fox2'
     );
     assert.strictEqual(
         env.inferTeamMissileType(teamMixed, { distance: 90, angleDeg: 10 }),
         'fox1',
         'overlap nose-on midband prefers fox1'
+    );
+    assert.strictEqual(
+        env.inferTeamMissileType(teamMixed, { distance: 100, angleDeg: 22 }),
+        'fox1',
+        'overlap 80–120 aligned (not only ≤18°) prefers fox1'
     );
     assert.strictEqual(
         env.inferTeamMissileType(teamMixed, { distance: 90, angleDeg: 30 }),

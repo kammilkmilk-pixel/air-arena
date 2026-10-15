@@ -2,7 +2,7 @@
 
 **Status:** Active from **2026-08-09**  
 **Scope:** Dense-urban building / ground survival in `js/ai/pilot-ai.js` (and related urban helpers).  
-**Gate for Phase B:** B0 完成；B1 碼已上 live `test_01`（`deferred=seekAngle` 已證實；A.0 **優先目錄 lag／beam＋不安全回退**，針 `tapRoleGate:`）。A.1 dump **已關**。A.2a **press／extend TAP 目錄閘**（針 `tapRoleGate: role=`；trail `role`／`tap`／`tapGate`）。B2 生存可對看、五角色等 A.2。Gold T150 仍是凍結標準；soft gate 2026-08-25 已關測量波。**tableGlue / collapse 已解凍（2026-08-28）**；**dirtBleed 已解凍（2026-08-28）**。
+**Gate for Phase B:** B0 完成；B1 碼已上 live `test_01`（`deferred=seekAngle` 已證實；A.0 **優先目錄 lag／beam＋不安全回退**，針 `tapRoleGate:`）。A.1 dump **已關**。A.2a dump **已關**。prep 超時 **booth 已關**。climb defer **已關**。collapse hold yield **無法過關**（碼留下）。A.2b hang yield **可達門過**（碼留下）。**B2 已關** 2026-10-03。B2 recommit 目錄閘 **dump 已關**（碼留下）。defend 目錄閘 **dump 有針、未關帳**。**現役 clear-stick 路徑選枝**（2026-10-11；`hit=1` 且有不撞樓枝則換淨路；不放寬 −160）。M23 已關。包線選彈已關。M24 **已關** 2026-10-10。FOX-2-only **已關** 2026-10-11（武器，不混）。**dead scored-escape reject 可達門過** 2026-10-11（碼留下）。Gold T150 是 building 回歸，不是稀有枝抽樣；驗收用已知巢重跑＋smoke。soft gate 2026-08-25 已關測量波。**tableGlue / collapse 已解凍（2026-08-28）**；**dirtBleed 已解凍（2026-08-28）**。
 
 **Near-term route closed (2026-08-13):** dense-urban survival gate green on live `test_01` (3×T150 building **0/0/0**). Clean A/B vs prior control `Rei_01` was **0/0/0** vs **1/0/1**. Control freeze at that close was **`Rei_02`**.
 
@@ -46,7 +46,7 @@ Root cause is not “one more threshold,” but **stacked contradictory hard ban
    Same class in 2 consecutive matches → only then touch that class.
 6. **Spawn / merge-dirt is a separate queue** from mid-match undercroft.
 7. **Phase B** is open on live `test_01` (2026-08-25). Do not mix role retune with stick thaw or a weapon knife.
-8. **Route vs stick:** close-range overhead: **tableGlue / collapse thawed 2026-08-28** (hold vs dead-nest flip); **dirtBleed thawed 2026-08-28** (yield recovered facade pitch; keep gap bank under table). Mid/long **route** work uses soft bake WP pocketRisk + earlier replan — do not add stick bans to fix bad corridors.
+8. **Route vs stick:** close-range overhead: **tableGlue / collapse thawed 2026-08-28** (hold vs dead-nest flip); **dirtBleed thawed 2026-08-28** (yield recovered facade pitch; keep gap bank under table). Mid/long **route** work uses soft bake WP pocketRisk + earlier replan — do not add stick bans to fix bad corridors. **climb defer closed 2026-09-05.** **collapse hold yield 無法過關 2026-09-05**（碼留下；不放寬 −160）。**A.2b hang yield 可達門過 2026-09-08**（碼留下；不開槍、不放寬 envelope）。**B2 recommit TAP catalog dump 已關 2026-09-08.** **現役 defend catalog**（閘已接回 TAP；真來彈讓路不當失敗）。 **dead scored-escape 可達門過 2026-10-11**（碼留下）：P0 死切從 bake WP 延到任何當選評分枝：`hit=1` 且 `score < -160` 則換非死備選或逼 flip（針 `deadStick=1`）。80/140 重跑 6／6 有針，building 8→5。`hit1NoAlt`＋`levelBank` leftover 不當下一拍。不放寬 −160、不恢復 awayFlip、不重開 collapse hold yield、不混 FOX-2-only。
 
 ---
 
@@ -73,7 +73,7 @@ Code helpers should converge on `classifyUrbanOverhead(...)` (and thin wrappers)
 
 Helpers: `AirArenaAiMap.scoreWaypointChainPocket`, PilotAI `resolveSurvivalWaypointSteer` replan reasons `funnelGapFlip` / `funnelAltPick` / `lowerPocket`, soft `pocketRisk` in `planUrbanRoute` / `applyBakeRouteCombatScore`.
 
-**P0 dead-cut gate:** `pickScoredUrbanEscapeStick` must not finish on bake WP / bake-corridor with `hit=1` or collapsed score (`<-160`). Swap to best non-dead alternative or force flip; clear WP memory + gapHold (`pocketReject=* replan=deadWp`).
+**P0 dead-cut gate:** `pickScoredUrbanEscapeStick` must not finish on bake WP / bake-corridor with `hit=1` or collapsed score (`<-160`), **or** on a non-bake scored stick with `hit=1` **and** `score < -160` (80/140 T150 undercroft skim −407). Swap to best non-dead alternative or force flip; clear WP memory + gapHold (`pocketReject=* replan=deadWp`; non-bake also `deadStick=1`).
 
 **P1 dual homotopy:** `corridorHomotopyMemory` keeps top-2 `{homotopyId: L|R|C, side, climbBias, pocketScore}`. Switch on `pocketMargin` / `facadeNarrow` / deadWp / **`funnelRejectC`** / **`funnelReplanLateral`** / **`slabRejectC`** / **`funnelEscapeSide`** / **`combatGoal`** / **`bakeDualPref`**. Mid-term: bake `sampleDualHomotopyCorridors` feeds `source=bakeDual`; hold hysteresis margin≈0.26 / `until+8`. Escape same-turn `resolveCorridorHomotopy`.
 
@@ -111,7 +111,8 @@ Helpers: `AirArenaAiMap.scoreWaypointChainPocket`, PilotAI `resolveSurvivalWaypo
 3. Prefer one classifier change + wire call sites over N threshold tweaks.  
 4. Run `test:building-risk`, `test:decide-gates`, `test:phase3`.  
 5. Ask for **Ctrl+F5 + new match** dumps; ignore identical fingerprints / stale exports.  
-6. **Stick thaw still needs 2 consecutive T150 same choke.** **tableGlue / collapse** and **dirtBleed** thawed 2026-08-28 — do not mix with Phase B or a weapon knife.
+6. **Stick thaw still needs 2 consecutive T150 same choke.** **tableGlue / collapse** and **dirtBleed** thawed 2026-08-28 — do not mix with Phase B or a weapon knife.  
+7. **驗收（2026-09-08）：** 稀有枝用已知巢重跑＋smoke，不要用金標抽新獨特 T150。金標最多 1 批只看 building；第 1 批 leftover 飽和就停。可達門過 = 重跑有針＋building 不退步。無法過關 = 門開了下一拍失敗且再修破凍結。
 
 ---
 
@@ -120,4 +121,4 @@ Helpers: `AirArenaAiMap.scoreWaypointChainPocket`, PilotAI `resolveSurvivalWaypo
 - Doctrine slogan: **少強制、優選路** (soft aiMap) — still valid; survival hard locks must be **few, ordered, and class-based**.  
 - `TECH-DEBT.md` — M8 follow-up / H7 plateau.  
 - Thin Phase B knife already landed; full roles live on `test_01` only — do not mix role retune with this dirtBleed thaw or a weapon knife.  
-- 接敵走廊／雙機／新武器機體順序：`docs/Path-Cooperation-Roadmap.md`（現停在步驟 0）。
+- 接敵走廊／雙機／新武器機體順序：`docs/Path-Cooperation-Roadmap.md`（現停在 A.2；**B2 已關**；包線已關；M24 已關；FOX-2-only 已關；**現役 defend 目錄閘驗收**）。

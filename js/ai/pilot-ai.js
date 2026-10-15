@@ -590,7 +590,7 @@ window.AirArenaAI = {
             requireLos: row && row.requireLos != null ? !!row.requireLos : true,
             illuminateHold: false,
             preferStandoff: false,
-            maxLaunchAngleDeg: Number(row && row.maxLaunchAngleDeg) || 32,
+            maxLaunchAngleDeg: Number(row && row.maxLaunchAngleDeg) || 10,
             holdNoseGain: 0,
             holdMaxJoy: 0.5
         };
@@ -875,6 +875,96 @@ window.AirArenaAI = {
         return action;
     },
 
+    /** FOX-2 fire — rear/side 10°. Front squeeze still 6°. Missing launch geom fails closed — do not fall back to decide angle. */
+    canCommitFox2Launch(ctx = {}) {
+        const doctrine = this.getMunitionDoctrine('fox2');
+        const reasons = [];
+        if (doctrine.requireLos && ctx.lineOfSightBlocked) reasons.push('los');
+        const tgtFwd = ctx.enemyForward || ctx.enemyQuat || ctx.targetQuat;
+        let ang = null;
+        let frontAspect = ctx.frontAspect;
+        let haveGeom = false;
+        if (ctx.shooterPos && ctx.shooterQuat && ctx.enemyPos && typeof computeMissileLaunchGeometry === 'function') {
+            const geom = computeMissileLaunchGeometry(ctx.shooterPos, ctx.shooterQuat, ctx.enemyPos, tgtFwd);
+            if (geom && geom.angDeg != null && geom.angDeg !== '' && Number.isFinite(Number(geom.angDeg))) {
+                ang = Number(geom.angDeg);
+                haveGeom = true;
+            }
+            if (geom && geom.frontAspect != null && frontAspect == null) frontAspect = geom.frontAspect;
+        }
+        if (frontAspect == null && typeof fox2IsFrontAspect === 'function') {
+            frontAspect = fox2IsFrontAspect(ctx.shooterPos, ctx.enemyPos, tgtFwd);
+        }
+        if (!haveGeom) {
+            reasons.push('nogeom');
+            return { ok: false, reasons, doctrine, angleDeg: null, frontAspect: !!frontAspect };
+        }
+        const ok = typeof fox2LaunchAngleOk === 'function'
+            ? fox2LaunchAngleOk({ angDeg: ang, frontAspect: !!frontAspect }, doctrine.maxLaunchAngleDeg)
+            : (Number.isFinite(ang) && ang <= doctrine.maxLaunchAngleDeg);
+        if (!ok) reasons.push(frontAspect ? 'front' : 'angle');
+        return { ok: reasons.length === 0, reasons, doctrine, angleDeg: ang, frontAspect: !!frontAspect };
+    },
+
+    gateFox2MissileShoot(teamId, team, action, ctx = {}) {
+        if (!action || action.queueAction !== 'missile') return action;
+        const t = action.missileType || ctx.missileType || ctx.aiMissileType;
+        if (t === 'fox1') return action;
+        const next = Object.assign({}, ctx);
+        const selfPose = typeof fox2ReadLaunchPose === 'function'
+            ? fox2ReadLaunchPose(team)
+            : { pos: team && team.wrapper && team.wrapper.position, quat: team && team.wrapper && ((team.wrapper.userData && team.wrapper.userData.logicalQuat) || team.wrapper.quaternion) };
+        if (!next.shooterPos) next.shooterPos = selfPose.pos;
+        if (!next.shooterQuat) next.shooterQuat = selfPose.quat;
+        if ((!next.enemyPos || (!next.enemyForward && !next.enemyQuat)) && typeof combatEnemyOf === 'function' && team) {
+            const foe = combatEnemyOf(team.id || teamId);
+            const foePose = typeof fox2ReadLaunchPose === 'function'
+                ? fox2ReadLaunchPose(foe)
+                : { pos: foe && foe.wrapper && foe.wrapper.position, quat: foe && foe.wrapper && ((foe.wrapper.userData && foe.wrapper.userData.logicalQuat) || foe.wrapper.quaternion) };
+            if (!next.enemyPos) next.enemyPos = foePose.pos;
+            if (!next.enemyForward && !next.enemyQuat) next.enemyQuat = foePose.quat;
+        }
+        const commit = this.canCommitFox2Launch(next);
+        if (commit.ok) {
+            const turnHint = Number(next.turnNo);
+            const turnNow = Number.isFinite(turnHint)
+                ? turnHint
+                : (typeof GameContext !== 'undefined' && GameContext.state ? Number(GameContext.state.currentTurn) : NaN);
+            if (team) {
+                team.fox2LaunchCommit = {
+                    turn: Number.isFinite(turnNow) ? turnNow : null,
+                    angDeg: commit.angleDeg,
+                    front: !!commit.frontAspect
+                };
+            }
+            if (!action.debug) action.debug = {};
+            action.debug.fox2LaunchOk = 1;
+            return action;
+        }
+        if (team) team.fox2LaunchCommit = null;
+        action.queueAction = 'none';
+        action.singleMissile = false;
+        action.state = 'missilePrep';
+        action.powerPylons = action.powerPylons || false;
+        if (!action.debug) action.debug = {};
+        action.debug.fox2LaunchHold = 1;
+        action.debug.fox2LaunchHoldReasons = commit.reasons.slice();
+        const why = commit.reasons.join('+') || '?';
+        if (action.statusText && String(action.statusText).indexOf('尋標角') < 0) {
+            action.statusText = `${action.statusText}｜尋標角不足`;
+        }
+        action.reason = `FOX-2 launch held: ${why}`;
+        const tree = action.debug.tree;
+        if (Array.isArray(tree)) {
+            const cap = commit.doctrine.maxLaunchAngleDeg;
+            const shown = (commit.angleDeg != null && commit.angleDeg !== '' && Number.isFinite(Number(commit.angleDeg)))
+                ? Number(commit.angleDeg).toFixed(1)
+                : 'nogeom';
+            tree.push(`fox2Doctrine: launchHold ang=${shown}>${cap}${commit.frontAspect ? ' front' : ''} reasons=${why}`);
+        }
+        return action;
+    },
+
     updateFox1SequelState(teamId, team, ctx = {}) {
         const inFlight = this.hasOwnFox1InFlight(team);
         const was = !!this.fox1WasInFlightByTeam[teamId];
@@ -1116,6 +1206,9 @@ window.AirArenaAI = {
         // Full launch gates (alt / path / standoff) as last safety net before illuminate.
         if (action.queueAction === 'missile' && missileType === 'fox1' && teamId) {
             this.gateFox1MissileShoot(teamId, team, action, ctx);
+        }
+        if (action.queueAction === 'missile' && missileType !== 'fox1') {
+            this.gateFox2MissileShoot(teamId, team, action, ctx);
         }
 
         const inFlight = this.hasOwnFox1InFlight(team);
@@ -1662,8 +1755,11 @@ window.AirArenaAI = {
             ? Number(tuning.alignSoftFireKnifeAngMax)
             : 98;
         // Missiles spawn on nose; soft msl must stay near seeker cone (guns stay wide).
-        // Weapon knife: tighten soft msl (was mslA*1.05 / lz 0.72 → waste FOX-2 off-boresight).
-        const mslSoftAng = Math.min(softAng, Math.max(mslA * 1.02, mslA + 1));
+        // FOX-2 fire — rear/side 10°; front squeeze still 6°. FOX-1 keeps the wider align soft cap.
+        const fox2FireAng = Number((this.getMunitionDoctrine('fox2') || {}).maxLaunchAngleDeg) || 10;
+        const mslSoftAng = (ctx.missileType === 'fox2' || ctx.aiMissileType === 'fox2')
+            ? Math.min(softAng, fox2FireAng)
+            : Math.min(softAng, Math.max(mslA * 1.02, mslA + 1));
         const mslSoftLz = Math.max(softLz, 0.78);
         const inGunBand = dist <= gunR + 12;
         const preferMsl = !!(ctx.preferMissile || ctx.rangeMode === 'missile');
@@ -2478,6 +2574,39 @@ window.AirArenaAI = {
         return false;
     },
 
+    /** True when no obstacle AABB taller than pos covers pos in plan view (no slab can be overhead). */
+    isOverheadFootprintOpen(pos, margin = 2) {
+        const list = this.getObstacles();
+        if (!pos || !Array.isArray(list) || typeof THREE === 'undefined') return false;
+        const box = this._footprintBox || (this._footprintBox = new THREE.Box3());
+        for (let i = 0; i < list.length; i++) {
+            this.fillObstacleWorldBox(list[i], box);
+            if (box.max.y <= pos.y) continue;
+            if (
+                pos.x >= box.min.x - margin && pos.x <= box.max.x + margin &&
+                pos.z >= box.min.z - margin && pos.z <= box.max.z + margin
+            ) return false;
+        }
+        return true;
+    },
+
+    /**
+     * Taller facade ahead/beside with open sky overhead: a hard pull clears the roof.
+     * Plan-view footprint replaces headroom, which slab rules above treat as false-open.
+     */
+    isOpenFacadePullOver(pos, opts = {}) {
+        const roof = Number(opts.roofClearance);
+        const dist = Number(opts.coverDistance);
+        const fy = Number(opts.forwardY);
+        if (!pos || !(pos.y >= 30)) return false;
+        if (!(Number.isFinite(roof) && roof < 0 && roof >= -22)) return false;
+        if (!(Number.isFinite(dist) && dist < 20)) return false;
+        if (Number.isFinite(fy) && fy < -0.3) return false;
+        const kind = opts.hardChokeKind;
+        if (kind === 'tableUndercroft' || kind === 'tightUndercroft') return false;
+        return this.isOverheadFootprintOpen(pos, 2);
+    },
+
     /**
      * Single overhead classifier for dense-urban survival sticks.
      * See docs/Urban-Survival-Convergence.md — prefer this over new dump bans.
@@ -3120,7 +3249,7 @@ window.AirArenaAI = {
      * (T78: nestExitRetain + thr3 but death jx=±0.78).
      */
     clampSoftUrbanStick(action) {
-        if (!action || !this.shouldHoldSoftUrbanThrottle(action)) return action;
+        if (!action || action.routeGate || !this.shouldHoldSoftUrbanThrottle(action)) return action;
         // tableGlueFlip commit / hard flip must keep |jx|≈0.78 — soft nest clamp was undoing it.
         if (
             action.tableGlueFlipCommit ||
@@ -3167,7 +3296,7 @@ window.AirArenaAI = {
     },
 
     applyTableEscapeStickOwner(stick, opts = {}) {
-        if (!stick) return stick;
+        if (!stick || stick.routeGate) return stick;
         const cover = opts.coverInfo || {
             roofClearance: opts.roofClearance,
             distance: opts.coverDistance,
@@ -4952,6 +5081,508 @@ window.AirArenaAI = {
     },
 
     /**
+     * P0 on the winning scored stick, not only bake WP.
+     * Bake: hit or score < -160. Other modes: both (80/140 T150 skim −207 hit=1).
+     * Do not widen the −160 floor.
+     */
+    isDeadScoredEscapeCut(mode, buildingHit, score) {
+        if (this.isDeadBakeRouteCut(mode, buildingHit, score)) return true;
+        if (this.isBakeRouteEscapeMode(mode)) return false;
+        const n = Number(score);
+        return !!buildingHit && Number.isFinite(n) && n < -160;
+    },
+
+    /**
+     * Path pick: do not keep a hitting winner when a non-hit scored branch exists.
+     * Does not widen the −160 floor. No-alt leftover stays (do not invent a flip).
+     */
+    isClearStickSwap(winner, nonHit) {
+        if (!winner || !nonHit || winner === nonHit) return false;
+        if (!winner.buildingHit || nonHit.buildingHit) return false;
+        const n = Number(nonHit.score);
+        return Number.isFinite(n) && n > -160;
+    },
+
+    /**
+     * Held-stick arc before the nest: own side hits the wall, the other side does not.
+     * Temporary thaw on this swap only — ignores the −160 floor and may bank opposite.
+     * Both arcs hitting does not swap.
+     */
+    shouldTurnClearanceSwap(ownHit, otherHit) {
+        return ownHit === true && otherHit === false;
+    },
+
+    /**
+     * Flat world direction toward the nearest cover point. Null when there is no bearing.
+     */
+    turnClearWallDir(coverInfo = {}) {
+        const d = coverInfo && coverInfo.direction;
+        const x = Number(d && d.x);
+        const z = Number(d && d.z);
+        if (!Number.isFinite(x) || !Number.isFinite(z)) return null;
+        if (x * x + z * z < 1e-8) return null;
+        return { x, z };
+    },
+
+    /**
+     * Yaw the held stick must finish before the building is abeam.
+     * Dead ahead needs a quarter turn. Already abeam still flies a quarter turn,
+     * so a stick that turns into the wall is not marked clean on the first frame.
+     * No meter margin — the angle is the nose versus the cover bearing.
+     */
+    turnClearNeedYaw(alpha) {
+        const a = Math.abs(Number(alpha) || 0);
+        let needYaw = Math.PI / 2 - Math.min(a, Math.PI / 2);
+        if (needYaw < 0.05) needYaw = Math.PI / 2;
+        return needYaw;
+    },
+
+    /**
+     * Hold one stick (no softened joyX) until the nose has yawed the building abeam.
+     * Uses simulateFlight, so throttle turnLimit is the turn rate.
+     * A mesh hit before that yaw is a hit. Eight commands exhausted first is cap,
+     * and cap is not a clean miss.
+     */
+    heldStickArcHits(teamId, action, wallDir) {
+        const team = (typeof GameContext !== 'undefined' && GameContext.getTeam)
+            ? GameContext.getTeam(teamId)
+            : null;
+        const empty = { hit: null, traveled: 0, stop: 'skip', yaw: 0, needYaw: 0 };
+        if (!team || !team.wrapper || typeof simulateFlight !== 'function' || !action) return empty;
+        const wx = Number(wallDir && wallDir.x);
+        const wz = Number(wallDir && wallDir.z);
+        if (!Number.isFinite(wx) || !Number.isFinite(wz) || (wx * wx + wz * wz) < 1e-8) return empty;
+        const sim = this.simulateBanked(team, new Array(8).fill(action));
+        const points = sim.points || [];
+        const quats = sim.quats || [];
+        if (points.length < 2 || quats.length < 2 || typeof THREE === 'undefined') return empty;
+        const noseOf = (quat) => {
+            if (!quat) return null;
+            const v = new THREE.Vector3(0, 0, 1).applyQuaternion(quat);
+            v.y = 0;
+            const len = Math.hypot(v.x, v.z);
+            if (len < 1e-8) return null;
+            return { x: v.x / len, z: v.z / len };
+        };
+        const signed = (a, b) => Math.atan2(a.z * b.x - a.x * b.z, a.x * b.x + a.z * b.z);
+        const start = noseOf(quats[0]);
+        if (!start) return empty;
+        const wallLen = Math.hypot(wx, wz);
+        const wall = { x: wx / wallLen, z: wz / wallLen };
+        const needYaw = this.turnClearNeedYaw(signed(start, wall));
+        const obstacles = this.getObstacles ? (this.getObstacles() || []) : [];
+        const startY = Number(points[0].y) || 0;
+        let traveled = 0;
+        let yaw = 0;
+        let maxY = startY;
+        let minY = startY;
+        const pack = (hit, stop) => ({
+            hit,
+            traveled: Number(traveled.toFixed(1)),
+            stop,
+            yaw: Number((yaw * 180 / Math.PI).toFixed(0)),
+            needYaw: Number((needYaw * 180 / Math.PI).toFixed(0)),
+            altGain: Number((maxY - startY).toFixed(1)),
+            altDrop: Number((startY - minY).toFixed(1))
+        });
+        for (let i = 1; i < points.length; i++) {
+            const y = Number(points[i].y);
+            if (Number.isFinite(y)) {
+                if (y > maxY) maxY = y;
+                if (y < minY) minY = y;
+            }
+            const move = points[i].clone().sub(points[i - 1]);
+            const step = move.length();
+            if (step > 0.0001 && obstacles.length && this.raycaster) {
+                this.raycaster.set(points[i - 1], move.normalize());
+                this.raycaster.near = 0;
+                this.raycaster.far = step;
+                if (this.raycaster.intersectObjects(obstacles, true).length > 0) {
+                    traveled += step;
+                    return pack(true, 'hit');
+                }
+            }
+            traveled += step;
+            const nose = noseOf(quats[i]);
+            if (nose) yaw = Math.abs(signed(start, nose));
+            if (yaw >= needYaw) return pack(false, 'cover');
+        }
+        return pack(null, 'cap');
+    },
+
+    /**
+     * Roll is a per-beat rotation that persists in the pose, so a decided roll is
+     * read as the bank wanted and flown as the shortest roll from the current bank.
+     * Near a vertical nose the bank is undefined and no roll is sent.
+     */
+    rollTowardBank(quat, targetBank, limit = Math.PI / 4) {
+        // Exactly 0 makes the game loop fly joyX * PI/4 instead (pendingRoll !== 0 test).
+        const nonZero = (r) => (Math.abs(r) < 1e-4 ? 1e-4 : r);
+        if (!quat || typeof THREE === 'undefined') return nonZero(Number(targetBank) || 0);
+        const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(quat);
+        if (Math.abs(fwd.y) > 0.85) return 1e-4;
+        const right = new THREE.Vector3(1, 0, 0).applyQuaternion(quat);
+        const up = new THREE.Vector3(0, 1, 0).applyQuaternion(quat);
+        const bank = Math.atan2(right.y, up.y);
+        if (!Number.isFinite(bank)) return 1e-4;
+        let delta = (Number(targetBank) || 0) - bank;
+        delta = Math.atan2(Math.sin(delta), Math.cos(delta));
+        return nonZero(this.clamp(delta, -limit, limit));
+    },
+
+    bankRollLimit(team) {
+        const acConfig = (typeof CONFIG !== 'undefined' && CONFIG.aircrafts && team)
+            ? CONFIG.aircrafts[team.type || 'mig21']
+            : null;
+        const maxRoll = acConfig && Number.isFinite(acConfig.maxRoll) ? acConfig.maxRoll : Math.PI / 4;
+        return Math.min(Math.PI / 3, maxRoll);
+    },
+
+    /**
+     * Escape / pull-up family flies roll as a bank target; combat states keep the
+     * accumulating roll. Escape writers tag escapeBank because their state label
+     * can be a countermeasure state shared with combat.
+     */
+    bankTargetAction(action) {
+        if (!action) return false;
+        if (action.escapeBank) return true;
+        const s = String(action.state || '');
+        return s === 'emergencyPullUp'
+            || s === 'obstacleEmergencyEscape'
+            || s === 'urbanRouteEscape'
+            || s === 'postGroundClimbOut'
+            || s === 'groundAvoid'
+            || s === 'airspaceAvoid'
+            || s === 'alignFirst'
+            || s === 'mergeBreak'
+            || s === 'mandatoryMergeBreak'
+            || s === 'tacticalBeamReposition';
+    },
+
+    /**
+     * simulateFlight one command at a time. With bankTarget each roll is converted
+     * from the bank wanted to the roll flown from that command's starting pose.
+     */
+    simulateBanked(team, actions, bankTarget = true) {
+        const empty = { points: [], quats: [], finalAP: team ? team.ap : null };
+        if (!team || !team.wrapper || typeof simulateFlight !== 'function' || !actions.length) return empty;
+        const startQuat = (team.wrapper.userData && team.wrapper.userData.logicalQuat) || team.wrapper.quaternion;
+        if (!startQuat) return empty;
+        const proxy = {
+            type: team.type,
+            ap: team.ap,
+            throttle: team.throttle,
+            wrapper: {
+                position: team.wrapper.position.clone(),
+                userData: { logicalQuat: startQuat.clone() }
+            }
+        };
+        const limit = this.bankRollLimit(team);
+        const points = [proxy.wrapper.position.clone()];
+        const quats = [proxy.wrapper.userData.logicalQuat.clone()];
+        let finalAP = proxy.ap;
+        for (const action of actions) {
+            const cmd = this.actionToCommand(team, action);
+            if (bankTarget) cmd.roll = this.rollTowardBank(proxy.wrapper.userData.logicalQuat, cmd.roll, limit);
+            const sim = simulateFlight(proxy, [cmd]);
+            const p = sim.points || [];
+            const q = sim.quats || [];
+            if (p.length < 2 || q.length < 2) break;
+            for (let i = 1; i < p.length; i++) points.push(p[i]);
+            for (let i = 1; i < q.length; i++) quats.push(q[i]);
+            proxy.wrapper.position.copy(p[p.length - 1]);
+            proxy.wrapper.userData.logicalQuat = q[q.length - 1].clone();
+            proxy.ap = sim.finalAP;
+            finalAP = sim.finalAP;
+        }
+        return { points, quats, finalAP };
+    },
+
+    /** Exit conversion: the decided roll (or joyX * PI/4 when absent) is the bank wanted. */
+    applyBankTarget(teamId, action) {
+        if (!action || !this.bankTargetAction(action)) return action;
+        const team = (typeof GameContext !== 'undefined' && GameContext.getTeam)
+            ? GameContext.getTeam(teamId)
+            : null;
+        if (!team || !team.wrapper) return action;
+        const quat = (team.wrapper.userData && team.wrapper.userData.logicalQuat) || team.wrapper.quaternion;
+        const target = typeof action.roll === 'number' ? action.roll : (Number(action.joyX) || 0) * (Math.PI / 4);
+        action.rollTarget = Number(target.toFixed(3));
+        action.roll = this.rollTowardBank(quat, target, this.bankRollLimit(team));
+        if (action.debug && Array.isArray(action.debug.tree)) {
+            action.debug.tree.push(`bankTarget: target=${action.rollTarget} roll=${Number(action.roll.toFixed(3))}`);
+        }
+        return action;
+    },
+
+    /**
+     * The command the scored escape writer sends for this stick: pitchCmd from
+     * pitchScale and roll from joyX times rollAuth. joyY does not fly while pitchCmd is set.
+     */
+    routeFlownAction(teamId, action) {
+        const team = (typeof GameContext !== 'undefined' && GameContext.getTeam)
+            ? GameContext.getTeam(teamId)
+            : null;
+        const acConfig = (typeof CONFIG !== 'undefined' && CONFIG.aircrafts && team)
+            ? CONFIG.aircrafts[team.type || 'mig21']
+            : null;
+        const maxPitch = acConfig ? acConfig.maxPitch : Math.PI / 3;
+        const rollAuth = Number(action.rollAuth) || Math.PI / 10;
+        return {
+            ...action,
+            pitchCmd: -maxPitch * (Number(action.pitchScale) || 0.28),
+            roll: this.clamp((Number(action.joyX) || 0) * rollAuth, -rollAuth, rollAuth)
+        };
+    },
+
+    /**
+     * Straight climb held wings-level, simulated as it is flown: the escape writes
+     * pitchCmd from pitchScale, so this arc uses pitchCmd, not joyY.
+     * Cover is gaining the roof deficit plus 4. A mesh hit first is a hit.
+     * Eight commands exhausted first is cap. Need above overhead headroom is skip.
+     * Cover also needs AP at or above stall after the commands flown.
+     */
+    heldClimbArc(teamId, action, coverInfo = {}) {
+        const team = (typeof GameContext !== 'undefined' && GameContext.getTeam)
+            ? GameContext.getTeam(teamId)
+            : null;
+        const empty = { hit: null, traveled: 0, stop: 'skip', gain: 0, need: 0, ap: null };
+        if (!team || !team.wrapper || typeof simulateFlight !== 'function' || !action) return empty;
+        const roof = Number(coverInfo.roofClearance);
+        if (!Number.isFinite(roof)) return empty;
+        const need = Math.max(0, -roof) + 4;
+        const head = Number(coverInfo.headroom);
+        if (Number.isFinite(head) && head < 900 && need > head) return { ...empty, need: Number(need.toFixed(1)) };
+        const sim = this.simulateBanked(team, new Array(8).fill(action));
+        const points = sim.points || [];
+        if (points.length < 2) return empty;
+        const obstacles = this.getObstacles ? (this.getObstacles() || []) : [];
+        const startY = Number(points[0].y) || 0;
+        const stallAp = (typeof CONFIG !== 'undefined' && CONFIG.rules && CONFIG.rules.stallSpeedAP) || 35;
+        let traveled = 0;
+        let gain = 0;
+        const pack = (hit, stop, ap = null) => ({
+            hit,
+            traveled: Number(traveled.toFixed(1)),
+            stop,
+            gain: Number(gain.toFixed(1)),
+            need: Number(need.toFixed(1)),
+            ap: ap == null ? null : Math.floor(ap)
+        });
+        for (let i = 1; i < points.length; i++) {
+            const move = points[i].clone().sub(points[i - 1]);
+            const step = move.length();
+            if (step > 0.0001 && obstacles.length && this.raycaster) {
+                this.raycaster.set(points[i - 1], move.normalize());
+                this.raycaster.near = 0;
+                this.raycaster.far = step;
+                if (this.raycaster.intersectObjects(obstacles, true).length > 0) {
+                    traveled += step;
+                    return pack(true, 'hit');
+                }
+            }
+            traveled += step;
+            gain = (Number(points[i].y) || 0) - startY;
+            if (gain >= need) {
+                const flown = this.simulateBanked(team, new Array(Math.ceil(i / 30)).fill(action));
+                const ap = Number(flown.finalAP);
+                if (!(ap >= stallAp)) return pack(false, 'stall', ap);
+                return pack(false, 'cover', ap);
+            }
+        }
+        return pack(null, 'cap');
+    },
+
+    /**
+     * Altitude half of the urban route gate.
+     * Climb past overhead headroom, or a drop into the existing dirt band (alt < 14), is a dead end.
+     */
+    urbanRouteAltDead(arc, coverInfo = {}, altitude = null) {
+        if (!arc) return false;
+        const gain = Number(arc.altGain) || 0;
+        const drop = Number(arc.altDrop) || 0;
+        const head = Number(coverInfo.headroom);
+        if (Number.isFinite(head) && head < 900 && gain > head) return true;
+        const alt = Number(altitude);
+        if (Number.isFinite(alt) && alt > 14 && drop > (alt - 14)) return true;
+        return false;
+    },
+
+    /**
+     * A side is legal only when the held arc yaws the wall abeam without a mesh hit
+     * and the altitude change stays out of the slab and the dirt band.
+     * Cap is not legal.
+     */
+    urbanRouteSideOk(arc, coverInfo = {}, altitude = null) {
+        if (!arc || arc.hit !== false || arc.stop !== 'cover') return false;
+        return !this.urbanRouteAltDead(arc, coverInfo, altitude);
+    },
+
+    /**
+     * Next lower detent on the existing 5–1 throttle. Null at idle/brake already.
+     */
+    urbanRouteLowerThrottle(throttle) {
+        const t = Math.round(Number(throttle) || 0);
+        if (t <= 1 || t > 5) return null;
+        return t - 1;
+    },
+
+    /**
+     * Score winner, then this gate, then dead-cut.
+     * Accept the held arc when it is legal. Swap only when this side is illegal and the other side is legal.
+     * A cap retests once at the unsoftened score bank, then once at the next lower throttle.
+     * Both sides hitting retests once at that same lower detent, same joy.
+     * When both sides are still illegal and the lane says straight climb is open
+     * (not under a slab or table choke), a wings-level climb is tested as flown and kept on cover.
+     * Any other illegal pair leaves the scored stick for the existing dead-cut.
+     */
+    applyUrbanRouteGate(teamId, best, coverInfo = {}, altitude = null, debugTree = null, sideAuth = 0, climbOpen = false) {
+        if (!best) return best;
+        const wallDir = this.turnClearWallDir(coverInfo);
+        const ownSide = Math.sign(Number(best.joyX) || 0);
+        const hitBit = (arc) => (arc && arc.hit === true ? 1 : (arc && arc.hit === false ? 0 : 'x'));
+        const altBit = (arc) => (this.urbanRouteAltDead(arc, coverInfo, altitude) ? 'dead' : 'ok');
+        let probe = 'turnClearProbe: skip=noWall';
+        if (!wallDir) probe = 'turnClearProbe: skip=noWall';
+        else if (!ownSide) probe = 'turnClearProbe: skip=noSide';
+        else {
+            const curMag = Math.abs(Number(best.joyX) || 0);
+            let ownAction = best;
+            let otherAction = {
+                ...best,
+                joyX: -ownSide * curMag
+            };
+            let own = this.heldStickArcHits(teamId, this.routeFlownAction(teamId, ownAction), wallDir);
+            let other = this.heldStickArcHits(teamId, this.routeFlownAction(teamId, otherAction), wallDir);
+            let ownOk = this.urbanRouteSideOk(own, coverInfo, altitude);
+            let otherOk = this.urbanRouteSideOk(other, coverInfo, altitude);
+            const ownWasCap = own.stop === 'cap';
+            const otherWasCap = other.stop === 'cap';
+            probe = `turnClearProbe: own=${hitBit(own)} other=${hitBit(other)} needYaw=${own.needYaw} ownStop=${own.stop} otherStop=${other.stop} ownM=${own.traveled} othM=${other.traveled} ownYaw=${own.yaw} othYaw=${other.yaw} ownAlt=${altBit(own)} othAlt=${altBit(other)}`;
+            const hardMag = Math.min(0.78, Math.max(curMag, Number(sideAuth) || 0));
+            let usedHard = false;
+            if (!ownOk && !otherOk && hardMag > curMag + 0.02 && (ownWasCap || otherWasCap)) {
+                if (ownWasCap) {
+                    ownAction = { ...best, joyX: ownSide * hardMag };
+                    own = this.heldStickArcHits(teamId, this.routeFlownAction(teamId, ownAction), wallDir);
+                    ownOk = this.urbanRouteSideOk(own, coverInfo, altitude);
+                }
+                if (otherWasCap) {
+                    otherAction = { ...best, joyX: -ownSide * hardMag };
+                    other = this.heldStickArcHits(teamId, this.routeFlownAction(teamId, otherAction), wallDir);
+                    otherOk = this.urbanRouteSideOk(other, coverInfo, altitude);
+                }
+                probe += ` hardOwn=${hitBit(own)} hardOth=${hitBit(other)} hardOwnStop=${own.stop} hardOthStop=${other.stop}`;
+                usedHard = true;
+            }
+            const lowThr = this.urbanRouteLowerThrottle(best.throttle);
+            let ownThrCap = false;
+            let otherThrCap = false;
+            if (!ownOk && !otherOk && lowThr != null && (own.stop === 'cap' || other.stop === 'cap')) {
+                ownThrCap = own.stop === 'cap';
+                otherThrCap = other.stop === 'cap';
+                if (ownThrCap) {
+                    ownAction = { ...ownAction, throttle: lowThr };
+                    own = this.heldStickArcHits(teamId, this.routeFlownAction(teamId, ownAction), wallDir);
+                    ownOk = this.urbanRouteSideOk(own, coverInfo, altitude);
+                }
+                if (otherThrCap) {
+                    otherAction = { ...otherAction, throttle: lowThr };
+                    other = this.heldStickArcHits(teamId, this.routeFlownAction(teamId, otherAction), wallDir);
+                    otherOk = this.urbanRouteSideOk(other, coverInfo, altitude);
+                }
+                probe += ` thrDet=${lowThr} thrOwn=${hitBit(own)} thrOth=${hitBit(other)} thrOwnStop=${own.stop} thrOthStop=${other.stop}`;
+            }
+            let ownThrHit = false;
+            let otherThrHit = false;
+            if (!ownOk && !otherOk && lowThr != null && !ownThrCap && !otherThrCap
+                && own.stop === 'hit' && other.stop === 'hit') {
+                ownThrHit = true;
+                otherThrHit = true;
+                ownAction = { ...ownAction, throttle: lowThr };
+                own = this.heldStickArcHits(teamId, this.routeFlownAction(teamId, ownAction), wallDir);
+                ownOk = this.urbanRouteSideOk(own, coverInfo, altitude);
+                otherAction = { ...otherAction, throttle: lowThr };
+                other = this.heldStickArcHits(teamId, this.routeFlownAction(teamId, otherAction), wallDir);
+                otherOk = this.urbanRouteSideOk(other, coverInfo, altitude);
+                probe += ` hitDet=${lowThr} hitOwn=${hitBit(own)} hitOth=${hitBit(other)} hitOwnStop=${own.stop} hitOthStop=${other.stop}`;
+            }
+            const climbScale = 0.58;
+            let climbAction = null;
+            let climbOk = false;
+            if (!ownOk && !otherOk && climbOpen) {
+                const gateTeam = (typeof GameContext !== 'undefined' && GameContext.getTeam)
+                    ? GameContext.getTeam(teamId)
+                    : null;
+                const acConfig = (typeof CONFIG !== 'undefined' && CONFIG.aircrafts && gateTeam)
+                    ? CONFIG.aircrafts[gateTeam.type || 'mig21']
+                    : null;
+                const maxPitch = acConfig ? acConfig.maxPitch : Math.PI / 3;
+                climbAction = {
+                    ...best,
+                    joyX: 0,
+                    joyY: climbScale,
+                    pitchCmd: -maxPitch * climbScale,
+                    roll: 0
+                };
+                const climb = this.heldClimbArc(teamId, climbAction, coverInfo);
+                climbOk = climb.stop === 'cover';
+                probe += ` climb=${climb.stop} climbM=${climb.traveled} climbGain=${climb.gain} climbNeed=${climb.need} climbAp=${climb.ap == null ? 'x' : climb.ap}`;
+            }
+            if (ownOk || otherOk) {
+                const swapped = !ownOk && otherOk;
+                const kept = swapped ? otherAction : ownAction;
+                const hardKeep = usedHard && ((swapped && otherWasCap) || (!swapped && ownWasCap));
+                const thrKeep = (swapped && (otherThrCap || otherThrHit)) || (!swapped && (ownThrCap || ownThrHit));
+                if (swapped) {
+                    best.joyX = kept.joyX;
+                    best.turnClear = 1;
+                    best.buildingHit = false;
+                } else if (hardKeep) {
+                    best.joyX = kept.joyX;
+                }
+                if (thrKeep) best.throttle = kept.throttle;
+                best.routeGate = 1;
+                best.turnClearAway = 1;
+                best.routeGateJoyX = Number(kept.joyX);
+                best.routeGateJoyY = Number(kept.joyY);
+                best.routeGateThrottle = kept.throttle;
+                best.routeGatePitchScale = Number(kept.pitchScale) || 0.28;
+                best.routeGateRollAuth = Number(kept.rollAuth) || Math.PI / 10;
+                if (best.reason && !/routeGate=/.test(String(best.reason))) {
+                    best.reason = `${best.reason} | routeGate=1${best.turnClear ? ' turnClear=1 turnClearAway=1' : ' turnClearAway=1'}${hardKeep ? ' hard=1' : ''}${thrKeep ? ' thrDown=1' : ''}`;
+                }
+                if (debugTree && Array.isArray(debugTree)) {
+                    debugTree.push(swapped ? 'routeGate: swap=1' : (thrKeep ? 'routeGate: thr=1' : (hardKeep ? 'routeGate: hard=1' : 'routeGate: keep=1')));
+                }
+            } else if (climbOk) {
+                best.joyX = 0;
+                best.joyY = climbScale;
+                best.pitchScale = climbScale;
+                best.diveLevelPull = false;
+                best.buildingHit = false;
+                best.routeClimb = 1;
+                best.routeGate = 1;
+                best.turnClearAway = 1;
+                best.routeGateJoyX = 0;
+                best.routeGateJoyY = climbScale;
+                best.routeGateThrottle = climbAction.throttle;
+                best.routeGatePitchScale = climbScale;
+                best.routeGateRollAuth = Number(best.rollAuth) || Math.PI / 10;
+                if (best.reason && !/routeClimb=/.test(String(best.reason))) {
+                    best.reason = `${best.reason} | routeGate=1 turnClearAway=1 routeClimb=1`;
+                }
+                if (debugTree && Array.isArray(debugTree)) debugTree.push('routeGate: climb=1');
+            }
+        }
+        if (best.reason && !/turnClearProbe:/.test(String(best.reason))) {
+            best.reason = `${best.reason} | ${probe}`;
+        }
+        if (debugTree && Array.isArray(debugTree)) debugTree.push(probe);
+        return best;
+    },
+
+    /**
      * P0: drop sticky WP memory + gapHold so next turn can flip homotopy (not stick ban).
      */
     breakSurvivalWpDeadCut(teamId, turnNo, why = 'deadWp') {
@@ -5814,12 +6445,29 @@ window.AirArenaAI = {
                     : 'Scored escape: facade-bowl climb-out'
             });
         }
+        const pullOverOk = this.isOpenFacadePullOver(team.wrapper.position, {
+            roofClearance: roof,
+            coverDistance: dist,
+            forwardY,
+            hardChokeKind: chokeKind
+        });
+        if (pullOverOk) {
+            prototypes.push({
+                mode: 'scorePullOver',
+                branch: 'pullOver',
+                joyX: 0,
+                joyY: 0.62,
+                reason: 'Scored escape: open-sky facade pull-over'
+            });
+        }
 
         const horizon = 3;
         let best = null;
         let bestScore = -Infinity;
         let bestClear = null;
         let bestClearScore = -Infinity;
+        let bestNonHit = null;
+        let bestNonHitScore = -Infinity;
         let hitCount = 0;
         let scoredCount = 0;
         // Knife 2: gap may bias scores, but commit/gapOwns only if open side safety-cleared.
@@ -6012,7 +6660,7 @@ window.AirArenaAI = {
                 }
                 if (Number(proto.joyY) < 0.08) score -= 35;
                 // Dirt arrest needs joyY≈0.38 at alt 20–24 — do not treat as climb-into-slab.
-                if (alt >= 20 && Number(proto.joyY) > 0.28 && !slabDirtArrest) score -= 45;
+                if (alt >= 20 && Number(proto.joyY) > 0.28 && !slabDirtArrest && proto.branch !== 'pullOver') score -= 45;
                 if (slabDirtArrest && Number(proto.joyY) >= 0.32 && Number(proto.joyY) <= 0.78) score += 28;
                 if (alt < 18 && Number(proto.joyY) >= 0.22 && Number(proto.joyY) <= 0.48) score += 36;
                 if (alt < 14 && Number(proto.joyY) < 0.24) score -= 40;
@@ -6051,12 +6699,13 @@ window.AirArenaAI = {
                 joyX: candidate.joyX,
                 joyY: candidate.joyY,
                 throttle: candidate.throttle,
-                pitchScale: slabDirtArrest
+                pitchScale: slabDirtArrest || proto.branch === 'pullOver'
                     ? 0.58
                     : (undercroftSkim ? 0.16 : (forwardY < -0.35 ? 0.48 : 0.28)),
                 rollAuth: Math.PI / 10,
                 diveLevelPull: !!candidate.diveLevelPull || slabDirtArrest,
-                dirtPullFloor: undercroftSkim || alt < 8,
+                dirtPullFloor: proto.branch === 'pullOver' ? false : (undercroftSkim || alt < 8),
+                pullOver: proto.branch === 'pullOver' ? 1 : undefined,
                 statusText: `NPC: 評分脫離(${proto.branch}) ${opts.coverLabel || ''}`,
                 reason: `${proto.reason} score=${score.toFixed(1)} hit=${ev.buildingHit ? 1 : 0} nb=${ev.nearestBuilding}`,
                 score: Number(score.toFixed(1)),
@@ -6067,15 +6716,24 @@ window.AirArenaAI = {
                 bestScore = score;
                 best = pickRow;
             }
-            // P0: keep best non-dead bake alternative (side/flip/gap/level) for hard reject swap.
-            if (!this.isDeadBakeRouteCut(proto.mode, ev.buildingHit, score) && score > bestClearScore) {
+            // P0: keep best non-dead alternative (bake or scored skim) for hard reject swap.
+            if (!this.isDeadScoredEscapeCut(proto.mode, ev.buildingHit, score) && score > bestClearScore) {
                 bestClearScore = score;
                 bestClear = pickRow;
             }
+            if (!ev.buildingHit && score > bestNonHitScore) {
+                bestNonHitScore = score;
+                bestNonHit = pickRow;
+            }
         }
-        // P0: never finish on bake survival / bake-corridor hit=1 or collapsed cut.
-        if (best && this.isDeadBakeRouteCut(best.mode, best.buildingHit, bestScore)) {
+        // Route gate before dead-cut invents an unscored flip. Accepted stick is kept later.
+        if (best && team) {
+            this.applyUrbanRouteGate(teamId, best, coverInfo, alt, opts.debugTree, sideAuth, !!opts.straightClimbOpen && !tableChoke);
+        }
+        // P0: never finish on bake hit/collapse, or scored skim hit=1 and score < -160.
+        if (best && !best.routeGate && this.isDeadScoredEscapeCut(best.mode, best.buildingHit, bestScore)) {
             const wasHit = !!best.buildingHit;
+            const wasBake = this.isBakeRouteEscapeMode(best.mode);
             let rejectWhy = wasHit ? 'hit1' : 'scoreCollapse';
             if (bestClear && bestClear !== best) {
                 best = bestClear;
@@ -6104,9 +6762,25 @@ window.AirArenaAI = {
             if (best.reason && !/pocketReject=/.test(String(best.reason))) {
                 best.reason = `${best.reason} | pocketReject=${rejectWhy} replan=deadWp`;
             }
+            if (!wasBake && best.reason && !/deadStick=/.test(String(best.reason))) {
+                best.reason = `${best.reason} | deadStick=1`;
+            }
             if (opts.debugTree && Array.isArray(opts.debugTree)) {
                 opts.debugTree.push(`survivalWp: replan=deadWp pocketReject=${rejectWhy}`);
+                if (!wasBake) opts.debugTree.push('deadStick: reject=1');
             }
+        }
+        if (best && !best.routeGate) {
+        if (this.isClearStickSwap(best, bestNonHit)) {
+            best = bestNonHit;
+            bestScore = bestNonHitScore;
+            if (best.reason && !/clearStick=/.test(String(best.reason))) {
+                best.reason = `${best.reason} | clearStick=1`;
+            }
+            if (opts.debugTree && Array.isArray(opts.debugTree)) {
+                opts.debugTree.push('clearStick: swap=1');
+            }
+        }
         }
         // Knife 2: geometric gap is soft bias; commit only when open-side scored clear.
         const gapCorrOpen = !!(
@@ -6399,6 +7073,13 @@ window.AirArenaAI = {
                 } else if (Number.isFinite(dist) && dist >= 6) {
                     this.clearUndercroftAllHitStuck(teamId);
                 }
+                if (best.turnClearAway) {
+                    const keep = Math.sign(Number(best.joyX) || 0);
+                    if (keep) {
+                        cutSide = keep;
+                        flipped = true;
+                    }
+                }
                 best.joyX = this.clamp(
                     cutSide * (stuckMeta.hitFlip ? 0.78 : (undercroftSkim ? 0.72 : 0.58)),
                     -0.82,
@@ -6439,6 +7120,7 @@ window.AirArenaAI = {
                             (Number.isFinite(dist) && dist < 8 && Number.isFinite(roof) && roof < -0.8),
                         sameSideHitStreak: Number(stuckMeta.hitStreak) || 0,
                         tableGlueFlip: !!stuckMeta.hitFlip,
+                        turnClearAway: !!best.turnClearAway,
                         gapOwnsSafe,
                         buildingHit: !!best.buildingHit,
                         score: bestScore,
@@ -6895,7 +7577,7 @@ window.AirArenaAI = {
                 out.reason = `${out.reason} | nestExit=allHit softBank thr≤3`;
             }
         }
-        out = this.applyTableEscapeStickOwner(out || best, {
+        out = (out && out.routeGate) ? out : this.applyTableEscapeStickOwner(out || best, {
             teamId,
             turnNo: opts.turnNo,
             coverInfo,
@@ -6921,6 +7603,15 @@ window.AirArenaAI = {
         this.stripProvisionalUndercroftSkimTag(out);
         if (out && htEsc && htEsc.active && out.reason && !/homotopy=/.test(String(out.reason))) {
             out.reason = `${out.reason} | homotopy=${htEsc.active.homotopyId} pocket=${Number(htEsc.active.pocketScore).toFixed(2)}`;
+        }
+        if (out && out.routeGate) {
+            out.joyX = out.routeGateJoyX;
+            out.joyY = out.routeGateJoyY;
+            out.throttle = out.routeGateThrottle;
+            out.pitchScale = out.routeGatePitchScale;
+            out.rollAuth = out.routeGateRollAuth;
+            if (out.routeClimb) out.diveLevelPull = false;
+            return out;
         }
         return this.clampSoftUrbanStick(out);
     },
@@ -9112,6 +9803,7 @@ window.AirArenaAI = {
      */
     applyScoredAllHitNestExit(stick, opts = {}) {
         if (!stick) return stick;
+        if (stick.routeGate || stick.turnClearAway || opts.routeGate || opts.turnClearAway) return stick;
         const dist = Number(opts.coverDistance);
         const alt = Number(opts.altitude);
         const fy = Number(opts.forwardY);
@@ -9199,6 +9891,7 @@ window.AirArenaAI = {
      */
     applyScoredEscapeFailRecovery(stick, opts = {}) {
         if (!stick) return stick;
+        if (stick.routeGate || stick.turnClearAway || opts.routeGate || opts.turnClearAway) return stick;
         const dist = Number(opts.coverDistance);
         const alt = Number(opts.altitude);
         const fy = Number(opts.forwardY);
@@ -9301,10 +9994,17 @@ window.AirArenaAI = {
                 flipped = !!(cur && cur !== exitSide);
             }
         }
+        if (stick.turnClearAway || opts.turnClearAway) {
+            const keep = Math.sign(Number(stick.joyX) || 0);
+            if (keep) {
+                exitSide = keep;
+                flipped = true;
+            }
+        }
         if (opts.teamId && exitSide) {
             this.resolveTableStickAwaySide(opts.teamId, exitSide, opts.turnNo, {
                 coverDistance: dist,
-                forceFlip: tableGlueFlip
+                forceFlip: tableGlueFlip || !!(stick.turnClearAway || opts.turnClearAway)
             });
             this.clearUndercroftAllHitStuck(opts.teamId);
             this.noteCollapseExitLock(opts.teamId, exitSide, opts.turnNo, streak);
@@ -9723,7 +10423,8 @@ window.AirArenaAI = {
      * @returns {-1|1}
      */
     resolveAirspaceInwardSide(teamId, crossY, turnNo = 1, commitTurns = 12, opts = {}) {
-        const instant = crossY >= 0 ? -1 : 1;
+        // crossY = (fwd × outward).y; positive joyX turns forward toward +x, so the short turn inward is +1 here.
+        const instant = crossY >= 0 ? 1 : -1;
         const t = Math.max(1, Number(turnNo) || 1);
         const hold = Math.max(4, Math.min(24, Number(commitTurns) || 12));
         const outboundDot = Number(opts.outboundDot);
@@ -11116,10 +11817,22 @@ window.AirArenaAI = {
         return st === 'tacticalEnergyCruise' || st === 'tacticalEnergyCruiseCut';
     },
 
+    isRecommitPreferredTapState(state) {
+        const st = String(state || '');
+        return st === 'tacticalLeadIntercept' || st === 'tacticalCorridorCut';
+    },
+
+    isDefendPreferredTapState(state) {
+        const st = String(state || '');
+        return st === 'tacticalBeamReposition';
+    },
+
     isRolePreferredTapState(role, state) {
         if (role === 'seek_angle') return this.isSeekAnglePreferredTapState(state);
         if (role === 'press') return this.isPressPreferredTapState(state);
         if (role === 'extend') return this.isExtendPreferredTapState(state);
+        if (role === 'recommit') return this.isRecommitPreferredTapState(state);
+        if (role === 'defend') return this.isDefendPreferredTapState(state);
         return false;
     },
 
@@ -11158,9 +11871,9 @@ window.AirArenaAI = {
     },
 
     /**
-     * A.0 / A.2a: role preferred TAP catalog + safety fallback.
-     * seek_angle → lag/beam. press → lead/cut. extend → cruise (lead banned unless fallback).
-     * Does not change catalog scores. Dump needle tapRoleGate:
+     * A.0 / A.2a / B2: role preferred TAP catalog + safety fallback.
+     * seek_angle → lag/beam. press → lead/cut. extend → cruise.
+     * recommit → lead/cut. defend → beam. Dump needle tapRoleGate:
      */
     pickRoleCatalogWinner(scored, opts = {}) {
         const list = Array.isArray(scored) ? scored : [];
@@ -11460,7 +12173,9 @@ window.AirArenaAI = {
         if (
             ctx._tacticalRole === 'seek_angle' ||
             ctx._tacticalRole === 'press' ||
-            ctx._tacticalRole === 'extend'
+            ctx._tacticalRole === 'extend' ||
+            ctx._tacticalRole === 'recommit' ||
+            ctx._tacticalRole === 'defend'
         ) {
             const gated = this.pickRoleCatalogWinner(scored, {
                 role: ctx._tacticalRole,
@@ -12299,8 +13014,7 @@ window.AirArenaAI = {
             return { score: 0, safe: true, minAltitude: null, buildingHit: false, finalAP: null };
         }
 
-        const commands = [action, ...continuationActions].map((item) => this.actionToCommand(team, item));
-        const sim = simulateFlight(team, commands);
+        const sim = this.simulateBanked(team, [action, ...continuationActions], this.bankTargetAction(action));
         const points = sim.points || [];
         const obstacles = this.getObstacles();
         let minAltitude = Infinity;
@@ -13694,6 +14408,8 @@ window.AirArenaAI = {
             );
         }
         if (!sample) return Number(score) || 0;
+        // The shared envelope's inwardSide points the long way round; Rei_03 still reads it raw.
+        if (sample.inwardSide) sample = { ...sample, inwardSide: -sample.inwardSide };
         return AirArenaArenaEnvelope.scoreCandidate(score, meta, sample, {
             hardBuilding: !!(ctx.hardBuilding || ctx.hardContact || meta.buildingHit),
             hardContact: !!(ctx.hardContact || ctx.hardBuilding)
@@ -16523,8 +17239,7 @@ window.AirArenaAI = {
                     throttle: profile.throttle,
                     queueAction: 'none'
                 };
-                const command = this.actionToCommand(liveSelf, action);
-                const sim = simulateFlight(liveSelf, [command, command]);
+                const sim = this.simulateBanked(liveSelf, [action, action], false);
                 const points = sim.points || [];
                 const quats = sim.quats || [];
                 if (!points.length || !quats.length) continue;
@@ -18392,7 +19107,8 @@ altitude,
                                     dualHomotopyCorridors: urbanRouteCtx && urbanRouteCtx.dualHomotopyCorridors,
                                     aiMapSkyOpen: !!(urbanRouteCtx && urbanRouteCtx.aiMapSkyOpen),
                                     aiMapClearAbove: !!(urbanRouteCtx && urbanRouteCtx.aiMapClearAbove),
-                                    wpReplanWhy: survivalWpSteer && survivalWpSteer.replanWhy
+                                    wpReplanWhy: survivalWpSteer && survivalWpSteer.replanWhy,
+                                    straightClimbOpen: !!altitudeLane.preferStraightClimb && !underRoofNow
                                 })
                                 : null;
                             if (!scoredEsc && undercroftNeedScore) {
@@ -18469,8 +19185,12 @@ altitude,
                                     let lockSide = commit.side ||
                                         Math.sign(Number(scoredEsc.joyX) || urbanAvoidSide) || 0;
                                     // T100 red2: post-score glue forced jx opposite to tableStickOwner away=.
-                                    if (holdAway && lockSide && lockSide !== holdAway) {
+                                    if (holdAway && lockSide && lockSide !== holdAway && !scoredEsc.turnClearAway && !scoredEsc.routeGate) {
                                         lockSide = holdAway;
+                                    }
+                                    if (scoredEsc.routeGate || scoredEsc.turnClearAway) {
+                                        const keepSide = Math.sign(Number(scoredEsc.joyX) || 0);
+                                        if (keepSide) lockSide = keepSide;
                                     }
                                     // Hold lock: force stick to commit side so bake/embed cannot thrash next frame.
                                     // Dirt arrest: keep soft bank so pitch owns the stick.
@@ -18486,7 +19206,7 @@ altitude,
                                         !arrestSoft &&
                                         (this.isNestExitSoftStick(scoredEsc) ||
                                             this.shouldHoldSoftUrbanThrottle(scoredEsc));
-                                    if (
+                                    if (!(scoredEsc.routeGate || scoredEsc.turnClearAway) &&
                                         lockSide &&
                                         Math.sign(Number(scoredEsc.joyX) || 0) &&
                                         Math.sign(Number(scoredEsc.joyX) || 0) !== lockSide
@@ -18504,10 +19224,10 @@ altitude,
                                         if (scoredEsc.reason && !/undercroftSideLock/i.test(String(scoredEsc.reason))) {
                                             scoredEsc.reason = `${scoredEsc.reason} | undercroftSideLock=1 src=${holdAway ? 'tableAway' : commit.source}`;
                                         }
-                                    } else if (arrestSoft && Math.abs(Number(scoredEsc.joyX) || 0) > 0.42) {
+                                    } else if (!(scoredEsc.routeGate || scoredEsc.turnClearAway) && arrestSoft && Math.abs(Number(scoredEsc.joyX) || 0) > 0.42) {
                                         const s = Math.sign(Number(scoredEsc.joyX) || lockSide || 1) || 1;
                                         scoredEsc.joyX = this.clamp(s * 0.38, -0.42, 0.42);
-                                    } else if (softNestBank && Math.abs(Number(scoredEsc.joyX) || 0) > 0.58) {
+                                    } else if (!(scoredEsc.routeGate || scoredEsc.turnClearAway) && softNestBank && Math.abs(Number(scoredEsc.joyX) || 0) > 0.58) {
                                         const s = Math.sign(Number(scoredEsc.joyX) || lockSide || 1) || 1;
                                         scoredEsc.joyX = this.clamp(s * 0.58, -0.58, 0.58);
                                     }
@@ -18582,12 +19302,16 @@ altitude,
                                     weapon: 'gun',
                                     queueAction: escapeCm ? escapeCm.queueAction : 'none',
                                     ready: true,
+                                    escapeBank: 1,
                                     navMode: scoredEsc.navMode || scoredEsc.mode || null,
                                     diveLevelPull: !!scoredEsc.diveLevelPull,
                                     dirtPullFloor: !!scoredEsc.dirtPullFloor,
                                     nestExitSoft: scoredEsc.nestExitSoft || undefined,
                                     escapePitchOwner: scoredEsc.escapePitchOwner || undefined,
                                     dirtPunchThrottle: scoredEsc.dirtPunchThrottle || undefined,
+                                    routeClimb: scoredEsc.routeClimb || undefined,
+                                    routeGate: scoredEsc.routeGate || undefined,
+                                    pullOver: scoredEsc.pullOver || undefined,
                                     reason: escapeCm
                                         ? `Actual missile threat: ${escapeCm.reasonSuffix.replace('building-escaping', 'obstacle-escaping')}`
                                         : scoredEsc.reason
@@ -20120,20 +20844,15 @@ altitude,
                                 : (heatLvl > 78
                                     ? 4
                                     : (tangentHold && !highAltRim ? 5 : (punchOut || nearHard || highAltRim ? 4 : 5))))));
-                // pitchCmd: negative = nose-down in chain convention (see non-high path).
+                // pitchCmd overrides joyY in game.js and shares its sign: negative = nose-up, positive = nose-down.
                 let pitchCmdRim = highAltRim
-                    ? -maxPitchCmd * (outsideBand || hardHighRim ? 0.45 : 0.32)
+                    ? maxPitchCmd * (outsideBand || hardHighRim ? 0.45 : 0.32)
                     : (outsideBand || (punchOut && nearHard)
-                        ? -maxPitchCmd * 0.2
+                        ? -maxPitchCmd * joyY
                         : -maxPitchCmd * 0.08);
                 if (Number.isFinite(fyRim) && fyRim < -0.45) {
                     pitchCmdRim = -maxPitchCmd * (fyRim < -0.7 ? 0.48 : 0.32);
                 }
-                const rollAuth = hardPunchIn
-                    ? (outboundDot > 0.85 ? Math.PI / 3.2 : Math.PI / 4)
-                    : (tangentHold && !highAltRim
-                        ? Math.PI / 16
-                        : (punchOut || nearHard ? Math.PI / 8 : Math.PI / 10));
                 tree.push(
                     `airspaceGate: band=${pressure.band} r=${pressure.radial.toFixed(1)} soft=${pressure.airspace.softRadius.toFixed(0)} hard=${pressure.airspace.radius.toFixed(0)} outDot=${outboundDot.toFixed(2)} side=${inwardSide} clear=${hardClearance.toFixed(0)} auth=${auth.toFixed(2)} highAlt=${highAltRim ? 1 : 0}${recoveringIn ? ' recover=1' : ''}${hardPunchIn ? ' hardPunch=1' : ''}`
                 );
@@ -20148,7 +20867,7 @@ altitude,
                     joyX,
                     joyY,
                     pitchCmd: pitchCmdRim,
-                    roll: this.clamp(inwardSide * rollAuth, -Math.PI / 3, Math.PI / 3),
+                    roll: 0,
                     weapon: 'gun',
                     queueAction: 'none',
                     ready: true,
@@ -20457,7 +21176,8 @@ altitude,
                                 hasArmedMissile,
                                 hasAnyMissile,
                                 lineOfSightBlocked,
-                                openingTooClose
+                                openingTooClose,
+                                missileType: aiMissileType
                             }, tuning);
                             const queueAction = softFire.queueAction || 'none';
                             const weapon = softFire.weapon || (preferMsl ? 'missile' : 'gun');
@@ -20510,7 +21230,8 @@ altitude,
                                 hasArmedMissile,
                                 hasAnyMissile,
                                 lineOfSightBlocked,
-                                openingTooClose
+                                openingTooClose,
+                                missileType: aiMissileType
                             }, tuning);
                             const openQ = softFireOpen.queueAction === 'missile' ? 'missile' : 'none';
                             return this.withDebug({
@@ -20853,6 +21574,8 @@ altitude,
                         // Inbound FOX-2: flare before shallow level-out / dive recovery soft gates.
                         if (
                             actualMissileThreat &&
+                            !inboundFox1 &&
+                            !shouldChaffNow &&
                             canUseFlare &&
                             flareCooldownReady &&
                             !shouldSaveFlare &&
@@ -21289,7 +22012,7 @@ altitude,
                                 midairOverUrbanCol.state
                             );
                         }
-                const missileDefenseUrgent =
+                        const missileDefenseUrgent =
                             actualMissileThreat &&
                             canUseFlare &&
                             flareCooldownReady &&
@@ -23251,6 +23974,17 @@ altitude,
                 hardChokeKind: coverInfo.hardChokeKind
             });
             if (!safeAction.debug) safeAction.debug = {};
+            if (safeAction.pullOver && this.isOpenFacadePullOver(selfPos, {
+                roofClearance: coverInfo.roofClearance,
+                coverDistance: coverInfo.distance,
+                forwardY: selfForward.y,
+                hardChokeKind: coverInfo.hardChokeKind
+            })) {
+                safeAction.joyY = Math.max(Number(safeAction.joyY) || 0, 0.62);
+                safeAction.joyX = this.clamp(Number(safeAction.joyX) || 0, -0.2, 0.2);
+                safeAction.debug.pullOverHold = 1;
+                if (Array.isArray(safeAction.debug.tree)) safeAction.debug.tree.push('pullOver: hold=1 joyY=0.62');
+            }
             safeAction.debug.headroom = Number(Number(headroom).toFixed(1));
             if (Array.isArray(safeAction.debug.tree) && Number(headroom) < 14) {
                 const capNote = safeAction.debug.headroomDirtExit
@@ -23635,6 +24369,7 @@ altitude,
 
         // Late headroom / combat-band seals must not undo soft nest |jx|/thr (T150).
         if (safeAction) this.clampSoftUrbanStick(safeAction);
+        if (safeAction) this.applyBankTarget(teamId, safeAction);
 
         GameContext.stateMachine.applyPilotAction(teamId, safeAction);
         return safeAction;

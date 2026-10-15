@@ -298,6 +298,24 @@
         return best;
     }
 
+    function cuesBySeatAtStep(cues, step, holdSteps) {
+        const list = Array.isArray(cues) ? cues : [];
+        const s = Number(step) || 0;
+        const hold = Number.isFinite(Number(holdSteps)) ? Number(holdSteps) : 22;
+        const map = Object.create(null);
+        for (let i = 0; i < list.length; i++) {
+            const c = list[i];
+            if (!c) continue;
+            const st = Number(c.step) || 0;
+            if (st > s || (s - st) > hold) continue;
+            const id = c.speakerSeatId;
+            if (!id) continue;
+            const prev = map[id];
+            if (!prev || st >= (Number(prev.step) || 0)) map[id] = c;
+        }
+        return map;
+    }
+
     function formatCue(cue) {
         if (!cue) return '';
         return textFor(cue.event, cue.callsign);
@@ -308,6 +326,7 @@
         TEXT,
         buildFromTurn,
         cueAtStep,
+        cuesBySeatAtStep,
         cuesBetween,
         formatCue,
         textFor,

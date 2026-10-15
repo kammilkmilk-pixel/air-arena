@@ -147,6 +147,49 @@ function pickHottestMissileTrack(mPos, mQuat, heatSources) {
     return best;
 }
 
+/** Why FOX-2 has no aircraft track this frame. Does not change pickHottest. */
+function diagnoseFox2Seek(mPos, mQuat, heatSources, weaponCfg) {
+    const cfg = weaponCfg || {};
+    const seekerRange = Number(cfg.seekerRange) > 0
+        ? Number(cfg.seekerRange)
+        : ((typeof SEEKER_RANGE !== 'undefined' && SEEKER_RANGE > 0) ? SEEKER_RANGE : 120);
+    const seekerAngle = Number(cfg.seekerAngle) > 0
+        ? Number(cfg.seekerAngle)
+        : ((typeof SEEKER_ANGLE !== 'undefined' && SEEKER_ANGLE > 0) ? SEEKER_ANGLE : Math.PI / 12);
+    const frontSeekerMult = cfg.frontAspectSeekerAngleMult || 0.55;
+    const minHeat = Number.isFinite(Number(cfg.seekerMinHeat))
+        ? Number(cfg.seekerMinHeat)
+        : ((typeof SEEKER_MIN_HEAT !== 'undefined') ? SEEKER_MIN_HEAT : 20);
+    const out = { nearDist: null, seekerRange, inFovCold: false };
+    if (!mPos || !mQuat || !heatSources || !heatSources.length) return out;
+    const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(mQuat).normalize();
+    heatSources.forEach((src) => {
+        if (!src || !src.pos || src.kind !== 'aircraft') return;
+        const dist = mPos.distanceTo(src.pos);
+        if (!(dist > 0.05)) return;
+        const toSrc = src.pos.clone().sub(mPos);
+        if (toSrc.lengthSq() < 0.0001) return;
+        toSrc.normalize();
+        const angle = forward.angleTo(toSrc);
+        if (out.nearDist == null || dist < out.nearDist) out.nearDist = dist;
+        let aspect = { frontAspect: false };
+        if (src.quat && typeof getMissileAspect === 'function') {
+            aspect = getMissileAspect(src.pos, src.quat, mPos);
+        }
+        const fov = seekerAngle * (aspect.frontAspect ? frontSeekerMult : 1);
+        if (dist <= seekerRange && angle <= fov) {
+            let rawHeat = Number(src.baseHeat) || 0;
+            if (src.quat && typeof calculateExposedHeat === 'function') {
+                rawHeat = calculateExposedHeat(src.baseHeat, src.pos, src.quat, mPos);
+            }
+            const distRatio = Math.max(0.12, dist / seekerRange);
+            const perceived = rawHeat / (distRatio * distRatio);
+            if (perceived < minHeat) out.inFovCold = true;
+        }
+    });
+    return out;
+}
+
 /**
  * 模擬飛彈單一影格 (Frame) 的物理飛行。
  * 尋標頭對場上所有熱源取最大（不分敵我）；targetPos/enemyObj 僅作無熱源時的後備參考。
@@ -168,7 +211,7 @@ function simulateMissileStep(mPos, mQuat, targetPos, targetQuat, mAP, teamObj, e
 
     // FOX-1 semi-active: illuminate target or coast.
     if (missileType === 'fox1' && typeof computeSarhSupport === 'function') {
-        const armRange = Number(weaponCfg.minArmingRange) || 70;
+        const armRange = Number(weaponCfg.minArmingRange) || 50;
         const speed = Number(weaponCfg.speed) || 0.55;
         const turnRate = Number(weaponCfg.turnRate) || 0.09;
         if (activeM && !activeM.launchPos) activeM.launchPos = mPos.clone();
@@ -215,9 +258,18 @@ function simulateMissileStep(mPos, mQuat, targetPos, targetQuat, mAP, teamObj, e
             targetVel: tgtVel,
             chaffList: options.chaffList || [],
             step: options.step || 0,
+            turn: options.turn,
+            shooterId,
+            targetId: supportId,
+            shotId: activeM && Number.isInteger(activeM.shotIndex)
+                ? String(activeM.shotIndex)
+                : (activeM && activeM.pylonId != null ? String(activeM.pylonId) : ''),
             losBlocked: losBlocked || !shooterAlive
         });
         if (activeM) activeM.supportLocked = !!(canGuide && support.supported);
+        if (typeof stampFox1SupportWhy === 'function') {
+            stampFox1SupportWhy(activeM, support, { shooterAlive, canGuide });
+        }
         const directHitRange = 1.5;
         const fuseRange = Number(weaponCfg.fuseRange) || 3;
         if (tgtPos && mPos.distanceTo(tgtPos) < directHitRange) {
@@ -353,13 +405,51 @@ function simulateMissileStep(mPos, mQuat, targetPos, targetQuat, mAP, teamObj, e
             lostTarget = true;
         }
     }
+    if (typeof stampFox2TrackWhy === 'function') {
+        const diag = diagnoseFox2Seek(mPos, mQuat, heatSources, weaponCfg);
+        stampFox2TrackWhy(activeM, {
+            canGuide,
+            trackKind: trackSrc ? trackSrc.kind : null,
+            nearDist: diag.nearDist,
+            seekerRange: diag.seekerRange,
+            inFovCold: diag.inFovCold
+        }, { canGuide });
+    }
 
-    // 3. 導引：解制前強制直線
+    // 3. 導引。解制前只在發射門內跟目標（10°／迎頭 6°），不放寬尋標錐。
     let speed = Number(weaponCfg.speed) || MISSILE_SPEED;
+    let coastPos = null;
+    if (!canGuide && missileType === 'fox2' && heatSources && typeof fox2LaunchAngleOk === 'function') {
+        const door = typeof fox2MaxLaunchAngleDeg === 'function' ? fox2MaxLaunchAngleDeg() : 10;
+        let bestAng = Infinity;
+        heatSources.forEach((src) => {
+            if (!src || src.kind !== 'aircraft' || !src.pos) return;
+            const dist = mPos.distanceTo(src.pos);
+            if (!(dist > 0.05)) return;
+            const toSrc = src.pos.clone().sub(mPos);
+            if (toSrc.lengthSq() < 0.0001) return;
+            toSrc.normalize();
+            const angDeg = forward.angleTo(toSrc) * 180 / Math.PI;
+            let frontAspect = false;
+            if (src.quat && typeof getMissileAspect === 'function') {
+                frontAspect = !!getMissileAspect(src.pos, src.quat, mPos).frontAspect;
+            }
+            if (!fox2LaunchAngleOk({ angDeg, frontAspect }, door)) return;
+            if (angDeg < bestAng) {
+                bestAng = angDeg;
+                coastPos = src.pos;
+            }
+        });
+    }
     if (canGuide && !lostTarget && trackPos) {
         let desiredDir = new THREE.Vector3().subVectors(trackPos, mPos).normalize();
         let desiredQuat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), desiredDir);
         nextQuat.slerp(desiredQuat, effectiveTurnRate);
+    } else if (coastPos) {
+        const desiredDir = new THREE.Vector3().subVectors(coastPos, mPos).normalize();
+        const desiredQuat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), desiredDir);
+        nextQuat.slerp(desiredQuat, Number(weaponCfg.turnRate) || MISSILE_TURN_RATE);
+        if (activeM) activeM.fox2CoastSteer = 1;
     }
 
     let moveVec = new THREE.Vector3(0, 0, 1).applyQuaternion(nextQuat).multiplyScalar(speed);

@@ -425,6 +425,99 @@
         ];
     }
 
+    function factionOf(id) {
+        if (typeof GameContext !== 'undefined' && GameContext.getFaction) {
+            return GameContext.getFaction(id) || id;
+        }
+        return String(id || '').startsWith('blue') ? 'blue' : 'red';
+    }
+
+    function displayPaneIds() {
+        const rank = { red: 0, red2: 1, blue: 2, blue2: 3 };
+        return getOpenIds().slice().sort((a, b) => {
+            const fa = factionOf(a) === 'blue' ? 1 : 0;
+            const fb = factionOf(b) === 'blue' ? 1 : 0;
+            if (fa !== fb) return fa - fb;
+            return (rank[a] != null ? rank[a] : 50) - (rank[b] != null ? rank[b] : 50);
+        });
+    }
+
+    function stackColumn(count, x, y, w, h) {
+        const n = Math.max(1, count | 0);
+        if (n === 1) return [{ x: x, y: y, width: w, height: h }];
+        const rects = [];
+        let y0 = y;
+        const slice = Math.floor(h / n);
+        for (let i = 0; i < n; i++) {
+            const hh = (i === n - 1) ? (y + h - y0) : slice;
+            rects.push({ x: x, y: y0, width: w, height: hh });
+            y0 += hh;
+        }
+        return rects;
+    }
+
+    /** Red column on the left, blue column on the right when both factions are open. */
+    function layoutRectsForIds(ids, width, height) {
+        const list = ids || [];
+        const n = Math.max(1, Math.min(MAX_PANES, list.length));
+        const w = Math.max(1, width | 0);
+        const h = Math.max(1, height | 0);
+        if (n <= 1) return layoutRects(n, w, h);
+        const shown = list.slice(0, n);
+        const reds = shown.filter((id) => factionOf(id) !== 'blue');
+        const blues = shown.filter((id) => factionOf(id) === 'blue');
+        if (reds.length && blues.length) {
+            const hw = Math.floor(w / 2);
+            const left = stackColumn(reds.length, 0, 0, hw, h);
+            const right = stackColumn(blues.length, hw, 0, w - hw, h);
+            const byId = Object.create(null);
+            reds.forEach((id, i) => { byId[id] = left[i]; });
+            blues.forEach((id, i) => { byId[id] = right[i]; });
+            return shown.map((id) => byId[id]);
+        }
+        return layoutRects(n, w, h);
+    }
+
+    function paneSeatLabel(id) {
+        if (id === 'red2') return 'RED-2';
+        if (id === 'blue2') return 'BLUE-2';
+        if (id === 'blue') return 'BLUE-1';
+        return 'RED-1';
+    }
+
+    function paneCallsign(id) {
+        const t = (typeof GameContext !== 'undefined' && GameContext.getTeam) ? GameContext.getTeam(id) : null;
+        if (t && t.callsign) return String(t.callsign);
+        if (typeof AirArenaPilotRoster !== 'undefined' && AirArenaPilotRoster.callsignForTeam) {
+            return AirArenaPilotRoster.callsignForTeam(t || { id: id }) || '';
+        }
+        return '';
+    }
+
+    function paneBustColor(id, cue) {
+        const t = (typeof GameContext !== 'undefined' && GameContext.getTeam) ? GameContext.getTeam(id) : null;
+        if (t && t.portraitColor) return t.portraitColor;
+        if (typeof AirArenaPilotRoster !== 'undefined' && AirArenaPilotRoster.portraitColor) {
+            return AirArenaPilotRoster.portraitColor(t || cue || { id: id }) || '#888';
+        }
+        return factionOf(id) === 'blue' ? '#66e0ef' : '#ff6688';
+    }
+
+    function escHtml(s) {
+        return String(s || '').replace(/[&<>"']/g, (ch) => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+        }[ch]));
+    }
+
+    function canvasBounds() {
+        const canvas = (typeof renderer !== 'undefined' && renderer && renderer.domElement)
+            ? renderer.domElement
+            : document.getElementById('canvas-container');
+        return canvas && canvas.getBoundingClientRect
+            ? canvas.getBoundingClientRect()
+            : { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
+    }
+
     function syncCameraToTeam(cam, teamId) {
         if (!cam || typeof getAircraftChaseCamPose !== 'function') return;
         const host = liveTeam(teamId) || (GameContext.getTeam && GameContext.getTeam(teamId));
@@ -484,8 +577,8 @@
         if (!scene || !renderer) return false;
         pruneDestroyed();
         applySplitOverlayPolicy();
-        const ids = getOpenIds();
-        if (!ids.length) {
+        const liveIds = getOpenIds();
+        if (!liveIds.length) {
             if (typeof camera !== 'undefined' && camera) renderer.render(scene, camera);
             syncStallOverlays();
             return false;
@@ -493,13 +586,12 @@
         const canvas = renderer.domElement;
         const width = canvas.clientWidth || canvas.width || 1;
         const height = canvas.clientHeight || canvas.height || 1;
-        const rects = layoutRects(ids.length, width, height);
-        const activeId = (GameContext.getActiveTeamId && GameContext.getActiveTeamId()) || ids[0];
+        const activeId = (GameContext.getActiveTeamId && GameContext.getActiveTeamId()) || liveIds[0];
 
-        if (ids.length === 1) {
+        if (liveIds.length === 1) {
             renderer.setScissorTest(false);
             renderer.setViewport(0, 0, width, height);
-            const only = ids[0];
+            const only = liveIds[0];
             if (only !== activeId || !(typeof camera !== 'undefined' && camera)) {
                 const cam = getOrCreateCamera(only);
                 cam.aspect = width / Math.max(1, height);
@@ -517,6 +609,8 @@
             return true;
         }
 
+        const ids = displayPaneIds();
+        const rects = layoutRectsForIds(ids, width, height);
         updateCameras();
         renderer.setScissorTest(true);
         for (let i = 0; i < ids.length; i++) {
@@ -541,6 +635,11 @@
         return true;
     }
 
+    function setSplitRadioHud(split) {
+        const radioHud = document.getElementById('radio-hud');
+        if (radioHud) radioHud.classList.toggle('is-split-paned', !!split);
+    }
+
     function syncOverlayLabels() {
         let rootEl = document.getElementById('multi-view-labels');
         if (!rootEl) {
@@ -549,25 +648,37 @@
             rootEl.setAttribute('aria-hidden', 'true');
             document.body.appendChild(rootEl);
         }
-        const ids = getOpenIds();
+        const ids = displayPaneIds();
+        setSplitRadioHud(ids.length > 1);
         if (ids.length <= 1) {
             rootEl.innerHTML = '';
             rootEl.style.display = 'none';
             return;
         }
-        const canvas = (typeof renderer !== 'undefined' && renderer && renderer.domElement)
-            ? renderer.domElement
-            : document.getElementById('canvas-container');
-        const bounds = canvas && canvas.getBoundingClientRect
-            ? canvas.getBoundingClientRect()
-            : { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
-        const rects = layoutRects(ids.length, bounds.width, bounds.height);
+        const bounds = canvasBounds();
+        const rects = layoutRectsForIds(ids, bounds.width, bounds.height);
         rootEl.style.display = 'block';
         rootEl.innerHTML = ids.map((id, i) => {
             const r = rects[i];
-            const faction = (GameContext.getFaction && GameContext.getFaction(id)) || id;
+            if (!r) return '';
+            const faction = factionOf(id);
             const active = (GameContext.getActiveTeamId && GameContext.getActiveTeamId()) === id;
-            return `<div class="multi-view-label faction-${faction}${active ? ' is-active' : ''}" style="left:${Math.round(bounds.left + r.x + 8)}px;top:${Math.round(bounds.top + r.y + 8)}px">${String(id).toUpperCase()}</div>`;
+            const cs = paneCallsign(id);
+            const cue = (window.AirArenaRadioHud && typeof window.AirArenaRadioHud.cueForSeat === 'function')
+                ? window.AirArenaRadioHud.cueForSeat(id)
+                : null;
+            const line = cue && typeof AirArenaRadioCues !== 'undefined' && AirArenaRadioCues.formatCue
+                ? AirArenaRadioCues.formatCue(cue)
+                : '';
+            const left = Math.round(bounds.left + r.x + 8);
+            const top = Math.round(bounds.top + r.y + r.height - 10);
+            const tag = cs ? `${paneSeatLabel(id)}  ${cs}` : paneSeatLabel(id);
+            const bustName = (cue && cue.callsign) || cs || paneSeatLabel(id);
+            const bust = `<div class="multi-view-bust" style="background:${escHtml(paneBustColor(id, cue))}">${escHtml(String(bustName).slice(0, 2))}</div>`;
+            const sub = line
+                ? `<div class="multi-view-sub is-live">${escHtml(line)}</div>`
+                : '';
+            return `<div class="multi-view-pane-chrome faction-${faction}${active ? ' is-active' : ''}${line ? ' is-live' : ''}" style="left:${left}px;top:${top}px"><div class="multi-view-radio">${bust}${sub}</div><div class="multi-view-label">${escHtml(tag)}</div></div>`;
         }).join('');
     }
 
@@ -581,13 +692,8 @@
             document.body.appendChild(rootEl);
         }
         const globalStall = document.getElementById('stall-screen');
-        const ids = getOpenIds();
-        const canvas = (typeof renderer !== 'undefined' && renderer && renderer.domElement)
-            ? renderer.domElement
-            : document.getElementById('canvas-container');
-        const bounds = canvas && canvas.getBoundingClientRect
-            ? canvas.getBoundingClientRect()
-            : { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
+        const ids = displayPaneIds();
+        const bounds = canvasBounds();
 
         const stalledOpen = ids.filter((id) => {
             const t = (typeof GameContext !== 'undefined' && GameContext.getTeam) ? GameContext.getTeam(id) : null;
@@ -617,7 +723,7 @@
             rootEl.style.display = 'none';
             return;
         }
-        const rects = layoutRects(ids.length, bounds.width, bounds.height);
+        const rects = layoutRectsForIds(ids, bounds.width, bounds.height);
         rootEl.style.display = 'block';
         rootEl.innerHTML = ids.map((id, i) => {
             const t = GameContext.getTeam ? GameContext.getTeam(id) : null;

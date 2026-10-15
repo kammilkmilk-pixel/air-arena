@@ -27,7 +27,7 @@
         : {
             gunRange: 70,
             gunAngle: 22,
-            missileMinRange: 35,
+            missileMinRange: 20,
             missileMaxRange: 120,
             missileAngle: 27
         };

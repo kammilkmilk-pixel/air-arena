@@ -145,7 +145,7 @@ window.GameContext = {
 
     sanitizeSpawnSeparation(sep) {
         const n = Math.round(Number(sep));
-        const allowed = [60, 100, 140, 200];
+        const allowed = [60, 100, 140, 200, 283];
         return allowed.includes(n) ? n : 100;
     },
 
@@ -324,7 +324,7 @@ window.GameContext = {
         if (config && config.mapId) base.mapId = config.mapId;
         base.spawnFormation = (config && config.spawnFormation === 'cross') ? 'cross' : 'pair';
         const facingRaw = config && config.spawnFacing;
-        if (facingRaw === 'face' || facingRaw === 'outbound' || facingRaw === 'tangent') {
+        if (facingRaw === 'face' || facingRaw === 'outbound' || facingRaw === 'tangent' || facingRaw === 'chase') {
             base.spawnFacing = facingRaw;
         } else {
             base.spawnFacing = base.spawnFormation === 'cross' ? 'tangent' : 'face';

@@ -57,7 +57,7 @@ function unitTrailPos(u) {
     return roundPos(t && t.pos);
 }
 
-/** Gameplay fingerprint — ignores session / seed / batchIndex. */
+/** Gameplay fingerprint. Same-session re-POST skip; different batchIndex is a new slot. */
 function rosterFingerprint(roster) {
     if (!roster || typeof roster !== 'object') return '';
     const units = roster.units || {};
@@ -72,7 +72,10 @@ function rosterFingerprint(roster) {
         const u = units[id];
         return id + '@' + unitTrailPos(u) + ':' + (causeOf[id] || '') + ':T' + String(roster.turn || '');
     });
-    return parts.join('|');
+    const batch = roster.batch && typeof roster.batch === 'object' ? roster.batch : null;
+    const idx = batch ? Number(batch.batchIndex) : NaN;
+    const slot = Number.isFinite(idx) && idx > 0 ? 'i' + idx : 'i0';
+    return slot + '|' + parts.join('|');
 }
 
 function sessionFingerprints(dir) {

@@ -4,7 +4,8 @@
 window.StateMachineMatchApi = {
     /**
      * Place teams by altitude + red/blue centerline separation (Z).
-     * Preserves wingman lateral offsets (+8x, ±4z).
+     * Cross: axis opponents = sep; 斜鄰 = sep/√2 (283 → 200).
+     * Pair: preserves wingman lateral offsets (+8x, ±4z).
      */
     applySpawnLayout(opts = {}) {
         const cfg = GameContext.getMatchConfig ? GameContext.getMatchConfig() : {};
@@ -18,7 +19,7 @@ window.StateMachineMatchApi = {
             ? 'cross'
             : 'pair';
         const facingRaw = opts.facing || opts.spawnFacing || cfg.spawnFacing;
-        const facing = (facingRaw === 'face' || facingRaw === 'outbound' || facingRaw === 'tangent')
+        const facing = (facingRaw === 'face' || facingRaw === 'outbound' || facingRaw === 'tangent' || facingRaw === 'chase')
             ? facingRaw
             : (formation === 'cross' ? 'tangent' : 'face');
         const half = separation * 0.5;
@@ -40,12 +41,41 @@ window.StateMachineMatchApi = {
                 red2: Math.PI / 2,
                 blue2: -Math.PI / 2
             };
-            const extra = facing === 'outbound' ? Math.PI : (facing === 'tangent' ? Math.PI / 2 : 0);
+            const extra = facing === 'outbound'
+                ? Math.PI
+                : (facing === 'tangent' || facing === 'chase' ? Math.PI / 2 : 0);
             spots = {
                 red: { x: cx, y: altitude, z: cz - half, yaw: inbound.red + extra },
                 blue: { x: cx, y: altitude, z: cz + half, yaw: inbound.blue + extra },
                 red2: { x: cx - half, y: altitude, z: cz, yaw: inbound.red2 + extra },
                 blue2: { x: cx + half, y: altitude, z: cz, yaw: inbound.blue2 + extra }
+            };
+        } else if (facing === 'chase') {
+            // Lab booth: red behind blue, same heading. Rotate by batchIndex (0/90/180/270).
+            let yaw = 0;
+            try {
+                const idx = (typeof AirArenaBatchRun !== 'undefined' && AirArenaBatchRun.readQuery)
+                    ? AirArenaBatchRun.readQuery().batchIndex
+                    : (cfg && cfg.batchIndex);
+                yaw = (typeof AirArenaBatchRun !== 'undefined' && AirArenaBatchRun.chaseHeadingRad)
+                    ? AirArenaBatchRun.chaseHeadingRad(idx)
+                    : ((((Number(idx) || 1) - 1) % 4) * Math.PI / 2);
+            } catch (_) { yaw = 0; }
+            const fwdX = Math.sin(yaw);
+            const fwdZ = Math.cos(yaw);
+            const rightX = Math.cos(yaw);
+            const rightZ = -Math.sin(yaw);
+            const place = (along, right) => ({
+                x: cx + fwdX * along + rightX * right,
+                y: altitude,
+                z: fwdZ * along + rightZ * right,
+                yaw
+            });
+            spots = {
+                red: place(-half, 0),
+                red2: place(-half - 4, 8),
+                blue: place(half, 0),
+                blue2: place(half + 4, 8)
             };
         } else {
             const wingX = 8;
@@ -132,6 +162,9 @@ window.StateMachineMatchApi = {
                 t.combatKills = 0;
                 t.combatKillsGun = 0;
                 t.combatKillsMsl = 0;
+                t.combatKillsFox1 = 0;
+                t.combatKillsFox2 = 0;
+                t.missileShots = [];
                 t.wreckPhase = null;
                 t.wreckBurstTurn = 0;
                 t.hp = MAX_HP;
@@ -155,6 +188,9 @@ window.StateMachineMatchApi = {
                 t.combatKills = 0;
                 t.combatKillsGun = 0;
                 t.combatKillsMsl = 0;
+                t.combatKillsFox1 = 0;
+                t.combatKillsFox2 = 0;
+                t.missileShots = [];
                 t.wreckPhase = null;
                 t.wreckBurstTurn = 0;
                 t.hp = MAX_HP;
@@ -219,12 +255,14 @@ window.StateMachineMatchApi = {
                 }
             }
             let pylons = seat.pylons;
-            if (seat.loadout === 'gun-priority') {
-                pylons = ['empty', 'empty', 'empty', 'empty'];
-            } else if (seat.loadout === 'fox1-priority') {
-                pylons = ['fox1', 'fox1', 'fox1', 'fox1'];
-            } else if (seat.loadout === 'fox2-priority') {
-                pylons = ['fox2', 'fox2', 'fox2', 'fox2'];
+            if (seat.loadout === 'gun-priority' || seat.loadout === 'fox1-priority' || seat.loadout === 'fox2-priority') {
+                pylons = (typeof pylonsForLoadout === 'function')
+                    ? pylonsForLoadout(seat.loadout)
+                    : (seat.loadout === 'gun-priority'
+                        ? ['empty', 'empty', 'empty', 'empty']
+                        : (seat.loadout === 'fox1-priority'
+                            ? ['fox1', 'fox1', 'fox1', 'fox1']
+                            : ['fox2', 'fox2', 'fox2', 'fox2']));
             } else if (seat.loadout === 'standard') {
                 // Migrate legacy 4×FOX-2 / empty "standard" seats to 2×F1+2×F2.
                 const allFox2 = Array.isArray(pylons) && pylons.length >= 4 && pylons.every((w) => w === 'fox2');

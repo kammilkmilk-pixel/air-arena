@@ -19,17 +19,27 @@ assert(src.includes('function uiParseTapDumpFromTree('), 'missing uiParseTapDump
 assert(src.includes('role: team.aiTacticalRole || null'), 'trail must store role');
 assert(src.includes('tap: tapInfo.tap || null'), 'trail must store tap');
 assert(src.includes('tapGate: tapInfo.tapGate || null'), 'trail must store tapGate');
+assert(src.includes('prepTimeout: tapInfo.prepTimeout || null'), 'trail must store prepTimeout');
 assert(src.includes('role=${f.role || \'-\'} tap=${f.tap || \'-\'}'), 'text dump must print role/tap');
 
+assert(src.includes('alleyTime: tapInfo.alleyTime || null'), 'trail must store alleyTime');
+
 function uiParseTapDumpFromTree(tree) {
-    if (!Array.isArray(tree)) return { tap: null, tapGate: null };
+    if (!Array.isArray(tree)) return { tap: null, tapGate: null, prepTimeout: null, alleyTime: null };
     let tap = null;
     let tapGate = null;
+    let prepTimeout = null;
+    let alleyTime = null;
     for (let i = tree.length - 1; i >= 0; i--) {
         const s = String(tree[i] || '');
         if (!tapGate && s.indexOf('tapRoleGate:') === 0) {
             tapGate = s.replace(/^tapRoleGate:\s*/, '') || null;
         }
+        if (!alleyTime && s.indexOf('alleyTime:') === 0) {
+            alleyTime = s.replace(/^alleyTime:\s*/, '') || null;
+        }
+        if (!prepTimeout && s.indexOf('missileGate: prepTimeoutShoot=') === 0) prepTimeout = 'shoot';
+        else if (!prepTimeout && s.indexOf('missileGate: prepTimeoutHang=') === 0) prepTimeout = 'hang';
         if (!tap && s.indexOf('tacticalApproach:') === 0) {
             const sel = s.match(/\bselected=([A-Za-z0-9_]+)/);
             const skip = s.match(/\btapSkip=([A-Za-z0-9_]+)/);
@@ -40,9 +50,9 @@ function uiParseTapDumpFromTree(tree) {
             else if (/\bskipped=1\b/.test(s)) tap = 'skip=other';
             else if (/\bnone\b/.test(s)) tap = 'none=unknown';
         }
-        if (tap && tapGate) break;
+        if (tap && tapGate && prepTimeout && alleyTime) break;
     }
-    return { tap, tapGate };
+    return { tap, tapGate, prepTimeout, alleyTime };
 }
 
 const pressSel = uiParseTapDumpFromTree([
@@ -86,5 +96,25 @@ const noTap = uiParseTapDumpFromTree([
     'urbanCombatGate: defer=false dist=86'
 ]);
 assert(noTap.tap == null && noTap.tapGate == null, 'survival/weapon frames stay empty');
+assert(noTap.prepTimeout == null, 'no prepTimeout on unrelated tree');
+
+const shoot = uiParseTapDumpFromTree([
+    'missileGate: prepTimeoutShoot=1 streak=3 ang=32.0',
+    'tacticalApproach: skipped=1 eligible=1 contact=1 tapSkip=msl'
+]);
+assert(shoot.prepTimeout === 'shoot', shoot.prepTimeout);
+assert(shoot.tap === 'skip=msl', shoot.tap);
+
+const hang = uiParseTapDumpFromTree([
+    'missileGate: prepTimeoutHang=1 streak=4 dist=142.0 ang=28.0 lz=0.80'
+]);
+assert(hang.prepTimeout === 'hang', hang.prepTimeout);
+
+const alley = uiParseTapDumpFromTree([
+    'alleyTime: in=0 left=0 held=0 why=hang dist=115.0 ang=110.0 lz=-0.34',
+    'missileGate: prepTimeoutHang=1 streak=4 dist=115.0 ang=110.0 lz=-0.34'
+]);
+assert(alley.alleyTime && alley.alleyTime.indexOf('why=hang') >= 0, alley.alleyTime);
+assert(alley.prepTimeout === 'hang', alley.prepTimeout);
 
 console.log('tap-trail-smoke: ok');

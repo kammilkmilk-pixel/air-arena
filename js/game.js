@@ -204,8 +204,89 @@ const CHASE_CAM_DIST = 8;
 /** Seat-select default: place aircraft this fraction of viewport height lower in frame. */
 const CHASE_CAM_FRAME_DOWN = 0.10;
 const _chaseAway = new THREE.Vector3();
+const _chaseLosDir = new THREE.Vector3();
+const _chaseFwd = new THREE.Vector3();
+const _chaseTo = new THREE.Vector3();
 
-/** Prefer explicit camera override, else the selected aircraft's locked target. */
+function isChaseLosBlocked(fromPos, toPos) {
+    if (typeof THREE === 'undefined' || !fromPos || !toPos) return false;
+    if (typeof obstacles === 'undefined' || !obstacles || !obstacles.length) return false;
+    _chaseLosDir.subVectors(toPos, fromPos);
+    const dist = _chaseLosDir.length();
+    if (dist < 0.2) return false;
+    const ray = new THREE.Raycaster(fromPos, _chaseLosDir.normalize(), 0.1, dist);
+    return ray.intersectObjects(obstacles, true).length > 0;
+}
+
+/** HUD fire-control lock (type 2): range + nose angle to current target, LOS clear. */
+function isFireControlLocked(host, enemy) {
+    if (!host || !enemy || !host.wrapper || !enemy.wrapper) return false;
+    if (host.isDestroyed || enemy.isDestroyed) return false;
+    const from = host.wrapper.position;
+    const to = enemy.wrapper.position;
+    if (isChaseLosBlocked(from, to)) return false;
+    const distance = from.distanceTo(to);
+    _chaseFwd.set(0, 0, 1).applyQuaternion(host.wrapper.quaternion).normalize();
+    _chaseTo.subVectors(to, from);
+    if (_chaseTo.lengthSq() < 1e-8) return false;
+    const angle = _chaseFwd.angleTo(_chaseTo.normalize());
+    const gunFireRange = (typeof GUN_RANGE !== 'undefined' && GUN_RANGE > 0) ? GUN_RANGE : 70;
+    if (host.weapon === 'gun') {
+        return distance <= gunFireRange && angle <= Math.PI / 8;
+    }
+    const liveMsl = (typeof teamLiveMissileType === 'function') ? teamLiveMissileType(host) : 'fox2';
+    if (liveMsl === 'fox1') {
+        const cfg = (typeof getMissileWeaponConfig === 'function') ? getMissileWeaponConfig('fox1') : {};
+        const minR = Number(cfg.minArmingRange) || 50;
+        const maxR = Number(cfg.seekerRange) || 200;
+        const ang = Number(cfg.seekerAngle) || Math.PI / 14;
+        return distance >= minR && distance <= maxR && angle <= ang;
+    }
+    const maxR = (typeof SEEKER_RANGE !== 'undefined' && SEEKER_RANGE > 0) ? SEEKER_RANGE : 120;
+    const ang = (typeof SEEKER_ANGLE !== 'undefined' && SEEKER_ANGLE > 0) ? SEEKER_ANGLE : Math.PI / 12;
+    return distance <= maxR && angle <= ang;
+}
+
+/** FOX-1 SARH illumination (type 3): stable nose gate, no look-jitter so chase pose does not flicker. */
+function isFox1Illuminating(host, enemy) {
+    if (!host || !enemy || !host.wrapper || !enemy.wrapper) return false;
+    if (host.isDestroyed || enemy.isDestroyed) return false;
+    const liveMsl = (typeof teamLiveMissileType === 'function') ? teamLiveMissileType(host) : null;
+    const hasFox1Flight = !!(host.activeMissiles && host.activeMissiles.some(
+        (m) => m && m.missileType === 'fox1' && !m.exploded && Number(m.ap) > 0 && m.active
+    ));
+    if (liveMsl !== 'fox1' && !hasFox1Flight) return false;
+    if (host.weapon !== 'missile' && !hasFox1Flight) return false;
+    const cfg = (typeof getMissileWeaponConfig === 'function') ? getMissileWeaponConfig('fox1') : {};
+    const maxRange = Number(cfg.seekerRange) || 200;
+    const minSupportRange = Number.isFinite(Number(cfg.supportMinRange)) ? Number(cfg.supportMinRange) : 8;
+    const baseAngle = Number(cfg.supportBaseAngle) || (Math.PI / 18);
+    const from = host.wrapper.position;
+    const to = enemy.wrapper.position;
+    const dist = from.distanceTo(to);
+    if (dist < minSupportRange || dist > maxRange) return false;
+    if (isChaseLosBlocked(from, to)) return false;
+    _chaseFwd.set(0, 0, 1).applyQuaternion(host.wrapper.quaternion).normalize();
+    _chaseTo.subVectors(to, from);
+    if (_chaseTo.lengthSq() < 1e-8) return false;
+    const toNorm = _chaseTo.normalize();
+    if (_chaseFwd.dot(toNorm) <= 0.35) return false;
+    return _chaseFwd.angleTo(toNorm) <= baseAngle;
+}
+
+function resolveCombatFireLookTeam(host) {
+    if (!host || typeof GameContext === 'undefined') return null;
+    if (!(GameContext.isAnimating && GameContext.isAnimating())) return null;
+    const tgtId = (GameContext.getTargetId && GameContext.getTargetId(host.id))
+        || (GameContext.getNearestHostileId && GameContext.getNearestHostileId(host.id));
+    if (!tgtId) return null;
+    const enemy = GameContext.getTeam(tgtId);
+    if (!enemy || !enemy.wrapper || enemy.isDestroyed || enemy.matchActive === false) return null;
+    if (isFireControlLocked(host, enemy) || isFox1Illuminating(host, enemy)) return enemy;
+    return null;
+}
+
+/** Prefer explicit camera override, else manual lock, else combat fire-control / FOX-1 illuminate. */
 function resolveChaseLookTeam(host) {
     if (!host) return null;
     const overrideId = GameContext.state.cameraFollowOverrideId;
@@ -218,12 +299,13 @@ function resolveChaseLookTeam(host) {
         const lk = GameContext.getTeam(lockId);
         if (lk && lk.wrapper && !lk.isDestroyed && lk.matchActive !== false) return lk;
     }
-    return null;
+    return resolveCombatFireLookTeam(host);
 }
 
 /**
- * Camera CHASE_CAM_DIST from selected aircraft; when a lock exists, sit on the aircraft→target axis
- * (aircraft as pivot) and aim at the locked target.
+ * Camera CHASE_CAM_DIST from selected aircraft; when a look target exists, sit on the
+ * aircraft→target axis (aircraft as pivot) and aim at that target.
+ * Look target = click lock, else combat fire-control lock, else FOX-1 illumination.
  * No-lock (team-button default): bias look-at up so the jet sits ~10% lower in frame.
  */
 function getAircraftChaseCamPose(host, lookTeam) {

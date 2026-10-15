@@ -1,0 +1,33 @@
+#!/usr/bin/env node
+/**
+ * Open-sky facade pull-over: a taller building ahead with nothing overhead in plan
+ * view gets a sim-scored jy 0.62 candidate in the scored escape, and the exit keeps
+ * it past the slab headroom cap while the geometry still holds.
+ */
+'use strict';
+
+const fs = require('fs');
+const path = require('path');
+
+const ROOT = path.join(__dirname, '..');
+const src = fs.readFileSync(path.join(ROOT, 'js', 'ai', 'pilot-ai.js'), 'utf8');
+
+function assert(cond, msg) {
+    if (!cond) throw new Error(msg);
+}
+
+assert(src.includes('    isOverheadFootprintOpen(pos, margin = 2) {'), 'missing plan-view overhead check');
+assert(src.includes('    isOpenFacadePullOver(pos, opts = {}) {'), 'missing pull-over gate');
+assert(src.includes('if (!(Number.isFinite(roof) && roof < 0 && roof >= -22)) return false;'), 'pull-over only below a taller roof within 22 m');
+assert(src.includes('if (!pos || !(pos.y >= 30)) return false;'), 'pull-over needs altitude');
+assert(src.includes("mode: 'scorePullOver',"), 'scored escape must offer the pull-over candidate');
+assert(src.includes("proto.branch !== 'pullOver') score -= 45;"), 'pull-over is not a climb-into-slab');
+assert(src.includes('pullOver: scoredEsc.pullOver || undefined,'), 'escape output must carry the pull-over tag');
+assert(src.includes('if (safeAction.pullOver && this.isOpenFacadePullOver(selfPos, {'), 'exit must recheck geometry before holding the pull');
+
+const slab = src.indexOf('    isSlabClimbBlocked(opts = {}) {');
+const slabEnd = src.indexOf('    isOverheadFootprintOpen(', slab);
+assert(slab > 0 && slabEnd > slab, 'slab rules must stay ahead of the footprint helper');
+assert(!/pullOver|Footprint/.test(src.slice(slab, slabEnd)), 'slab doctrine itself is unchanged');
+
+console.log('pull-over-smoke: ok');

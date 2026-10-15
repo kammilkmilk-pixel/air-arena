@@ -6,6 +6,7 @@ window.AirArenaRadioHud = (function () {
     let lastKey = '';
     let lastStep = -1;
     let lastCue = null;
+    let lastBySeat = Object.create(null);
     let ttsEnabled = false;
     const AUDIO_PREF_KEY = 'airArenaRadioAudio';
     let scrubbing = false;
@@ -60,6 +61,7 @@ window.AirArenaRadioHud = (function () {
         if (opts && opts.resetSpoken) {
             Object.keys(spokenKeys).forEach((k) => { delete spokenKeys[k]; });
         }
+        lastBySeat = Object.create(null);
     }
 
     function formatLine(cue) {
@@ -177,8 +179,21 @@ window.AirArenaRadioHud = (function () {
         } else {
             hideVisual();
         }
+        if (typeof AirArenaRadioCues !== 'undefined' && AirArenaRadioCues.cuesBySeatAtStep) {
+            lastBySeat = AirArenaRadioCues.cuesBySeatAtStep(cues, s, hold) || Object.create(null);
+        } else {
+            lastBySeat = Object.create(null);
+        }
+        if (lastCue && lastCue.speakerSeatId && !lastBySeat[lastCue.speakerSeatId]) {
+            lastBySeat[lastCue.speakerSeatId] = lastCue;
+        }
         lastStep = s;
         return display || (batch.length ? batch[batch.length - 1] : null);
+    }
+
+    function cueForSeat(seatId) {
+        if (!seatId || !lastBySeat) return null;
+        return lastBySeat[seatId] || null;
     }
 
     function bindTtsToggle() {
@@ -231,5 +246,5 @@ window.AirArenaRadioHud = (function () {
         }
     }
 
-    return { sync, hide, showCue, setTtsEnabled, ttsOn, isScrubbing };
+    return { sync, hide, showCue, cueForSeat, setTtsEnabled, ttsOn, isScrubbing };
 })();
