@@ -97,6 +97,7 @@
 | G-urban-gap-corridor | **0.18 / 0.19** | heur **PASS**; hybrid FAIL by ~0.01 |
 
 - Landed since: Phase B thin, midair P0, undercroft P1, handoff/nav clear — **Node gates not re-run this snapshot**; prefer live dumps then optional `npm run test:ai`.
+- **2026-10-18 重跑：** `test:ai` 全鏈跑到底。`regression-1792286536532.json`：C 0.125／0.15、G 0.175／0.1917，與上表同平台，未退步、仍 FAIL。注意 `ai-regression.js` 不載入 `pilot-ai.js`，只驗共用 tuning／`weapon-envelope`／`building-risk`／`ai-map`；test_01 的 stick 刀要靠 80／140 batch 驗。
 - Smokes remain the fast contract.
 
 ---
@@ -133,9 +134,11 @@
 - **B1：** `deferred=seekAngle` 過。A.0：`seek_angle` 優先 lag／beam，不安全回退全目錄（針 `tapRoleGate:`）。不加大 ±28。生存閘當選不當 B1 失敗。
 - **A.1：** dump 已關（獨立金標 80/200 T150 0/0/0、b1、0/0/0）。A.1b 機鼻採樣＋接敵 L/R 決勝。
 - **A.2a：** dump **已關**（2026-09-05）。新取樣：一格、四機全同才丟、不追新指紋。trail 金標 n=6，press／extend 皆 `fallback=0`。巷時刀不綁。
-- **prep 超時：** **booth 已關**（2026-09-05）。碼留下當死區。不要用城裡 hang≤shoot 關這把。`chase` 不進實玩。
-- **stick：** climb defer **已關**。collapse hold yield **無法過關**（2026-09-05；碼留下，不放寬 −160）。dead scored-escape **可達門過**（2026-10-11；碼留下，不放寬 −160，不恢復 awayFlip）。
-- **A.2b：** hang yield **可達門過**（2026-09-08）。注意針已證實；yield 枝這格抽不到。碼留下。不開槍、不放寬 envelope、不開 `left`。不要再開金標抽這把。
+- **prep 超時：** **booth 已關**（2026-09-05）。**碼已不在**（2026-10-18 盤點）。不要用城裡 hang≤shoot 關這把。`chase` 不進實玩。
+- **stick：** climb defer **已關**，但 2026-10-18 盤點只剩 `groundEmergency` 的 facade 延後，選枝層擋線不在。collapse hold yield **無法過關**（2026-09-05；**碼已不在**，不放寬 −160）。dead scored-escape **可達門過**（2026-10-11；碼留下，不放寬 −160，不恢復 awayFlip）。
+- **A.2b：** hang yield **可達門過**（2026-09-08）。注意針已證實；yield 枝這格抽不到。**碼已不在**（2026-10-18 盤點）。不開槍、不放寬 envelope、不開 `left`。不要再開金標抽這把。
+- **碼已不在的 smoke：** `missile-prep-timeout`／`climb-defer`／`collapse-hold-yield`／`alley-time` 移出 `test:ai`，改放 `npm run test:ai:missing`（預期失敗，留作紀錄）。新 smoke `airspace-roll`／`pull-over`／`countermeasure-doctrine` 已進 `test:ai`。
+- **姿態／生存刀（2026-10-12～18）：** 見 baseline 進度表。目前基準 `-pulloverlock`：80／140 n=6×2 building 0、combat 15。pre-urban 依類型換反制已留下；pull-over T131 閃爍用 `carry=1` 鎖住。殘頁：共用 `arena-envelope.js` `inwardSide` 符號只在 test_01 本地反號。
 - **B2：** **已關** 2026-10-03。切線全席兩邊都有 3×T150 GATE。recommit TAP 目錄閘 **dump 已關**。**現役 defend 目錄閘驗收**（2026-10-11；閘已接回 TAP；dump 有針 `b2-test_01-1791697752764` 2／3 beam `fallback=0`；真來彈讓路不當失敗；未關帳）。
 - **驗收：** 稀有枝用已知巢重跑＋smoke；金標最多 1 批只看 building。不要用金標抽新獨特 T150。
 - **非 M8：** merge diverge；`kills/mslQ`；出生幾何是量測。

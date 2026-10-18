@@ -15,4 +15,14 @@ assert(branch.includes('!inboundFox1 &&'), 'pre-dive flare must reject inbound F
 assert(branch.includes('!shouldChaffNow &&'), 'pre-dive flare must yield to typed chaff');
 assert(branch.includes("queueAction: 'flare'"), 'pre-dive FOX-2 defense must retain flare');
 
+const urbanStart = src.indexOf('const missileDefenseUrgent =');
+const urbanEnd = src.indexOf('const earlyUrbanPressure =', urbanStart);
+assert(urbanStart >= 0 && urbanEnd > urbanStart, 'missing pre-urban missile defense branch');
+const urban = src.slice(urbanStart, urbanEnd);
+assert(urban.includes('canUseFlare &&') && urban.includes('flareCooldownReady &&'), 'pre-urban gate must stay unchanged');
+assert(!urban.includes('!inboundFox1'), 'pre-urban gate must not skip on FOX-1 (building regression)');
+assert(/inboundFox1 && !inboundFox2\s*\?\s*\(canUseChaff && chaffCooldownReady \? 'chaff' : 'none'\)\s*:\s*'flare'/.test(urban),
+    'pre-urban expendable must follow seeker type');
+assert(urban.includes('queueAction: preUrbanCm'), 'pre-urban branch must queue typed expendable');
+
 console.log('countermeasure-doctrine-smoke: ok');

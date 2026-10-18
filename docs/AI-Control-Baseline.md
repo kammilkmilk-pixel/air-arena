@@ -184,10 +184,10 @@ Soft gate **3/3**. T136 building death is `collapseLevel` stick — **not thawed
 | **B1 當選** | TAP **真正擁有 stick** 時，`seek_angle` 走**優先目錄** lag／beam；全滅或不安全才回退 cruise／perch | **碼已上**（`pickSeekAngleTacticalWinner`／`tapRoleGate:`）。T92 分型：cruise 291 仍應選 lag。生存閘當選不當失敗 | 否（A.0 已落地） |
 | **A.1 接敵走廊** | bake／dual／巷口圖沿機鼻採樣；L／R 只在已成形巷用接敵 XZ 決勝；金標 n=3 building 不退步 | **dump 已關**（獨立 80/200 T150：0/0/0、b1、0/0/0） | 否 |
 | **A.2a press／extend 目錄閘** | TAP 當選時 `press` 優先 lead／cut、`extend` 優先 cruise（禁 lead）；不安全回退全目錄 | **dump 已關**（新取樣）。trail：`role`／`tap`／`tapGate` | 否 |
-| **prep 超時** | 已在 envelope／鼻錐夠，超時錐不得比 lock 更緊（`shouldPrepTimeoutShoot`） | **booth 已關**（1v1 blank chase T60 shot／prep 1.75）。城裡 hang 是沒進窗（T115 `ang=110 lz=-0.34`） | 否（碼留下當死區） |
-| **collapse hold yield** | 死巢 hold 不當選 `scoreCollapseLevel` | **無法過關** 2026-09-05。獨特 T150 18:48 T124 yield 後 T125 回選 level 撞樓。碼留下當死區。不放寬 −160 | 否 |
+| **prep 超時** | 已在 envelope／鼻錐夠，超時錐不得比 lock 更緊（`shouldPrepTimeoutShoot`） | **booth 已關**（1v1 blank chase T60 shot／prep 1.75）。城裡 hang 是沒進窗（T115 `ang=110 lz=-0.34`）。**碼已不在**（2026-10-18 盤點：live／Rei_03／git 歷史皆無 `shouldPrepTimeoutShoot`） | 否（不重做） |
+| **collapse hold yield** | 死巢 hold 不當選 `scoreCollapseLevel` | **無法過關** 2026-09-05。獨特 T150 18:48 T124 yield 後 T125 回選 level 撞樓。**碼已不在**（2026-10-18 盤點：無 `shouldYieldCollapseHoldIntoDeadNest`）。不放寬 −160 | 否 |
 | **dead scored-escape** | 當選評分枝 `hit=1` 且 `score < -160` 換非死備選或逼 flip | **可達門過** 2026-10-11。80/140 重跑 6／6 `deadStick=1`，building 8→5。`hit1NoAlt`＋`levelBank` leftover 不當下一拍。碼留下。不放寬 −160、不恢復 awayFlip | 否 |
-| **A.2b hang yield** | 超時 `why=hang` 讓路（`deferred=alleyHang`），不開槍、不放寬 envelope | **可達門過** 2026-09-08。注意針已證實。yield 枝這格抽不到（見進度表）。碼留下當死區 | 否 |
+| **A.2b hang yield** | 超時 `why=hang` 讓路（`deferred=alleyHang`），不開槍、不放寬 envelope | **可達門過** 2026-09-08。注意針已證實。yield 枝這格抽不到（見進度表）。**碼已不在**（2026-10-18 盤點：無 `describeAlleyShotWindow`／`deferred=alleyHang`） | 否 |
 | **B2 recommit 目錄閘** | TAP 當選時 `recommit` 優先 lead／cut；不安全回退全目錄 | **dump 已關** 2026-09-08。獨特 T150 `red@-66,96,-300` GATE b0；T114–117 `fallback=0` lead。碼留下 | 否 |
 | **B2 defend 目錄閘** | TAP 當選時 `defend` 優先 beam；不安全回退 | **已關** 2026-10-11。80／140 n=3 `b2-test_01-1791697752764` 2／3 beam `fallback=0`。真來彈讓路不當失敗。碼留下 | 否 |
 | **FOX-2 f2why=gate** | 解制前、仍在發射門內（10°／迎頭 6°）才跟目標 | **這格飽和、未過關** 2026-10-11。`coastSteer` 有針，迎頭 gate 窗沒再出現。不放寬 10°／6°。不再改 | 否（停刷） |
@@ -207,30 +207,44 @@ Soft gate **3/3**. T136 building death is `collapseLevel` stick — **not thawed
 | B1 有效性 | **目錄閘刀（A.0）** | `pickSeekAngleTacticalWinner`：`seek_angle` 先 lag／beam；針 `tapRoleGate:`。T92 舊場若重跑應 `fallback=0` 選 lag／beam，除非優先集不安全。 |
 | A.1 接敵走廊 | **dump 已關** | 獨立金標 80/200 T150：0/0/0（`red@82,72,74`）、b1（`red@80,63,34`）、0/0/0（`red@166,80,-40`）。針 `bakeDualHt: goal=`。 |
 | A.2a press／extend | **dump 已關** 2026-09-05 | 新取樣：一格、丟全同克隆、不追新指紋。金標＋trail n=6（37／200／161／183／227／18；200 回放丟）。press→cut／lead、extend→cruise 皆 `fallback=0`。 |
-| prep 超時 | **booth 已關** 2026-09-05 | 死區修補留下。不要用城裡 hang≤shoot 關這把。 |
-| mandatoryClimb defer | **已關** 2026-09-05 | 碼：facade unsafe 不當選 climb。獨特金標 T150 building 不退步；T115／T112 defer 贏當選。183 獨特 T150 門達不到（殘頁形）。 |
-| collapse hold yield | **無法過關** 2026-09-05 | 窗到。獨特 T150 18:48 `red@202,50,152` 藍2 撞樓：T124 `collapseHoldYield=1`，T125 分數 −149＞−160 回選 `scoreCollapseLevel`。碼留下。不放寬 −160。 |
-| A.2b hang yield | **可達門過** 2026-09-08 | 注意針：獨特 T150 19:45 `red@88,39,49` 與 leftover 重跑皆 `why=hang`。yield 門 `deferred=alleyHang` 未在獨特 T150 出現（TAP／recommit hang、`skip=stick`、`held=0`，不進 cruise-prep 超時）。其後金標飽和 T90 leftover `red@-53,32,-60`。smoke `test:alley-time`。碼留下。不開槍、不放寬 envelope、不開 `left`。不是無法過關（門沒開過）。 |
+| prep 超時 | **booth 已關** 2026-09-05 | **碼已不在**（2026-10-18 盤點）。smoke 移到 `test:ai:missing`。不要用城裡 hang≤shoot 關這把。 |
+| mandatoryClimb defer | **已關** 2026-09-05 → **只剩一半** 2026-10-18 | 留下：`groundEmergency` 的 `facadeUnsafeGE` 延後（樹針 `mandatoryClimb: deferNearFacade=1`）、`isNavClimbOutFacadeUnsafe`、`mandatoryClimbAlt: 36`。不在：選枝層 `mandClimbLow`／`mandClimbNow` 的 facade 擋線、arm 前 `mandFacadeBan`。smoke 移到 `test:ai:missing`。 |
+| collapse hold yield | **無法過關** 2026-09-05 | 窗到。獨特 T150 18:48 `red@202,50,152` 藍2 撞樓：T124 `collapseHoldYield=1`，T125 分數 −149＞−160 回選 `scoreCollapseLevel`。**碼已不在**（2026-10-18 盤點）。不放寬 −160。 |
+| A.2b hang yield | **可達門過** 2026-09-08 | 注意針：獨特 T150 19:45 `red@88,39,49` 與 leftover 重跑皆 `why=hang`。yield 門 `deferred=alleyHang` 未在獨特 T150 出現（TAP／recommit hang、`skip=stick`、`held=0`，不進 cruise-prep 超時）。其後金標飽和 T90 leftover `red@-53,32,-60`。smoke `test:alley-time`（移到 `test:ai:missing`）。**碼已不在**（2026-10-18 盤點）。不開槍、不放寬 envelope、不開 `left`。不是無法過關（門沒開過）。 |
 | dead scored-escape | **可達門過** 2026-10-11 | 80/140 重跑 `b2-test_01-1791692854129` 6／6 `deadStick=1`；building 8→5。舊巢 T141 −407 被否決後 `hit1NoAlt`＋`levelBank` leftover，不當下一拍（collapse 死區）。smoke `test:dead-scored-escape`。碼留下。不放寬 −160、不恢復 awayFlip。 |
 | B2 recommit 目錄閘 | **dump 已關** 2026-09-08 | 獨特 T150 `red@-66,96,-300 | red2@-248,73,-141 | blue@11,31,15 | blue2@-421,97,78` GATE b0/g0。`tapRoleGate: role=recommit pref=tacticalLeadIntercept fallback=0`（T114–117）。T123／T126 `fallback=1` 是 pref 不安全回退 lag。smoke `test:tap-role-gate`。T90 leftover 不當獨特。 |
 | B2 defend 目錄閘 | **已關** 2026-10-11 | 80／140 n=3 `b2-test_01-1791697752764` 2／3 beam `fallback=0`。碼留下。 |
 | FOX-2 f2why=gate | **這格飽和、未過關** 2026-10-11 | 兩批 80／140 n=6：`1791705108295` building=6、`coastSteer` 13／13、`gate` 0、迎頭 0；`1791706138474` 首 trail 6／6 克隆、building=5、`coastSteer` 12／12、`gate` 0、迎頭 0。真正的 gate 窗（迎頭 3.3°／4.1°）沒再出現。不放寬 10°／6°。不再改、不再刷。 |
 | clear-stick 路徑選枝 | **這格飽和、未過關** 2026-10-11 | 三批 80／140 n=6：`1791699654986` building=5、`1791700522685` building=4、`1791701151361` building=4。`clearStick` 0／18。T31 開局克隆 2＋3＋2。第三批仍有 3 條新首 trail，是交戰後散開，不當再刷條件。smoke `test:clear-stick`。碼留下。不放寬 −160、不恢復 awayFlip。不是可達門過（沒針）。 |
 | B2 A/B | **已關** 2026-10-03 | 切線 80／283 兩邊連續 3×T150 GATE。四角色目錄閘已關。defend 已拆出。舊 pair／對頭／T&lt;60／克隆不當 A/B。 |
+| 姿態／生存刀（2026-10-12～15） | **新基準 predivecm** | 80／140 cross／tangent／standard n=6，同 session A/B `b2-test_01-1791811185637`＋`1791812362391`（共 12 場）。T150 只是時間上限，不是過關門。各刀依序疊加，dump 資料夾後綴即版本名。 |
+| ↳ 邊界內轉方向 | **留下** | `resolveAirspaceInwardSide` 用 `crossY >= 0 ? 1 : -1`。共用 `arena-envelope.js` 的 `inwardSide` 符號相反，只在 test_01 `applyArenaEnvelopeScore` 本地反號；核心檔未改（要同意）。smoke `test:airspace-roll`。 |
+| ↳ align／merge bank target | **留下** | `bankTargetAction` 加 `mergeBreak`／`mandatoryMergeBreak`，roll 轉成 bank target 而不是一直累加。 |
+| ↳ facade pull-over（`-pullover`） | **留下** | 開放天空的 facade 拉起：`isOverheadFootprintOpen`（平面 AABB，邊距 2 m，取代 headroom）＋`isOpenFacadePullOver`；評分原型 `scorePullOver`，免 undercroft −45；出口保持 `joyY≥0.62`、`|joyX|≤0.2`、針 `pullOverHold=1`。building 0、combat 24。smoke `test:pull-over`。**殘頁：** T68→69、T130→131 下一拍切回 undercroft skim 且 `hit=1`。 |
+| ↳ beam bank target（`-beam`） | **留下** | `bankTargetAction` 加 `tacticalBeamReposition`。building 0、combat 24（紅 24、藍 0），因此挖出邊界 pitch 符號錯。 |
+| ↳ 邊界 pitchCmd 符號（`-rimpitch`、`-punchsync`） | **留下** | `pitchCmd` 會覆蓋 joyY 且同號（負＝抬頭）。高空邊界改 `+maxPitchCmd*(0.45／0.32)`；punch-out 改 `-maxPitchCmd*joyY`。rimpitch building 0、combat 28；punchsync building 0、combat 23。 |
+| ↳ pre-dive 依類型反制（`-predivecm`） | **留下** | `flare before shallowDive/level-out` 加 `!inboundFox1 && !shouldChaffNow`，FOX-1 不撒熱焰彈。building 0、combat 11＋10＝21。smoke `test:countermeasure-doctrine`。 |
+| ↳ pre-urban 依類型反制＋pull-over 鎖（`-preurbanchaff`＋`-pulloverlock`） | **留下＝目前基準** 2026-10-18 | 開關／stick 不動，只換 `queueAction`。T131 閃爍用 `carry=1` 強制拉起。80／140 n=6×2 對 predivecm：building 0＝0、combat 21→15。T132 有 `chaff while obstacle-escaping`。 |
+| ↳ pre-urban 依類型反制（`-preurbancm`） | **撤回** | 同條件加到 `flare before urban route/climb` → building 9、combat 1。原碼不動。**殘頁：** T135 red2 在這枝撒熱焰彈後被 FOX-1 擊落；T117 red1 熱焰彈 0 發被 FOX-2 擊落。 |
+| H7 Node 回歸 | **重跑 2026-10-18，未退步** | `ai-regression.js` 不載入 `pilot-ai.js`（只吃 tuning／`weapon-envelope`／`building-risk`／`ai-map`），所以不驗本輪的刀。`regression-1792286536532.json`：C 0.125／0.15、G 0.175／0.1917，與 08-04 平台 0.13／0.15、0.18／0.19 同。仍 FAIL（門 ≤0.10）。 |
 
 **同週但不是 Phase B：** merge diverge hold — `buildCloseMidairBreakAction` 路徑 `divergeHold=1` 有生效（T9 保住符號）。**缺口：** `Inbound missile too close: hard break` 不走 builder，不寫 memory（03:28 藍 T6→T7 仍翻邊）。Hold 到期後可再跟 localX 翻（T10）。樹針 `mergeDiverge:` 只在 engagement TAP 前那條 merge；trail `divergeHold=` 才穩。
 
 ### 下一刀（只准一條）
 
-**現役拿掉。** FOX-2 `f2why=gate` 80／140 兩批飽和、未過關（`coastSteer` 有針，迎頭 gate 窗沒再出現）。不放寬 10°／6°，不再改、不再刷。defend 目錄閘 **已關**。clear-stick 這格飽和、未過關。
+**現役：pre-urban 依類型換反制（2026-10-18）。** `missileDefenseUrgent` 的開關與 stick **完全不動**（上次跳過整枝 → building 0→9）；只把 `queueAction` 換成 `preUrbanCm`：純 FOX-1 來襲時，有干擾絲且冷卻好 → `chaff`，否則 `none`；有 FOX-2 → `flare`。樹針 `defensiveFlare-preUrban cm=`。門：80／140 n=6×2 同 session 對 predivecm，building 不退步（0），T135 red2 不再撒熱焰彈對 FOX-1。smoke `test:countermeasure-doctrine`。不改 Rei_03、不放寬 10°／6°、不改 M24。
 
-**第一刀：** `simulateMissileStep` 在 `canGuide` 之前，角仍過 `fox2LaunchAngleOk` 才轉向，並在關彈時寫 `coastSteer=1`。不改包線 50／20、不改 M24 `0.5`、不改 Rei_03。
+**結果（`-preurbanchaff`）：building 退步，未過門。** combat 21→9（11→6、10→3），building 0→7。7 次全是同一指紋 red2 T131：前面省下熱焰彈 → red T117 撒熱焰彈活下來 → red2 從 T118 走新路 → T130 選 pull-over（`hit=0`）→ T131 切回 undercroft skim `score=-159.6 hit=1` 撞樓（差 0.4 沒被 −160 擋）。反制本身有效；撞樓是 pull-over 閃爍殘頁被引出。去留待決。
+
+**現役補刀：pull-over 延續鎖（`-pulloverlock`）。** 上一拍選了 pull-over 且平面 footprint 仍開 → 強制 `joyY=0.62`，不再跟 skim 比分（針 `carry=1`）。table owner 不得搶 stick。**過門 2026-10-18：** 對 predivecm building 0＝0、combat 21→15（8＋7）。T131 撞樓指紋消失；red2 多場活到 T142 才空戰死亡。session `1791811185637`／`1791812362391`。
+
+**前一刀（已拿掉）：** FOX-2 `f2why=gate` 80／140 兩批飽和、未過關（`coastSteer` 有針，迎頭 gate 窗沒再出現）。不放寬 10°／6°，不再改、不再刷。defend 目錄閘 **已關**。clear-stick 這格飽和、未過關。
 
 B2 **已關** 2026-10-03（生存＋四角色目錄閘）。
 
-collapse hold yield **無法過關**（碼留下）。dead scored-escape **可達門過** 2026-10-11（碼留下）。climb defer **已關**。prep 超時 **booth 已關**。A.2a dump **已關**。A.2b **可達門過**（碼留下）。B2 recommit **dump 已關**（碼留下）。不要修 collapse／−160／awayFlip、不要再開 ±28、A.0／A.2a／recommit 閘、`left`。不要把 defend／選彈／M24 拆進同一把 dump。
+collapse hold yield **無法過關**（碼已不在）。dead scored-escape **可達門過** 2026-10-11（碼留下）。climb defer **已關**（只剩 groundEmergency 那一半）。prep 超時 **booth 已關**（碼已不在）。A.2a dump **已關**。A.2b **可達門過**（碼已不在）。B2 recommit **dump 已關**（碼留下）。不要修 collapse／−160／awayFlip、不要再開 ±28、A.0／A.2a／recommit 閘、`left`。不要把 defend／選彈／M24 拆進同一把 dump。
 
-**排隊：** FOX-2 `f2why=gate` **這格飽和、未過關**（碼留下，不再改）。defend 目錄閘 **已關**。clear-stick **這格飽和、未過關**。FOX-2-only **已關**。dead scored-escape **可達門過**。`left` 預測仍未開。現役拿掉。
+**排隊：** FOX-2 `f2why=gate` **這格飽和、未過關**（碼留下，不再改）。defend 目錄閘 **已關**。clear-stick **這格飽和、未過關**。FOX-2-only **已關**。dead scored-escape **可達門過**。`left` 預測仍未開。現役拿掉。目前基準：pre-urban 換反制＋pull-over 延續鎖（`-pulloverlock`；building 0、combat 15）。
 
 其後總序：**單機空戰完成 → 對地武器 → 編隊 AI**（現停在單機空戰 A.2）。見 [`Path-Cooperation-Roadmap.md`](./Path-Cooperation-Roadmap.md)。
 

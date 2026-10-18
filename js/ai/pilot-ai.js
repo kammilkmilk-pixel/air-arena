@@ -2603,8 +2603,16 @@ window.AirArenaAI = {
         if (!(Number.isFinite(dist) && dist < 20)) return false;
         if (Number.isFinite(fy) && fy < -0.3) return false;
         const kind = opts.hardChokeKind;
-        if (kind === 'tableUndercroft' || kind === 'tightUndercroft') return false;
+        // A pull-over flown last beat keeps its gate while the plan-view footprint stays open:
+        // closing on the wall flips the choke label to undercroft with nothing overhead.
+        if (!opts.carry && (kind === 'tableUndercroft' || kind === 'tightUndercroft')) return false;
         return this.isOverheadFootprintOpen(pos, 2);
+    },
+
+    isPullOverCarry(teamId, turnNo) {
+        const mem = this._pullOverTurn;
+        const t = Number(turnNo);
+        return !!(mem && Number.isFinite(t) && mem[teamId] === t - 1);
     },
 
     /**
@@ -6445,12 +6453,33 @@ window.AirArenaAI = {
                     : 'Scored escape: facade-bowl climb-out'
             });
         }
+        const pullOverCarry = this.isPullOverCarry(teamId, opts.turnNo);
         const pullOverOk = this.isOpenFacadePullOver(team.wrapper.position, {
             roofClearance: roof,
             coverDistance: dist,
             forwardY,
-            hardChokeKind: chokeKind
+            hardChokeKind: chokeKind,
+            carry: pullOverCarry
         });
+        if (pullOverCarry && pullOverOk) {
+            const pickTurn = Number(opts.turnNo);
+            if (Number.isFinite(pickTurn)) (this._pullOverTurn || (this._pullOverTurn = {}))[teamId] = pickTurn;
+            return this.clampSoftUrbanStick({
+                mode: 'scorePullOver',
+                branch: 'pullOver',
+                joyX: 0,
+                joyY: 0.62,
+                throttle: 4,
+                pitchScale: 0.58,
+                rollAuth: Math.PI / 10,
+                dirtPullFloor: false,
+                pullOver: 1,
+                statusText: `NPC: 評分脫離(pullOver) ${opts.coverLabel || ''}`,
+                reason: 'Scored escape: open-sky facade pull-over carry=1',
+                score: 0,
+                buildingHit: false
+            });
+        }
         if (pullOverOk) {
             prototypes.push({
                 mode: 'scorePullOver',
@@ -7577,7 +7606,13 @@ window.AirArenaAI = {
                 out.reason = `${out.reason} | nestExit=allHit softBank thr≤3`;
             }
         }
-        out = (out && out.routeGate) ? out : this.applyTableEscapeStickOwner(out || best, {
+        if (out && (out.pullOver || out.branch === 'pullOver')) {
+            const pickTurn = Number(opts.turnNo);
+            if (Number.isFinite(pickTurn)) (this._pullOverTurn || (this._pullOverTurn = {}))[teamId] = pickTurn;
+        }
+        out = (out && (out.pullOver || out.branch === 'pullOver'))
+            ? out
+            : ((out && out.routeGate) ? out : this.applyTableEscapeStickOwner(out || best, {
             teamId,
             turnNo: opts.turnNo,
             coverInfo,
@@ -7599,7 +7634,7 @@ window.AirArenaAI = {
             hardContact: opts.hardContact,
             deepEmbed: opts.deepEmbed,
             underRoof: opts.underRoof || opts.trueUnderRoof
-        });
+        }));
         this.stripProvisionalUndercroftSkimTag(out);
         if (out && htEsc && htEsc.active && out.reason && !/homotopy=/.test(String(out.reason))) {
             out.reason = `${out.reason} | homotopy=${htEsc.active.homotopyId} pocket=${Number(htEsc.active.pocketScore).toFixed(2)}`;
@@ -22023,18 +22058,22 @@ altitude,
                             !imminentBuildingHit;
                         if (missileDefenseUrgent) {
                             const breakJoyX = this.clamp((-horizontalBias * 0.75) + (0.5 * (urbanAvoidSide || breakSide)), -1, 1);
+                            // Same gate and stick as before; only the expendable follows the seeker type.
+                            const preUrbanCm = inboundFox1 && !inboundFox2
+                                ? (canUseChaff && chaffCooldownReady ? 'chaff' : 'none')
+                                : 'flare';
                             return this.withDebug({
                                 state: 'defensiveFlare',
-                                statusText: `NPC: 飛彈威脅，釋放熱焰`,
+                                statusText: preUrbanCm === 'chaff' ? `NPC: 雷達飛彈威脅，釋放干擾絲` : `NPC: 飛彈威脅，釋放熱焰`,
                                 throttle: getEngineHeatLevel(self.heat) > 70 ? 3 : 4,
                                 joyX: breakJoyX,
                                 joyY: altitude < 22 ? 0.48 : this.clamp(verticalBias * 0.15 + 0.22, -0.2, 0.45),
                                 roll: this.clamp(breakJoyX * Math.PI / 4.5, -Math.PI / 4, Math.PI / 4),
                                 weapon: 'gun',
-                                queueAction: 'flare',
+                                queueAction: preUrbanCm,
                                 ready: true,
                                 reason: 'Actual missile threat: flare before urban route/climb'
-                            }, debugBase, [...tree, 'selected: defensiveFlare-preUrban'], 'defensiveFlare');
+                            }, debugBase, [...tree, `selected: defensiveFlare-preUrban cm=${preUrbanCm}`], 'defensiveFlare');
                         }
 
                         const earlyUrbanPressure =
@@ -23978,7 +24017,8 @@ altitude,
                 roofClearance: coverInfo.roofClearance,
                 coverDistance: coverInfo.distance,
                 forwardY: selfForward.y,
-                hardChokeKind: coverInfo.hardChokeKind
+                hardChokeKind: coverInfo.hardChokeKind,
+                carry: true
             })) {
                 safeAction.joyY = Math.max(Number(safeAction.joyY) || 0, 0.62);
                 safeAction.joyX = this.clamp(Number(safeAction.joyX) || 0, -0.2, 0.2);
