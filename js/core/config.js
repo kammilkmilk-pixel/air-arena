@@ -210,13 +210,13 @@ const CONFIG = {
             range: 55,
             count: 7,
             model: {
-                // Tunable eye-check defaults (GLB axis differs from fox_two).
+                // Preview pose vs FOX station: yaw π flips F-B from first eye-check; Y/Z matched to FOX hang.
                 scale: 0.22,
                 offsetX: 0,
-                offsetY: -0.12,
-                offsetZ: 0,
+                offsetY: -0.50,
+                offsetZ: 0.14,
                 rotX: 0,
-                rotY: 0,
+                rotY: Math.PI,
                 rotZ: 0
             }
         },
@@ -233,10 +233,10 @@ const CONFIG = {
             model: {
                 scale: 0.22,
                 offsetX: 0,
-                offsetY: -0.14,
-                offsetZ: 0,
+                offsetY: -0.50,
+                offsetZ: 0.14,
                 rotX: 0,
-                rotY: 0,
+                rotY: Math.PI,
                 rotZ: 0
             }
         },

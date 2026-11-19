@@ -103,13 +103,20 @@ function prepareStoreMeshBase(gltf, weaponId, fallbackScale, fallbackRotX) {
     m.traverse((c) => {
         if (c.isMesh) c.material = new THREE.MeshBasicMaterial({ color: 0xdddddd });
     });
-    const b = new THREE.Box3().setFromObject(m);
-    const size = b.getSize(new THREE.Vector3());
-    const unit = 1.0 / Math.max(size.x, size.y, size.z, 1e-6);
+    // Unit-normalize from rest pose, then rotate, then re-center so offsets match FOX hang height.
+    m.position.set(0, 0, 0);
+    m.rotation.set(0, 0, 0);
+    m.scale.set(1, 1, 1);
+    m.updateMatrixWorld(true);
+    const b0 = new THREE.Box3().setFromObject(m);
+    const size0 = b0.getSize(new THREE.Vector3());
+    const unit = 1.0 / Math.max(size0.x, size0.y, size0.z, 1e-6);
     m.scale.set(unit * wantScale, unit * wantScale, unit * wantScale);
     m.rotation.set(rotX, rotY, rotZ);
+    m.updateMatrixWorld(true);
+    const b = new THREE.Box3().setFromObject(m);
     const c = b.getCenter(new THREE.Vector3());
-    m.position.set((-c.x * unit) + ox, (-c.y * unit) + oy, (-c.z * unit) + oz);
+    m.position.set(-c.x + ox, -c.y + oy, -c.z + oz);
     return m;
 }
 
