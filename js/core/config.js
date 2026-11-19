@@ -210,11 +210,12 @@ const CONFIG = {
             range: 55,
             count: 7,
             model: {
-                scale: 0.35,
+                // Tunable eye-check defaults (GLB axis differs from fox_two).
+                scale: 0.22,
                 offsetX: 0,
-                offsetY: -0.05,
+                offsetY: -0.12,
                 offsetZ: 0,
-                rotX: Math.PI / 2,
+                rotX: 0,
                 rotY: 0,
                 rotZ: 0
             }
@@ -230,11 +231,11 @@ const CONFIG = {
             dualRole: false,
             damage: 80,
             model: {
-                scale: 0.35,
+                scale: 0.22,
                 offsetX: 0,
-                offsetY: -0.08,
+                offsetY: -0.14,
                 offsetZ: 0,
-                rotX: Math.PI / 2,
+                rotX: 0,
                 rotY: 0,
                 rotZ: 0
             }
