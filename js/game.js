@@ -88,13 +88,40 @@ async function loadModelWithFallback(url, fallbackColor) {
     }
 }
 
+/** Normalize a store GLB into a pylon-ready base mesh using CONFIG.weapons[id].model. */
+function prepareStoreMeshBase(gltf, weaponId, fallbackScale, fallbackRotX) {
+    if (!gltf || !gltf.scene) return null;
+    const m = gltf.scene;
+    const cfg = (CONFIG.weapons && CONFIG.weapons[weaponId] && CONFIG.weapons[weaponId].model) || {};
+    const wantScale = Number.isFinite(Number(cfg.scale)) ? Number(cfg.scale) : fallbackScale;
+    const rotX = Number.isFinite(Number(cfg.rotX)) ? Number(cfg.rotX) : fallbackRotX;
+    const rotY = Number.isFinite(Number(cfg.rotY)) ? Number(cfg.rotY) : 0;
+    const rotZ = Number.isFinite(Number(cfg.rotZ)) ? Number(cfg.rotZ) : 0;
+    const ox = Number.isFinite(Number(cfg.offsetX)) ? Number(cfg.offsetX) : 0;
+    const oy = Number.isFinite(Number(cfg.offsetY)) ? Number(cfg.offsetY) : 0;
+    const oz = Number.isFinite(Number(cfg.offsetZ)) ? Number(cfg.offsetZ) : 0;
+    m.traverse((c) => {
+        if (c.isMesh) c.material = new THREE.MeshBasicMaterial({ color: 0xdddddd });
+    });
+    const b = new THREE.Box3().setFromObject(m);
+    const size = b.getSize(new THREE.Vector3());
+    const unit = 1.0 / Math.max(size.x, size.y, size.z, 1e-6);
+    m.scale.set(unit * wantScale, unit * wantScale, unit * wantScale);
+    m.rotation.set(rotX, rotY, rotZ);
+    const c = b.getCenter(new THREE.Vector3());
+    m.position.set((-c.x * unit) + ox, (-c.y * unit) + oy, (-c.z * unit) + oz);
+    return m;
+}
+
 async function bootGame() {
     try {
         const modelPaths = CONFIG.assets.models;
-        const [redGltf, blueGltf, foxGltf] = await Promise.all([
+        const [redGltf, blueGltf, foxGltf, bombGltf, rocketGltf] = await Promise.all([
             loadModelWithFallback(modelPaths.red, 0xff0055),
             loadModelWithFallback(modelPaths.blue, 0x00bcd4),
-            loadModelAsync(modelPaths.fox2).catch(() => null)
+            loadModelAsync(modelPaths.fox2).catch(() => null),
+            loadModelAsync(modelPaths.bomb).catch(() => null),
+            loadModelAsync(modelPaths.rocket).catch(() => null)
         ]);
         await GameContext.vfxReadyPromise;
 
@@ -115,13 +142,13 @@ async function bootGame() {
         }
 
         if (foxGltf) {
-            const m = foxGltf.scene; 
+            const m = foxGltf.scene;
             m.traverse(c => { if(c.isMesh) c.material = new THREE.MeshBasicMaterial({ color: 0xdddddd }); });
-            const b = new THREE.Box3().setFromObject(m); 
-            const s = 1.0 / Math.max(b.getSize(new THREE.Vector3()).x, b.getSize(new THREE.Vector3()).y, b.getSize(new THREE.Vector3()).z); 
-            m.scale.set(s*MISSILE_SCALE, s*MISSILE_SCALE, s*MISSILE_SCALE); 
-            m.rotation.set(MISSILE_ROT_X, MISSILE_ROT_Y, MISSILE_ROT_Z); 
-            const c = b.getCenter(new THREE.Vector3()); 
+            const b = new THREE.Box3().setFromObject(m);
+            const s = 1.0 / Math.max(b.getSize(new THREE.Vector3()).x, b.getSize(new THREE.Vector3()).y, b.getSize(new THREE.Vector3()).z);
+            m.scale.set(s*MISSILE_SCALE, s*MISSILE_SCALE, s*MISSILE_SCALE);
+            m.rotation.set(MISSILE_ROT_X, MISSILE_ROT_Y, MISSILE_ROT_Z);
+            const c = b.getCenter(new THREE.Vector3());
             m.position.set(-c.x*s, -c.y*s, -c.z*s);
             missileMeshBase = m;
         } else {
@@ -129,8 +156,13 @@ async function bootGame() {
             if (!missileMeshBase && typeof createProceduralMissileMesh === 'function') {
                 missileMeshBase = createProceduralMissileMesh();
             }
-            if (missileMeshBase) missileMeshBase.position.set(0, 0, 0); 
+            if (missileMeshBase) missileMeshBase.position.set(0, 0, 0);
         }
+
+        bombMeshBase = prepareStoreMeshBase(bombGltf, 'bomb', 0.35, Math.PI / 2);
+        rocketMeshBase = prepareStoreMeshBase(rocketGltf, 'rocket', 0.35, Math.PI / 2);
+        if (!bombMeshBase) console.warn('⚠ bomb.glb missing — ground-store preview skips bomb mesh');
+        if (!rocketMeshBase) console.warn('⚠ rocket.glb missing — ground-store preview skips rocket mesh');
 
         checkInit();
 

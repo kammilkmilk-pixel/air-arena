@@ -25,6 +25,31 @@ function combatFactionOf(id) {
     return String(id).startsWith('blue') ? 'blue' : 'red';
 }
 
+/** URL / CONFIG gate for visual-only bomb+rocket eye-check on pylons. */
+function groundStoresPreviewEnabled() {
+    try {
+        if (typeof window !== 'undefined' && window.location && window.location.search) {
+            const q = new URLSearchParams(window.location.search).get('storesPreview');
+            if (q === '0' || q === 'false') return false;
+            if (q === '1' || q === 'true') return true;
+        }
+    } catch (e) { /* ignore */ }
+    return !!(typeof CONFIG !== 'undefined' && CONFIG.preview && CONFIG.preview.groundStores);
+}
+
+/** Pick store mesh for a pylon index (preview swaps bomb/rocket; else FOX mesh). */
+function meshBaseForPylonIndex(idx) {
+    if (groundStoresPreviewEnabled() && typeof CONFIG !== 'undefined' && CONFIG.preview) {
+        const bombIdx = Number.isFinite(Number(CONFIG.preview.bombPylonIndex))
+            ? Number(CONFIG.preview.bombPylonIndex) : 0;
+        const rocketIdx = Number.isFinite(Number(CONFIG.preview.rocketPylonIndex))
+            ? Number(CONFIG.preview.rocketPylonIndex) : 3;
+        if (idx === bombIdx && typeof bombMeshBase !== 'undefined' && bombMeshBase) return bombMeshBase;
+        if (idx === rocketIdx && typeof rocketMeshBase !== 'undefined' && rocketMeshBase) return rocketMeshBase;
+    }
+    return missileMeshBase;
+}
+
 function tryAttachAllPylons() {
     const ids = (typeof GameContext !== 'undefined' && GameContext.getRosterIds)
         ? GameContext.getRosterIds()
@@ -49,7 +74,8 @@ function tryAttachAllPylons() {
             }
         }
         t.pylons = acConfig.pylons.map((p, idx) => {
-            let pMesh = new THREE.Group(); pMesh.add(missileMeshBase.clone());
+            const storeBase = meshBaseForPylonIndex(idx) || missileMeshBase;
+            let pMesh = new THREE.Group(); pMesh.add(storeBase.clone());
             pMesh.position.set(p.position[0], p.position[1], p.position[2]); t.wrapper.add(pMesh);
             const rawSlot = loadout && loadout[idx];
             const isEmpty = rawSlot === 'empty' || rawSlot === 'none' || rawSlot === 'gun';

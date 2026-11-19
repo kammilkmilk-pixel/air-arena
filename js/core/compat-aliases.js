@@ -22,6 +22,20 @@ Object.defineProperty(window, 'missileMeshBase', {
     set(v) { GameContext.state.missileMeshBase = v; }
 });
 
+Object.defineProperty(window, 'bombMeshBase', {
+    configurable: true,
+    enumerable: true,
+    get() { return GameContext.state.bombMeshBase; },
+    set(v) { GameContext.state.bombMeshBase = v; }
+});
+
+Object.defineProperty(window, 'rocketMeshBase', {
+    configurable: true,
+    enumerable: true,
+    get() { return GameContext.state.rocketMeshBase; },
+    set(v) { GameContext.state.rocketMeshBase = v; }
+});
+
 Object.defineProperty(window, 'tAct', {
     configurable: true,
     enumerable: true,

@@ -19,6 +19,8 @@ window.GameContext = {
         globalChaff: [],
         globalBullets: [],
         missileMeshBase: null,
+        bombMeshBase: null,
+        rocketMeshBase: null,
         initialPositions: null,
         teams: null,
         activeTeamId: 'red',

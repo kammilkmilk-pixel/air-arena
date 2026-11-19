@@ -10,6 +10,8 @@ const CONFIG = {
             red: 'assets/models/mig21_red.glb',
             blue: 'assets/models/mig21_blue.glb',
             fox2: 'assets/models/fox_two.glb',
+            bomb: 'assets/models/bomb.glb',
+            rocket: 'assets/models/rocket.glb',
             city: 'assets/models/city.glb'
         },
         vfx: {
@@ -197,6 +199,7 @@ const CONFIG = {
          * Rocket pod stub (A2A/A2G). Not wired to decide / SMS fire.
          * Phase B must close before an AI weapon knife. Sanitize still maps unknown → fox2;
          * keep this id out of live pylons until then.
+         * model.* is used by the ground-store visual preview only.
          */
         'rocket': {
             id: 'rocket',
@@ -205,7 +208,36 @@ const CONFIG = {
             dualRole: true,
             damage: 18,
             range: 55,
-            count: 7
+            count: 7,
+            model: {
+                scale: 0.35,
+                offsetX: 0,
+                offsetY: -0.05,
+                offsetZ: 0,
+                rotX: Math.PI / 2,
+                rotY: 0,
+                rotZ: 0
+            }
+        },
+        /**
+         * Unguided bomb stub — visual preview only until Phase B A2G.
+         * Not in sanitize / decide / SMS fire paths.
+         */
+        'bomb': {
+            id: 'bomb',
+            name: '炸彈（佔位）',
+            aiEnabled: false,
+            dualRole: false,
+            damage: 80,
+            model: {
+                scale: 0.35,
+                offsetX: 0,
+                offsetY: -0.08,
+                offsetZ: 0,
+                rotX: Math.PI / 2,
+                rotY: 0,
+                rotZ: 0
+            }
         },
         'flare': {
             id: 'flare',
@@ -346,6 +378,17 @@ const CONFIG = {
             { type: 'box', x: 4,   z: 42, w: 3, d: 3, h: 22, color: 0x2c2c2c }, // 左偏阻擋大廈
             { type: 'box', x: 13,  z: 54, w: 4, d: 4, h: 19, color: 0x2c2c2c }  // 右偏阻擋大廈
         ]
+    },
+
+    /**
+     * Visual-only A2G store eye-check (bomb/rocket on pylons).
+     * Does not arm fire / decide / SMS. Tune weapons.bomb|rocket.model for size/pose.
+     * URL: ?storesPreview=0 disables; ?storesPreview=1 forces on.
+     */
+    preview: {
+        groundStores: true,
+        bombPylonIndex: 0,
+        rocketPylonIndex: 3
     }
 };
 
