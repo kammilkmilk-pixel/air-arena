@@ -210,13 +210,14 @@ const CONFIG = {
             range: 55,
             count: 7,
             model: {
-                // Preview pose vs FOX station: yaw π flips F-B from first eye-check; Y/Z matched to FOX hang.
+                // Hang matched to FOX local cy/cz. rotY 0 = same +Z nose sense as FOX rail mesh.
+                // If Knight still sees F-B reversed, set rotY: Math.PI. Lower = more negative offsetY.
                 scale: 0.22,
                 offsetX: 0,
                 offsetY: -0.50,
                 offsetZ: 0.14,
                 rotX: 0,
-                rotY: Math.PI,
+                rotY: 0,
                 rotZ: 0
             }
         },
@@ -236,7 +237,7 @@ const CONFIG = {
                 offsetY: -0.50,
                 offsetZ: 0.14,
                 rotX: 0,
-                rotY: Math.PI,
+                rotY: 0,
                 rotZ: 0
             }
         },
