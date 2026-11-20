@@ -53,13 +53,30 @@ function setupModel(gltfOrScene, x, z, yRot) {
     const source = gltfOrScene.scene || gltfOrScene;
     const model = source.clone(true);
     
-    model.traverse(c => { 
-        if (c.isMesh && c.material) { 
-            c.castShadow = true;
-            c.receiveShadow = true;
-            c.material = c.material.clone();
-            if (c.material.color) { c.userData.origColor = c.material.color.getHex(); }
-        } 
+    model.traverse(c => {
+        if (!c.isMesh) return;
+        // Re-imported Tinkercad/MiG GLBs often ship vertex colors without normals.
+        // MeshStandardMaterial then shades black — restore lit paint by computing normals.
+        if (c.geometry && !c.geometry.attributes.normal) {
+            c.geometry.computeVertexNormals();
+        }
+        if (!c.material) return;
+        c.castShadow = true;
+        c.receiveShadow = true;
+        const mats = Array.isArray(c.material) ? c.material : [c.material];
+        const cloned = mats.map((mat) => {
+            const m = mat.clone();
+            // Keep authored vertex-color paint (new exports use white base + color attr).
+            if (c.geometry && c.geometry.attributes.color) {
+                m.vertexColors = true;
+            }
+            return m;
+        });
+        c.material = Array.isArray(c.material) ? cloned : cloned[0];
+        const primary = Array.isArray(c.material) ? c.material[0] : c.material;
+        if (primary && primary.color) {
+            c.userData.origColor = primary.color.getHex();
+        }
     });
 
     const box = new THREE.Box3().setFromObject(model); const scale = 1.2 / Math.max(box.getSize(new THREE.Vector3()).x, box.getSize(new THREE.Vector3()).y, box.getSize(new THREE.Vector3()).z); model.scale.set(scale, scale, scale); const center = box.getCenter(new THREE.Vector3()); model.position.set(-center.x * scale, -center.y * scale, -center.z * scale);
@@ -88,7 +105,11 @@ async function loadModelWithFallback(url, fallbackColor) {
     }
 }
 
-/** Normalize a store GLB into a pylon-ready base mesh using CONFIG.weapons[id].model. */
+/**
+ * Normalize a store GLB into a pylon-ready base mesh using CONFIG.weapons[id].model.
+ * Offsets are pylon/aircraft-local and uncapped:
+ *   X = left/right, Y = up/down, Z = aft/forward (nose = +Z).
+ */
 function prepareStoreMeshBase(gltf, weaponId, fallbackScale, fallbackRotX) {
     if (!gltf || !gltf.scene) return null;
     const m = gltf.scene;
@@ -103,7 +124,7 @@ function prepareStoreMeshBase(gltf, weaponId, fallbackScale, fallbackRotX) {
     m.traverse((c) => {
         if (c.isMesh) c.material = new THREE.MeshBasicMaterial({ color: 0xdddddd });
     });
-    // Unit-normalize from rest pose, then rotate, then re-center so offsets match FOX hang height.
+    // Unit-normalize → rotate → re-center → apply free XYZ nudge (no axis lock/clamp).
     m.position.set(0, 0, 0);
     m.rotation.set(0, 0, 0);
     m.scale.set(1, 1, 1);
@@ -117,6 +138,7 @@ function prepareStoreMeshBase(gltf, weaponId, fallbackScale, fallbackRotX) {
     const b = new THREE.Box3().setFromObject(m);
     const c = b.getCenter(new THREE.Vector3());
     m.position.set(-c.x + ox, -c.y + oy, -c.z + oz);
+    m.userData.storeOffsets = { x: ox, y: oy, z: oz };
     return m;
 }
 

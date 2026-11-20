@@ -91,10 +91,10 @@ const CONFIG = {
             ],
             
             pylons: [
-                { id: 1, position: [-0.1, 0.37, -0.2], weapon: 'fox1' },
+                { id: 1, position: [-0.11, 0.37, -0.2], weapon: 'fox1' },
                 { id: 2, position: [-0.25, 0.37, -0.2], weapon: 'fox2' },
                 { id: 3, position: [ 0.25, 0.37, -0.2], weapon: 'fox2' },
-                { id: 4, position: [ 0.1, 0.37, -0.2], weapon: 'fox1' }
+                { id: 4, position: [ 0.11, 0.37, -0.2], weapon: 'fox1' }
             ]
         }
     },
@@ -149,11 +149,14 @@ const CONFIG = {
             reloadTurns: 30,
             
             model: {
-                scale: 0.3,        
-                offsetX: -0.5,     
-                offsetY: -0.10,    
-                offsetZ: 0.0,      
-                rotX: Math.PI / 2, 
+                // FOX rail mesh: only scale + rot* are applied today.
+                // offsetX/Y/Z here are legacy / unused — move FOX with pylons[].position instead.
+                // For bomb/rocket free XYZ nudge, use weapons.bomb|rocket.model.offset*.
+                scale: 0.3,
+                offsetX: 0,
+                offsetY: 0,
+                offsetZ: 0,
+                rotX: Math.PI / 2,
                 rotY: 0,
                 rotZ: 0
             }
@@ -186,10 +189,11 @@ const CONFIG = {
             /** Empty pylon auto-restock after this many turns (combat tempo). */
             reloadTurns: 50,
             model: {
+                // Same as fox2: scale/rot only; offsets unused for FOX rails.
                 scale: 0.3,
-                offsetX: -0.5,
-                offsetY: -0.10,
-                offsetZ: 0.0,
+                offsetX: 0,
+                offsetY: 0,
+                offsetZ: 0,
                 rotX: Math.PI / 2,
                 rotY: 0,
                 rotZ: 0
@@ -210,12 +214,18 @@ const CONFIG = {
             range: 55,
             count: 7,
             model: {
-                // Hang matched to FOX local cy/cz. rotY 0 = same +Z nose sense as FOX rail mesh.
-                // If Knight still sees F-B reversed, set rotY: Math.PI. Lower = more negative offsetY.
-                scale: 0.22,
+                /**
+                 * Pylon-local nudge (aircraft axes, no clamp):
+                 *   offsetX = left / right   (−X left, +X right)
+                 *   offsetY = up / down      (−Y lower / hang)
+                 *   offsetZ = aft / forward  (−Z toward tail, +Z toward nose)
+                 * Station itself is CONFIG.aircrafts.mig21.pylons[i].position.
+                 * Hard-refresh after edits (?storesPreview=1).
+                 */
+                scale: 0.18,
                 offsetX: 0,
-                offsetY: -0.50,
-                offsetZ: 0.14,
+                offsetY: -0.52,
+                offsetZ: 0.18,
                 rotX: 0,
                 rotY: 0,
                 rotZ: 0
@@ -232,9 +242,10 @@ const CONFIG = {
             dualRole: false,
             damage: 80,
             model: {
-                scale: 0.22,
+                // Same axis map as rocket.model (X=L-R, Y=up-down, Z=fore-aft).
+                scale: 0.32,
                 offsetX: 0,
-                offsetY: -0.50,
+                offsetY: -0.52,
                 offsetZ: 0.14,
                 rotX: 0,
                 rotY: 0,
