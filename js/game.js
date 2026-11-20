@@ -49,14 +49,38 @@ function createExhaust() {
     return { group: exhaustGroup, machTex: machTex, outerTex: outerTex };
 }
 
+/**
+ * Aircraft paint for Tinkercad/MiG GLBs:
+ * - Paint lives in COLOR_0 (vertex colors), material.color is usually white
+ * - Often no normals; MeshStandard metalness 0.5 without env map washes/greys paint
+ * Use unlit MeshBasic + vertexColors so red/blue (+ white/yellow/grey accents) always show.
+ */
+function buildAircraftPaintMaterial(sourceMat, geometry) {
+    const hasVColor = !!(geometry && geometry.attributes && geometry.attributes.color);
+    const hasMap = !!(sourceMat && sourceMat.map);
+    const mat = new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        vertexColors: hasVColor,
+        map: hasMap ? sourceMat.map : null,
+        side: (sourceMat && sourceMat.side != null) ? sourceMat.side : THREE.FrontSide,
+        transparent: !!(sourceMat && sourceMat.transparent),
+        opacity: (sourceMat && Number.isFinite(sourceMat.opacity)) ? sourceMat.opacity : 1,
+        // Fog was washing COLOR_0 team paint to grey at chase range — keep paint readable.
+        fog: false
+    });
+    if (!hasVColor && sourceMat && sourceMat.color) {
+        const hex = sourceMat.color.getHex();
+        if (hex !== 0xffffff && hex !== 0x000000) mat.color.copy(sourceMat.color);
+    }
+    return mat;
+}
+
 function setupModel(gltfOrScene, x, z, yRot) {
     const source = gltfOrScene.scene || gltfOrScene;
     const model = source.clone(true);
     
     model.traverse(c => {
         if (!c.isMesh) return;
-        // Re-imported Tinkercad/MiG GLBs often ship vertex colors without normals.
-        // MeshStandardMaterial then shades black — restore lit paint by computing normals.
         if (c.geometry && !c.geometry.attributes.normal) {
             c.geometry.computeVertexNormals();
         }
@@ -64,16 +88,10 @@ function setupModel(gltfOrScene, x, z, yRot) {
         c.castShadow = true;
         c.receiveShadow = true;
         const mats = Array.isArray(c.material) ? c.material : [c.material];
-        const cloned = mats.map((mat) => {
-            const m = mat.clone();
-            // Keep authored vertex-color paint (new exports use white base + color attr).
-            if (c.geometry && c.geometry.attributes.color) {
-                m.vertexColors = true;
-            }
-            return m;
-        });
-        c.material = Array.isArray(c.material) ? cloned : cloned[0];
+        const painted = mats.map((mat) => buildAircraftPaintMaterial(mat, c.geometry));
+        c.material = Array.isArray(c.material) ? painted : painted[0];
         const primary = Array.isArray(c.material) ? c.material[0] : c.material;
+        // Damage dim uses material.color; keep white so vertex paint stays the visible team color.
         if (primary && primary.color) {
             c.userData.origColor = primary.color.getHex();
         }
@@ -171,15 +189,8 @@ async function bootGame() {
         }
 
         if (foxGltf) {
-            const m = foxGltf.scene;
-            m.traverse(c => { if(c.isMesh) c.material = new THREE.MeshBasicMaterial({ color: 0xdddddd }); });
-            const b = new THREE.Box3().setFromObject(m);
-            const s = 1.0 / Math.max(b.getSize(new THREE.Vector3()).x, b.getSize(new THREE.Vector3()).y, b.getSize(new THREE.Vector3()).z);
-            m.scale.set(s*MISSILE_SCALE, s*MISSILE_SCALE, s*MISSILE_SCALE);
-            m.rotation.set(MISSILE_ROT_X, MISSILE_ROT_Y, MISSILE_ROT_Z);
-            const c = b.getCenter(new THREE.Vector3());
-            m.position.set(-c.x*s, -c.y*s, -c.z*s);
-            missileMeshBase = m;
+            // Same recenter + offsetY path as bomb/rocket so FOX hangs under new underwing stations.
+            missileMeshBase = prepareStoreMeshBase(foxGltf, 'fox2', MISSILE_SCALE, MISSILE_ROT_X);
         } else {
             missileMeshBase = GameContext.callService('createProceduralMissileMesh');
             if (!missileMeshBase && typeof createProceduralMissileMesh === 'function') {
@@ -188,8 +199,8 @@ async function bootGame() {
             if (missileMeshBase) missileMeshBase.position.set(0, 0, 0);
         }
 
-        bombMeshBase = prepareStoreMeshBase(bombGltf, 'bomb', 0.35, Math.PI / 2);
-        rocketMeshBase = prepareStoreMeshBase(rocketGltf, 'rocket', 0.35, Math.PI / 2);
+        bombMeshBase = prepareStoreMeshBase(bombGltf, 'bomb', 0.28, 0);
+        rocketMeshBase = prepareStoreMeshBase(rocketGltf, 'rocket', 0.18, 0);
         if (!bombMeshBase) console.warn('⚠ bomb.glb missing — ground-store preview skips bomb mesh');
         if (!rocketMeshBase) console.warn('⚠ rocket.glb missing — ground-store preview skips rocket mesh');
 

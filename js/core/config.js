@@ -90,11 +90,13 @@ const CONFIG = {
                 { id: 2, position: [ 0.05, -0.12, 0.45] }  
             ],
             
+            // Underwing hardpoints matched to reimported MiG mesh pylon tips (wrapper-local).
+            // Y ≈ tip+0.02 so stores hang under the rail, not above the wing (old Y=0.37).
             pylons: [
-                { id: 1, position: [-0.11, 0.37, -0.2], weapon: 'fox1' },
-                { id: 2, position: [-0.25, 0.37, -0.2], weapon: 'fox2' },
-                { id: 3, position: [ 0.25, 0.37, -0.2], weapon: 'fox2' },
-                { id: 4, position: [ 0.11, 0.37, -0.2], weapon: 'fox1' }
+                { id: 1, position: [-0.15, -0.06, -0.05], weapon: 'fox1' },
+                { id: 2, position: [-0.25, -0.06, -0.15], weapon: 'fox2' },
+                { id: 3, position: [ 0.25, -0.06, -0.15], weapon: 'fox2' },
+                { id: 4, position: [ 0.15, -0.06, -0.05], weapon: 'fox1' }
             ]
         }
     },
@@ -149,12 +151,10 @@ const CONFIG = {
             reloadTurns: 30,
             
             model: {
-                // FOX rail mesh: only scale + rot* are applied today.
-                // offsetX/Y/Z here are legacy / unused — move FOX with pylons[].position instead.
-                // For bomb/rocket free XYZ nudge, use weapons.bomb|rocket.model.offset*.
+                // Applied via prepareStoreMeshBase (same XYZ map as bomb/rocket).
                 scale: 0.3,
                 offsetX: 0,
-                offsetY: 0,
+                offsetY: -0.14,
                 offsetZ: 0,
                 rotX: Math.PI / 2,
                 rotY: 0,
@@ -189,10 +189,9 @@ const CONFIG = {
             /** Empty pylon auto-restock after this many turns (combat tempo). */
             reloadTurns: 50,
             model: {
-                // Same as fox2: scale/rot only; offsets unused for FOX rails.
                 scale: 0.3,
                 offsetX: 0,
-                offsetY: 0,
+                offsetY: -0.14,
                 offsetZ: 0,
                 rotX: Math.PI / 2,
                 rotY: 0,
@@ -224,8 +223,8 @@ const CONFIG = {
                  */
                 scale: 0.18,
                 offsetX: 0,
-                offsetY: -0.52,
-                offsetZ: 0.18,
+                offsetY: -0.14,
+                offsetZ: 0.02,
                 rotX: 0,
                 rotY: 0,
                 rotZ: 0
@@ -243,10 +242,10 @@ const CONFIG = {
             damage: 80,
             model: {
                 // Same axis map as rocket.model (X=L-R, Y=up-down, Z=fore-aft).
-                scale: 0.32,
+                scale: 0.28,
                 offsetX: 0,
-                offsetY: -0.52,
-                offsetZ: 0.14,
+                offsetY: -0.14,
+                offsetZ: 0.02,
                 rotX: 0,
                 rotY: 0,
                 rotZ: 0
