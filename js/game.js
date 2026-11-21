@@ -49,62 +49,29 @@ function createExhaust() {
     return { group: exhaustGroup, machTex: machTex, outerTex: outerTex };
 }
 
-/**
- * Aircraft paint for Tinkercad/MiG GLBs:
- * - Paint lives in COLOR_0 (vertex colors), material.color is usually white
- * - Often no normals; MeshStandard metalness 0.5 without env map washes/greys paint
- * Use unlit MeshBasic + vertexColors so red/blue (+ white/yellow/grey accents) always show.
- */
-function buildAircraftPaintMaterial(sourceMat, geometry) {
-    const hasVColor = !!(geometry && geometry.attributes && geometry.attributes.color);
-    const hasMap = !!(sourceMat && sourceMat.map);
-    const mat = new THREE.MeshBasicMaterial({
-        color: 0xffffff,
-        vertexColors: hasVColor,
-        map: hasMap ? sourceMat.map : null,
-        side: (sourceMat && sourceMat.side != null) ? sourceMat.side : THREE.FrontSide,
-        transparent: !!(sourceMat && sourceMat.transparent),
-        opacity: (sourceMat && Number.isFinite(sourceMat.opacity)) ? sourceMat.opacity : 1,
-        // Fog was washing COLOR_0 team paint to grey at chase range — keep paint readable.
-        fog: false
-    });
-    if (!hasVColor && sourceMat && sourceMat.color) {
-        const hex = sourceMat.color.getHex();
-        if (hex !== 0xffffff && hex !== 0x000000) mat.color.copy(sourceMat.color);
-    }
-    return mat;
-}
-
 function setupModel(gltfOrScene, x, z, yRot) {
     const source = gltfOrScene.scene || gltfOrScene;
     const model = source.clone(true);
-    
+
+    // Pre-update display path: keep GLTF materials (MeshStandard + COLOR_0), only clone.
+    // Do not replace with MeshBasic — that flattened Tinkercad paint.
     model.traverse(c => {
-        if (!c.isMesh) return;
-        if (c.geometry && !c.geometry.attributes.normal) {
-            c.geometry.computeVertexNormals();
-        }
-        if (!c.material) return;
-        c.castShadow = true;
-        c.receiveShadow = true;
-        const mats = Array.isArray(c.material) ? c.material : [c.material];
-        const painted = mats.map((mat) => buildAircraftPaintMaterial(mat, c.geometry));
-        c.material = Array.isArray(c.material) ? painted : painted[0];
-        const primary = Array.isArray(c.material) ? c.material[0] : c.material;
-        // Damage dim uses material.color; keep white so vertex paint stays the visible team color.
-        if (primary && primary.color) {
-            c.userData.origColor = primary.color.getHex();
+        if (c.isMesh && c.material) {
+            c.castShadow = true;
+            c.receiveShadow = true;
+            c.material = c.material.clone();
+            if (c.material.color) { c.userData.origColor = c.material.color.getHex(); }
         }
     });
 
     const box = new THREE.Box3().setFromObject(model); const scale = 1.2 / Math.max(box.getSize(new THREE.Vector3()).x, box.getSize(new THREE.Vector3()).y, box.getSize(new THREE.Vector3()).z); model.scale.set(scale, scale, scale); const center = box.getCenter(new THREE.Vector3()); model.position.set(-center.x * scale, -center.y * scale, -center.z * scale);
-    const wrapper = new THREE.Group(); wrapper.add(model); 
+    const wrapper = new THREE.Group(); wrapper.add(model);
 
     let exhaust = createExhaust();
-    wrapper.add(exhaust.group);         
-    wrapper.userData.exhaust = exhaust; 
+    wrapper.add(exhaust.group);
+    wrapper.userData.exhaust = exhaust;
 
-    wrapper.position.set(x, 45, z); wrapper.rotation.y = yRot; wrapper.userData.logicalQuat = wrapper.quaternion.clone(); scene.add(wrapper); 
+    wrapper.position.set(x, 45, z); wrapper.rotation.y = yRot; wrapper.userData.logicalQuat = wrapper.quaternion.clone(); scene.add(wrapper);
     return wrapper;
 }
 
