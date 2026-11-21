@@ -32,6 +32,16 @@
         return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 33;
     }
 
+    /** Frames before first rocket in a salvo (~1s). */
+    function launchDelaySteps() {
+        const n = Number(rocketConfig().launchDelaySteps);
+        return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 33;
+    }
+
+    function launchStepForIndex(index) {
+        return launchDelaySteps() + (Number(index) || 0) * intervalSteps();
+    }
+
     function teamRocketPylons(team) {
         if (!team || !team.pylons) return [];
         return team.pylons.filter((p) => {
@@ -253,7 +263,6 @@
             ? combatActiveIds()
             : Object.keys(typeof teams !== 'undefined' ? teams : {});
         const salvoN = salvoPerTurn();
-        const gap = intervalSteps();
 
         ids.forEach((id) => {
             const t = teams[id];
@@ -291,7 +300,7 @@
             for (let i = 0; i < fireCount; i++) {
                 t._rocketSeq = seqBase + i + 1;
                 const trackId = `r${id}_p${pod.id}_t${turn}_${t._rocketSeq}`;
-                const launchStep = i * gap;
+                const launchStep = Math.min(stepsPerTurn, launchStepForIndex(i));
                 const rocket = {
                     pylonId: pod.id,
                     trackId,
@@ -568,7 +577,7 @@
             );
             // Release pip along aircraft path
             const pip = new THREE.Mesh(
-                new THREE.SphereGeometry(0.28, 8, 8),
+                new THREE.SphereGeometry(0.14, 8, 8), // half of prior 0.28 release marker
                 new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.85 })
             );
             Rocket._aimGroup.add(line, ring, cross, pip);
@@ -601,7 +610,6 @@
         const ammo = ensurePodAmmo(pod);
         const max = Number(pod.ammoMax) || roundsPerPod();
         const salvo = Math.min(salvoPerTurn(), ammo);
-        const gap = intervalSteps();
         const stepsPerTurn = (typeof CONFIG !== 'undefined' && CONFIG.rules && CONFIG.rules.stepsPerTurn)
             ? Number(CONFIG.rules.stepsPerTurn) : 100;
         const knobs = ballisticKnobs();
@@ -620,7 +628,7 @@
             slot.pip.visible = show;
             if (!show) continue;
 
-            const launchStep = i * gap;
+            const launchStep = Math.min(stepsPerTurn, launchStepForIndex(i));
             const ratio = Math.min(1, launchStep / Math.max(1, stepsPerTurn));
             const rel = estimateLaunchState(team, pod, {
                 ratio,
@@ -679,6 +687,8 @@
     Rocket.roundsPerPod = roundsPerPod;
     Rocket.salvoPerTurn = salvoPerTurn;
     Rocket.intervalSteps = intervalSteps;
+    Rocket.launchDelaySteps = launchDelaySteps;
+    Rocket.launchStepForIndex = launchStepForIndex;
     Rocket.armRocketPylons = armRocketPylons;
     Rocket.standbyRocketPylons = standbyRocketPylons;
     Rocket.processRocketSalvos = processRocketSalvos;

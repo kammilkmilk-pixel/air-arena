@@ -218,6 +218,8 @@ const CONFIG = {
              * stepsPerTurn=100 ≈ one turn; 33 ≈ ~1s if a turn feels ~3s.
              */
             intervalSteps: 33,
+            /** Delay before first rocket (~1s): launches at 33 / 66 / 99. */
+            launchDelaySteps: 33,
             /** Launch speed (world units / turn-second) along nose. */
             launchSpeed: 55,
             launchSpeedScale: 1.0,
