@@ -310,6 +310,44 @@
     <div id="temp-score-log" class="temp-score-log"></div>
 </div>
 
+    <!-- Ghost steer HUD: LCOS-style grab (nose) + roll ring + L/R handles -->
+    <div id="ghost-steer-hud" hidden aria-hidden="true">
+        <svg viewBox="0 0 140 140" aria-label="ghost steer">
+            <!-- Outer roll ring (drag tangentially to bank) -->
+            <circle id="ghost-roll-track" cx="70" cy="70" r="62" fill="none"
+                stroke="rgba(255,255,255,0.35)" stroke-width="2" stroke-dasharray="4 5"/>
+            <g id="ghost-roll-ring">
+                <circle cx="70" cy="70" r="62" fill="none" stroke="rgba(255,255,255,0.85)" stroke-width="2.4"/>
+                <circle class="ghost-roll-port" cx="12" cy="70" r="5" fill="#ff3355"/>
+                <circle class="ghost-roll-stbd" cx="128" cy="70" r="5" fill="#00ff88"/>
+            </g>
+            <!-- Invisible fat hit for roll -->
+            <circle id="ghost-roll-hit" cx="70" cy="70" r="66" fill="rgba(255,255,255,0.001)"
+                stroke="rgba(255,255,255,0.001)" stroke-width="14" style="cursor:grab"/>
+            <!-- Left / right grab handles -->
+            <g id="ghost-handle-left" class="ghost-side-handle" style="cursor:grab">
+                <rect x="4" y="52" width="14" height="36" rx="4" fill="rgba(0,0,0,0.45)" stroke="#fff" stroke-width="1.5"/>
+                <line x1="8" y1="58" x2="8" y2="82" stroke="#fff" stroke-width="1.2" opacity="0.7"/>
+                <line x1="14" y1="58" x2="14" y2="82" stroke="#fff" stroke-width="1.2" opacity="0.7"/>
+            </g>
+            <g id="ghost-handle-right" class="ghost-side-handle" style="cursor:grab">
+                <rect x="122" y="52" width="14" height="36" rx="4" fill="rgba(0,0,0,0.45)" stroke="#fff" stroke-width="1.5"/>
+                <line x1="126" y1="58" x2="126" y2="82" stroke="#fff" stroke-width="1.2" opacity="0.7"/>
+                <line x1="132" y1="58" x2="132" y2="82" stroke="#fff" stroke-width="1.2" opacity="0.7"/>
+            </g>
+            <!-- Inner aim / nose grab (same role as LCOS / FOX ring) -->
+            <circle id="ghost-grab-hit" cx="70" cy="70" r="40" fill="rgba(255,255,255,0.02)" style="cursor:grab"/>
+            <circle id="ghost-grab-ring" cx="70" cy="70" r="32" fill="none" stroke="#ffffff" stroke-width="2.4"/>
+            <circle id="ghost-grab-inner" cx="70" cy="70" r="10" fill="none" stroke="rgba(255,255,255,0.55)" stroke-width="1.4"/>
+            <line x1="70" y1="46" x2="70" y2="58" stroke="#fff" stroke-width="1.6"/>
+            <line x1="70" y1="82" x2="70" y2="94" stroke="#fff" stroke-width="1.6"/>
+            <line x1="46" y1="70" x2="58" y2="70" stroke="#fff" stroke-width="1.6"/>
+            <line x1="82" y1="70" x2="94" y2="70" stroke="#fff" stroke-width="1.6"/>
+            <circle id="ghost-joy-pip" cx="70" cy="70" r="3.2" fill="#ffeb3b"/>
+        </svg>
+        <div id="ghost-steer-thr" class="ghost-steer-thr">THR —</div>
+    </div>
+
     <!-- Semi-transparent radial ops HUD (appears on aircraft / ghost pick) -->
     <div id="ops-radial-root" hidden aria-hidden="true">
         <div id="ops-radial-anchor">

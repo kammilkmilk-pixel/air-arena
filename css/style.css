@@ -743,6 +743,61 @@ html.startup-lock body {
     border-radius: 8px;
 }
 
+/* Ghost steer HUD — LCOS-style nose grab + roll ring + L/R handles */
+#ghost-steer-hud {
+    position: fixed;
+    left: 0;
+    top: 0;
+    width: 120px;
+    height: 120px;
+    margin-left: -60px;
+    margin-top: -60px;
+    z-index: 8600;
+    pointer-events: none;
+    transform: translate(0, 0);
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    filter: drop-shadow(0 1px 4px rgba(0,0,0,0.75));
+}
+#ghost-steer-hud[hidden] { display: none !important; }
+#ghost-steer-hud.is-visible {
+    display: block !important;
+    pointer-events: auto;
+}
+#ghost-steer-hud svg {
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+    pointer-events: none;
+}
+#ghost-steer-hud #ghost-grab-hit,
+#ghost-steer-hud #ghost-grab-ring,
+#ghost-steer-hud #ghost-roll-hit,
+#ghost-steer-hud .ghost-side-handle {
+    pointer-events: auto;
+}
+#ghost-steer-hud.is-nose-dragging #ghost-grab-ring {
+    stroke: #ffeb3b;
+    stroke-width: 3.2;
+}
+#ghost-steer-hud.is-roll-dragging #ghost-roll-ring circle:first-child {
+    stroke: #00e5ff;
+}
+.ghost-steer-thr {
+    position: absolute;
+    left: 50%;
+    top: calc(100% + 4px);
+    transform: translateX(-50%);
+    font-family: 'Courier New', monospace;
+    font-size: 10px;
+    font-weight: bold;
+    color: #fff;
+    text-shadow: 0 1px 3px #000;
+    white-space: nowrap;
+    pointer-events: none;
+}
+
 /* Semi-transparent radial ops HUD */
 #ops-radial-root {
     position: fixed;

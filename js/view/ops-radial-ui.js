@@ -75,106 +75,333 @@
         });
     }
 
-    function ensure3dOverlays() {
-        if (typeof THREE === 'undefined' || typeof scene === 'undefined') return null;
-        if (OpsRadial._3d && OpsRadial._3d.isReticle) return OpsRadial._3d;
-        if (OpsRadial._3d && OpsRadial._3d.gizmo && OpsRadial._3d.gizmo.parent) {
-            OpsRadial._3d.gizmo.parent.remove(OpsRadial._3d.gizmo);
-        }
+    // -------------------------------------------------------------------------
+    // Ghost steer HUD — same job as LCOS/FOX grab ring: hold+drag = nose (joy),
+    // outer ring + L/R handles = roll.
+    // -------------------------------------------------------------------------
+    const GhostSteer = {
+        mode: null, // 'nose' | 'roll'
+        pointerId: null,
+        startX: 0,
+        startY: 0,
+        startJoyX: 0,
+        startJoyY: 0,
+        startRoll: 0,
+        startAngle: 0,
+        bound: false
+    };
 
-        const lineMat = new THREE.MeshBasicMaterial({
-            color: 0xffffff, transparent: true, opacity: 0.9,
-            depthWrite: false, side: THREE.DoubleSide
-        });
+    const NOSE_DRAG = {
+        softJoy: 0.40,
+        softFrac: 0.09,
+        softMin: 64,
+        softMax: 96,
+        fullFrac: 0.26,
+        fullMin: 170,
+        fullMax: 260
+    };
 
-        // Aiming-reticle style grab ring on the ghost (LCOS-like handles), not sphere dots.
-        const gizmo = new THREE.Group();
-        gizmo.name = 'opsGhostReticle';
-        gizmo.visible = false;
-        gizmo.userData.isReticle = true;
-
-        const mkRing = (r0, r1, opacity) => {
-            const m = lineMat.clone();
-            m.opacity = opacity;
-            const mesh = new THREE.Mesh(new THREE.RingGeometry(r0, r1, 64), m);
-            return mesh;
-        };
-        const outer = mkRing(0.62, 0.68, 0.85);
-        const mid = mkRing(0.42, 0.46, 0.55);
-        const inner = mkRing(0.16, 0.2, 0.7);
-        gizmo.add(outer, mid, inner);
-
-        // Crosshair
-        const barGeo = new THREE.PlaneGeometry(0.55, 0.03);
-        const stemGeo = new THREE.PlaneGeometry(0.03, 0.55);
-        const crossH = new THREE.Mesh(barGeo, lineMat.clone());
-        const crossV = new THREE.Mesh(stemGeo, lineMat.clone());
-        gizmo.add(crossH, crossV);
-
-        // Cardinal grab handles (brackets) — “把手”
-        const handles = [];
-        const handleMat = lineMat.clone();
-        handleMat.opacity = 0.95;
-        const mkHandle = (rotZ) => {
-            const h = new THREE.Group();
-            const a = new THREE.Mesh(new THREE.PlaneGeometry(0.18, 0.045), handleMat.clone());
-            const b = new THREE.Mesh(new THREE.PlaneGeometry(0.045, 0.14), handleMat.clone());
-            a.position.set(0, 0.55, 0);
-            b.position.set(0.07, 0.50, 0);
-            const b2 = b.clone();
-            b2.position.set(-0.07, 0.50, 0);
-            h.add(a, b, b2);
-            h.rotation.z = rotZ;
-            gizmo.add(h);
-            handles.push(h);
-            return h;
-        };
-        mkHandle(0);
-        mkHandle(Math.PI / 2);
-        mkHandle(Math.PI);
-        mkHandle(-Math.PI / 2);
-
-        // Joy pipper (moves inside reticle)
-        const stick = new THREE.Mesh(new THREE.RingGeometry(0.05, 0.09, 24), lineMat.clone());
-        stick.name = 'opsStickTip';
-        gizmo.add(stick);
-
-        // Slightly above ghost so it reads as a gunsight, not a ground disc.
-        gizmo.position.y = 0.35;
-
-        if (window.ghostWrapper) window.ghostWrapper.add(gizmo);
-        else scene.add(gizmo);
-
-        OpsRadial._3d = { gizmo, stick, outer, mid, inner, handles, isReticle: true };
-        return OpsRadial._3d;
+    function canPilotTeam(teamId) {
+        if (typeof GameContext === 'undefined' || typeof teams === 'undefined') return null;
+        const id = teamId || OpsRadial.teamId || (typeof uiCurrentTeamId === 'function' ? uiCurrentTeamId() : null);
+        const t = id ? teams[id] : null;
+        if (!t || t.aiEnabled || t.isDestroyed || GameContext.isAnimating() || t.ready) return null;
+        if (GameContext.isReplayMode && GameContext.isReplayMode()) return null;
+        return t;
     }
 
-    function sync3dOverlays(team) {
-        const o = ensure3dOverlays();
-        if (!o || !team) return;
-        const show = !!OpsRadial.open && !GameContext.isReplayMode() && !GameContext.isAnimating();
+    function getNoseDragRadii() {
+        const shortSide = Math.min(window.innerWidth || 800, window.innerHeight || 600);
+        const softPx = Math.max(NOSE_DRAG.softMin, Math.min(NOSE_DRAG.softMax, shortSide * NOSE_DRAG.softFrac));
+        const fullPx = Math.max(NOSE_DRAG.fullMin, Math.min(NOSE_DRAG.fullMax, shortSide * NOSE_DRAG.fullFrac));
+        return { softPx, fullPx: Math.max(fullPx, softPx + 40) };
+    }
 
-        if (o.gizmo) {
-            const ghostOn = show && window.ghostWrapper && window.ghostWrapper.visible;
-            o.gizmo.visible = !!ghostOn;
-            if (ghostOn) {
-                // Billboard toward camera so it reads as an aiming reticle.
-                if (typeof camera !== 'undefined' && camera) {
-                    o.gizmo.quaternion.copy(camera.quaternion);
-                }
-                if (o.stick) {
-                    const jx = Number(team.joyX) || 0;
-                    const jy = Number(team.joyY) || 0;
-                    o.stick.position.set(jx * 0.38, -jy * 0.38, 0.02);
-                }
-                if (o.outer) {
-                    const roll = (team.pendingRoll != null && team.pendingRoll !== 0)
-                        ? team.pendingRoll
-                        : (Number(team.roll) || 0);
-                    o.outer.rotation.z = -roll;
-                }
-            }
+    function mapDistToJoyMag(dist, softPx, fullPx) {
+        if (!(dist > 0)) return 0;
+        if (dist <= softPx) return (dist / softPx) * NOSE_DRAG.softJoy;
+        const span = Math.max(1, fullPx - softPx);
+        const t = Math.min(1, (dist - softPx) / span);
+        return NOSE_DRAG.softJoy + (1 - NOSE_DRAG.softJoy) * (t * t);
+    }
+
+    function mapScreenDragToJoy(dx, dy, mag, team) {
+        const dist = Math.hypot(dx, dy);
+        if (!(dist > 0.001) || !(mag > 0)) return { joyX: 0, joyY: 0 };
+        const cam = (typeof camera !== 'undefined') ? camera : null;
+        const quat = team && team.wrapper
+            ? (team.wrapper.userData.logicalQuat || team.wrapper.quaternion)
+            : null;
+        if (!cam || !quat || typeof THREE === 'undefined') {
+            return { joyX: (-dx / dist) * mag, joyY: (-dy / dist) * mag };
         }
+        const camRight = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 0).normalize();
+        const camUp = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 1).normalize();
+        const camFwd = new THREE.Vector3();
+        cam.getWorldDirection(camFwd);
+        const desired = camRight.clone().multiplyScalar(dx).add(camUp.clone().multiplyScalar(-dy));
+        if (desired.lengthSq() < 1e-10) return { joyX: 0, joyY: 0 };
+        desired.normalize();
+        const bodyRight = new THREE.Vector3(1, 0, 0).applyQuaternion(quat);
+        const bodyUp = new THREE.Vector3(0, 1, 0).applyQuaternion(quat);
+        const rightScreen = bodyRight.clone().addScaledVector(camFwd, -bodyRight.dot(camFwd));
+        const upScreen = bodyUp.clone().addScaledVector(camFwd, -bodyUp.dot(camFwd));
+        if (rightScreen.lengthSq() < 1e-8 || upScreen.lengthSq() < 1e-8) {
+            return { joyX: (-dx / dist) * mag, joyY: (-dy / dist) * mag };
+        }
+        rightScreen.normalize();
+        upScreen.normalize();
+        let jx = desired.dot(rightScreen);
+        let jy = desired.dot(upScreen);
+        const len = Math.hypot(jx, jy);
+        if (len < 1e-6) return { joyX: 0, joyY: 0 };
+        return { joyX: (-jx / len) * mag, joyY: (jy / len) * mag };
+    }
+
+    function clampJoy(joyX, joyY) {
+        const len = Math.hypot(joyX, joyY);
+        if (len <= 1 || len < 1e-8) return { joyX, joyY };
+        return { joyX: joyX / len, joyY: joyY / len };
+    }
+
+    function syncCockpitJoy(joyX, joyY) {
+        const joyZone = $('joystick-zone');
+        const joyHandle = $('joystick-handle');
+        if (!joyZone || !joyHandle) return;
+        const maxRadius = Math.max(8, joyZone.getBoundingClientRect().width / 2 - 15);
+        joyHandle.style.transform = `translate(${joyX * maxRadius}px, ${-joyY * maxRadius}px)`;
+    }
+
+    function syncCockpitRoll(angle) {
+        const rollRing = $('roll-ring');
+        if (rollRing) rollRing.style.transform = `translate(-50%, -50%) rotate(${angle}rad)`;
+        const ghostRoll = $('ghost-roll-ring');
+        if (ghostRoll) ghostRoll.style.transform = `rotate(${angle}rad)`;
+        // SVG g rotate around viewBox center
+        if (ghostRoll) ghostRoll.setAttribute('transform', `rotate(${(angle * 180) / Math.PI} 70 70)`);
+    }
+
+    function setOrbitLocked(locked) {
+        if (typeof controls === 'undefined' || !controls) return;
+        if (!controls.userData) controls.userData = {};
+        if (locked) {
+            if (!controls.userData._ghostSteerOrbitBackup) {
+                controls.userData._ghostSteerOrbitBackup = {
+                    enableZoom: controls.enableZoom,
+                    enablePan: controls.enablePan,
+                    enableRotate: controls.enableRotate
+                };
+            }
+            controls.enableZoom = false;
+            controls.enablePan = false;
+            controls.enableRotate = false;
+        } else if (controls.userData._ghostSteerOrbitBackup) {
+            const b = controls.userData._ghostSteerOrbitBackup;
+            controls.enableZoom = b.enableZoom !== false;
+            controls.enablePan = b.enablePan !== false;
+            controls.enableRotate = b.enableRotate !== false;
+            controls.userData._ghostSteerOrbitBackup = null;
+        }
+    }
+
+    function applyNoseDrag(clientX, clientY) {
+        const t = canPilotTeam();
+        if (!t) return;
+        if (typeof camera !== 'undefined' && camera && camera.updateMatrixWorld) camera.updateMatrixWorld();
+        const dx = clientX - GhostSteer.startX;
+        const dy = clientY - GhostSteer.startY;
+        const dist = Math.hypot(dx, dy);
+        if (dist < 2) {
+            syncCockpitJoy(GhostSteer.startJoyX, GhostSteer.startJoyY);
+            return;
+        }
+        const { softPx, fullPx } = getNoseDragRadii();
+        const mag = mapDistToJoyMag(dist, softPx, fullPx);
+        const delta = mapScreenDragToJoy(dx, dy, mag, t);
+        const next = clampJoy(GhostSteer.startJoyX + delta.joyX, GhostSteer.startJoyY + delta.joyY);
+        if (!GameContext.stateMachine.setJoystickInput(t.id, next.joyX, next.joyY)) return;
+        syncCockpitJoy(next.joyX, next.joyY);
+        updateGhostJoyPip(next.joyX, next.joyY);
+        if (typeof uiRefreshPreview === 'function') uiRefreshPreview(t);
+        else if (typeof updateDashboardUI === 'function') updateDashboardUI(t);
+    }
+
+    function applyRollDrag(clientX, clientY) {
+        const t = canPilotTeam();
+        if (!t) return;
+        const hud = $('ghost-steer-hud');
+        if (!hud) return;
+        const rect = hud.getBoundingClientRect();
+        const cx = rect.left + rect.width / 2;
+        const cy = rect.top + rect.height / 2;
+        const ang = Math.atan2(clientX - cx, -(clientY - cy));
+        let delta = ang - GhostSteer.startAngle;
+        if (delta > Math.PI) delta -= Math.PI * 2;
+        if (delta < -Math.PI) delta += Math.PI * 2;
+        const angle = GhostSteer.startRoll + delta;
+        if (!GameContext.stateMachine.setRollInput(t.id, angle)) return;
+        const applied = t.pendingRoll || 0;
+        syncCockpitRoll(applied);
+        if (typeof uiRefreshPreview === 'function') uiRefreshPreview(t);
+    }
+
+    function updateGhostJoyPip(joyX, joyY) {
+        const pip = $('ghost-joy-pip');
+        if (!pip) return;
+        // viewBox center 70; map joy into ~22px radius
+        pip.setAttribute('cx', String(70 + (Number(joyX) || 0) * 22));
+        pip.setAttribute('cy', String(70 - (Number(joyY) || 0) * 22));
+    }
+
+    function endGhostSteer(e) {
+        if (!GhostSteer.mode) return;
+        if (e && GhostSteer.pointerId != null && e.pointerId !== GhostSteer.pointerId) return;
+        const hud = $('ghost-steer-hud');
+        if (hud) {
+            hud.classList.remove('is-nose-dragging', 'is-roll-dragging');
+        }
+        GhostSteer.mode = null;
+        GhostSteer.pointerId = null;
+        setOrbitLocked(false);
+        window.isDraggingGhostSteer = false;
+        if (typeof isDraggingRollRing !== 'undefined') isDraggingRollRing = false;
+    }
+
+    function beginNose(e) {
+        if (e.button != null && e.button !== 0) return;
+        if (window.isDraggingLcosRing || (typeof isDraggingJoystick !== 'undefined' && isDraggingJoystick)) return;
+        const t = canPilotTeam();
+        if (!t) return;
+        GhostSteer.mode = 'nose';
+        GhostSteer.pointerId = e.pointerId;
+        GhostSteer.startX = e.clientX;
+        GhostSteer.startY = e.clientY;
+        GhostSteer.startJoyX = Number(t.joyX) || 0;
+        GhostSteer.startJoyY = Number(t.joyY) || 0;
+        window.isDraggingGhostSteer = true;
+        setOrbitLocked(true);
+        const hud = $('ghost-steer-hud');
+        if (hud) hud.classList.add('is-nose-dragging');
+        try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
+        if (e.cancelable) e.preventDefault();
+        e.stopPropagation();
+        syncCockpitJoy(GhostSteer.startJoyX, GhostSteer.startJoyY);
+        updateGhostJoyPip(GhostSteer.startJoyX, GhostSteer.startJoyY);
+    }
+
+    function beginRoll(e) {
+        if (e.button != null && e.button !== 0) return;
+        if (window.isDraggingLcosRing || window.isDraggingGhostSteer) return;
+        const t = canPilotTeam();
+        if (!t) return;
+        const hud = $('ghost-steer-hud');
+        if (!hud) return;
+        const rect = hud.getBoundingClientRect();
+        const cx = rect.left + rect.width / 2;
+        const cy = rect.top + rect.height / 2;
+        GhostSteer.mode = 'roll';
+        GhostSteer.pointerId = e.pointerId;
+        GhostSteer.startAngle = Math.atan2(e.clientX - cx, -(e.clientY - cy));
+        GhostSteer.startRoll = (t.pendingRoll !== 0 && t.pendingRoll != null) ? t.pendingRoll : (Number(t.roll) || 0);
+        window.isDraggingGhostSteer = true;
+        if (typeof isDraggingRollRing !== 'undefined') isDraggingRollRing = true;
+        setOrbitLocked(true);
+        hud.classList.add('is-roll-dragging');
+        try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
+        if (e.cancelable) e.preventDefault();
+        e.stopPropagation();
+    }
+
+    function onGhostSteerMove(e) {
+        if (!GhostSteer.mode) return;
+        if (GhostSteer.pointerId != null && e.pointerId !== GhostSteer.pointerId) return;
+        if (e.cancelable) e.preventDefault();
+        e.stopPropagation();
+        if (GhostSteer.mode === 'nose') applyNoseDrag(e.clientX, e.clientY);
+        else if (GhostSteer.mode === 'roll') applyRollDrag(e.clientX, e.clientY);
+    }
+
+    function bindGhostSteerHud() {
+        if (GhostSteer.bound) return;
+        const grab = $('ghost-grab-hit');
+        const grabRing = $('ghost-grab-ring');
+        const rollHit = $('ghost-roll-hit');
+        const left = $('ghost-handle-left');
+        const right = $('ghost-handle-right');
+        if (!grab || !rollHit) return;
+        GhostSteer.bound = true;
+
+        const noseTargets = [grab, grabRing].filter(Boolean);
+        noseTargets.forEach((el) => {
+            el.addEventListener('pointerdown', beginNose, { passive: false });
+            el.addEventListener('pointermove', onGhostSteerMove, { passive: false });
+            el.addEventListener('pointerup', endGhostSteer);
+            el.addEventListener('pointercancel', endGhostSteer);
+            el.addEventListener('lostpointercapture', endGhostSteer);
+        });
+
+        const rollTargets = [rollHit, left, right].filter(Boolean);
+        rollTargets.forEach((el) => {
+            el.addEventListener('pointerdown', beginRoll, { passive: false });
+            el.addEventListener('pointermove', onGhostSteerMove, { passive: false });
+            el.addEventListener('pointerup', endGhostSteer);
+            el.addEventListener('pointercancel', endGhostSteer);
+            el.addEventListener('lostpointercapture', endGhostSteer);
+        });
+    }
+
+    function projectGhostScreen() {
+        if (!window.ghostWrapper || !window.ghostWrapper.visible || typeof camera === 'undefined' || !camera) return null;
+        if (typeof THREE === 'undefined') return null;
+        const v = window.ghostWrapper.position.clone();
+        v.project(camera);
+        if (v.z > 1) return null;
+        return {
+            x: (v.x * 0.5 + 0.5) * window.innerWidth,
+            y: (-v.y * 0.5 + 0.5) * window.innerHeight
+        };
+    }
+
+    function syncGhostSteerHud(team) {
+        const hud = $('ghost-steer-hud');
+        if (!hud) return;
+        const t = team || canPilotTeam();
+        const show = !!(OpsRadial.open && t && window.ghostWrapper && window.ghostWrapper.visible
+            && !GameContext.isReplayMode() && !GameContext.isAnimating());
+        if (!show) {
+            hud.hidden = true;
+            hud.classList.remove('is-visible');
+            hud.setAttribute('aria-hidden', 'true');
+            return;
+        }
+        const scr = projectGhostScreen();
+        if (!scr) {
+            hud.hidden = true;
+            hud.classList.remove('is-visible');
+            return;
+        }
+        hud.hidden = false;
+        hud.classList.add('is-visible');
+        hud.setAttribute('aria-hidden', 'false');
+        hud.style.left = `${scr.x}px`;
+        hud.style.top = `${scr.y}px`;
+
+        updateGhostJoyPip(Number(t.joyX) || 0, Number(t.joyY) || 0);
+        const roll = (t.pendingRoll !== 0 && t.pendingRoll != null) ? t.pendingRoll : (Number(t.roll) || 0);
+        const ghostRoll = $('ghost-roll-ring');
+        if (ghostRoll) ghostRoll.setAttribute('transform', `rotate(${(roll * 180) / Math.PI} 70 70)`);
+
+        const thrEl = $('ghost-steer-thr');
+        if (thrEl) {
+            const thr = Number(t.throttle) || 4;
+            thrEl.textContent = `THR ${thr.toFixed(1)} ${thrBandLabel(thr)}`;
+        }
+    }
+
+    /** Legacy 3D gizmo removed — interaction is the screen-space ghost-steer HUD. */
+    function sync3dOverlays(team) {
+        if (OpsRadial._3d && OpsRadial._3d.gizmo) OpsRadial._3d.gizmo.visible = false;
+        syncGhostSteerHud(team);
     }
 
     function syncHpRing(team) {
@@ -230,6 +457,12 @@
             stopTrack();
             const o = OpsRadial._3d;
             if (o && o.gizmo) o.gizmo.visible = false;
+            const hud = $('ghost-steer-hud');
+            if (hud) {
+                hud.hidden = true;
+                hud.classList.remove('is-visible', 'is-nose-dragging', 'is-roll-dragging');
+            }
+            endGhostSteer();
         }
     }
 
@@ -476,7 +709,7 @@
     function init() {
         initCollapseToggle();
         bindActions();
-        ensure3dOverlays();
+        bindGhostSteerHud();
         window.AirArenaOpsRadial = {
             open: setOpen,
             toggle: toggleForTeam,
