@@ -809,16 +809,16 @@ html.startup-lock body {
 #ops-radial-anchor {
     position: absolute;
     left: 50%;
-    /* Fixed lower-center — never tracks the forward ghost */
-    top: auto;
-    bottom: 200px;
+    top: 55%;
+    bottom: auto;
     width: 320px;
-    transform: translateX(-50%);
+    transform: translate(-50%, -50%);
     pointer-events: none;
     display: flex;
     flex-direction: column;
     align-items: center;
     gap: 8px;
+    will-change: left, top;
 }
 #ops-radial-ring {
     position: relative;
@@ -989,7 +989,7 @@ html.startup-lock body {
 
 @media (max-width: 720px) {
     .ops-panel-toggle { bottom: 168px !important; }
-    #ops-radial-anchor { width: 260px; bottom: 170px; }
+    #ops-radial-anchor { width: 260px; }
     #ops-radial-ring { width: 260px; height: 260px; }
     #ops-tactical-strip { width: 240px; }
     .ops-wedge-hit {

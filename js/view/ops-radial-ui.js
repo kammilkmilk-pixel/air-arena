@@ -175,10 +175,12 @@
     function syncCockpitRoll(angle) {
         const rollRing = $('roll-ring');
         if (rollRing) rollRing.style.transform = `translate(-50%, -50%) rotate(${angle}rad)`;
+        // SVG only — CSS rotate on <g> uses wrong origin and drifts off-axis.
         const ghostRoll = $('ghost-roll-ring');
-        if (ghostRoll) ghostRoll.style.transform = `rotate(${angle}rad)`;
-        // SVG g rotate around viewBox center
-        if (ghostRoll) ghostRoll.setAttribute('transform', `rotate(${(angle * 180) / Math.PI} 70 70)`);
+        if (ghostRoll) {
+            if (ghostRoll.style) ghostRoll.style.transform = 'none';
+            ghostRoll.setAttribute('transform', `rotate(${(angle * 180) / Math.PI} 70 70)`);
+        }
     }
 
     function setOrbitLocked(locked) {
@@ -388,8 +390,7 @@
 
         updateGhostJoyPip(Number(t.joyX) || 0, Number(t.joyY) || 0);
         const roll = (t.pendingRoll !== 0 && t.pendingRoll != null) ? t.pendingRoll : (Number(t.roll) || 0);
-        const ghostRoll = $('ghost-roll-ring');
-        if (ghostRoll) ghostRoll.setAttribute('transform', `rotate(${(roll * 180) / Math.PI} 70 70)`);
+        syncCockpitRoll(roll);
 
         const thrEl = $('ghost-steer-thr');
         if (thrEl) {
@@ -601,17 +602,42 @@
 
         sync3dOverlays(team);
         paintGhostThrottle(team);
-        layoutAnchor();
+        layoutAnchor(team);
     }
 
-    function layoutAnchor() {
+    function projectWorldToScreen(worldPos) {
+        if (!worldPos || typeof camera === 'undefined' || !camera || typeof THREE === 'undefined') return null;
+        const v = worldPos.clone();
+        v.project(camera);
+        if (v.z > 1) return null;
+        return {
+            x: (v.x * 0.5 + 0.5) * window.innerWidth,
+            y: (-v.y * 0.5 + 0.5) * window.innerHeight
+        };
+    }
+
+    function layoutAnchor(team) {
         const anchor = $('ops-radial-anchor');
         if (!anchor) return;
-        // Stable lower-center dock — do not follow aircraft or forward ghost.
-        anchor.style.left = '50%';
-        anchor.style.top = 'auto';
-        anchor.style.bottom = '200px';
-        anchor.style.transform = 'translateX(-50%)';
+        // Keep ops ring centered on the aircraft while the camera orbits.
+        // (Steer HUD stays on the forward ghost; this ring stays on the plane.)
+        const t = team || (teams && teams[OpsRadial.teamId]);
+        const world = (t && t.wrapper) ? t.wrapper.position : null;
+        const scr = projectWorldToScreen(world);
+        const half = 160; // ~half of 320px ring
+        if (!scr) {
+            anchor.style.left = '50%';
+            anchor.style.top = '55%';
+            anchor.style.bottom = 'auto';
+            anchor.style.transform = 'translate(-50%, -50%)';
+            return;
+        }
+        const x = Math.max(half + 8, Math.min(window.innerWidth - half - 8, scr.x));
+        const y = Math.max(half + 8, Math.min(window.innerHeight - half - 24, scr.y));
+        anchor.style.left = `${x}px`;
+        anchor.style.top = `${y}px`;
+        anchor.style.bottom = 'auto';
+        anchor.style.transform = 'translate(-50%, -50%)';
     }
 
     function startTrack() {
@@ -620,7 +646,10 @@
             if (!OpsRadial.open) return;
             const id = OpsRadial.teamId;
             const team = teams && teams[id];
-            if (team) sync3dOverlays(team);
+            if (team) {
+                sync3dOverlays(team);
+                layoutAnchor(team);
+            }
             OpsRadial._raf = requestAnimationFrame(tick);
         };
         OpsRadial._raf = requestAnimationFrame(tick);
