@@ -1644,6 +1644,10 @@ function renderCombatFrame(currentLog, animProgress) {
         }
     });
 
+    if (typeof AirArenaBomb !== 'undefined' && typeof AirArenaBomb.applyBombVisuals === 'function') {
+        AirArenaBomb.applyBombVisuals(trackIdx, currentLog);
+    }
+
     for (; bulletIdx < visualBullets.length; bulletIdx++) { visualBullets[bulletIdx].visible = false; }
 
     if (window.AirArenaRadioHud && typeof window.AirArenaRadioHud.sync === 'function') {

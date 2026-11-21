@@ -79,11 +79,20 @@ function tryAttachAllPylons() {
             pMesh.position.set(p.position[0], p.position[1], p.position[2]); t.wrapper.add(pMesh);
             const rawSlot = loadout && loadout[idx];
             const isEmpty = rawSlot === 'empty' || rawSlot === 'none' || rawSlot === 'gun';
-            const weaponType = isEmpty
+            let weaponType = isEmpty
                 ? 'empty'
                 : ((rawSlot)
                     ? (typeof sanitizePylonWeapon === 'function' ? sanitizePylonWeapon(rawSlot) : rawSlot)
                     : (p.weapon || 'fox2'));
+            // Preview mesh swap also tags store type for SMS / bomb path.
+            if (!isEmpty && groundStoresPreviewEnabled() && typeof CONFIG !== 'undefined' && CONFIG.preview) {
+                const bombIdx = Number.isFinite(Number(CONFIG.preview.bombPylonIndex))
+                    ? Number(CONFIG.preview.bombPylonIndex) : 0;
+                const rocketIdx = Number.isFinite(Number(CONFIG.preview.rocketPylonIndex))
+                    ? Number(CONFIG.preview.rocketPylonIndex) : 3;
+                if (idx === bombIdx && typeof bombMeshBase !== 'undefined' && bombMeshBase) weaponType = 'bomb';
+                else if (idx === rocketIdx && typeof rocketMeshBase !== 'undefined' && rocketMeshBase) weaponType = 'rocket';
+            }
             if (isEmpty) pMesh.visible = false;
             const pylonState = {
                 id: p.id,
@@ -94,6 +103,7 @@ function tryAttachAllPylons() {
             return GameContext.bindPylonView(id, pylonState, { mesh: pMesh, lineMesh: null });
         });
         t.activeMissiles = [];
+        t.activeBombs = [];
         t.pendingPylonLoadout = null;
     });
 }

@@ -75,6 +75,11 @@ function executeTurnSimultaneously() {
             });
 
             processFlightPaths(ctx);
+            if (typeof AirArenaBomb !== 'undefined' && typeof AirArenaBomb.processBombDrops === 'function') {
+                AirArenaBomb.processBombDrops(ctx);
+            } else if (typeof GameContext !== 'undefined' && GameContext.callService) {
+                GameContext.callService('processBombDrops', ctx);
+            }
             processFlares(ctx);
             if (typeof processChaff === 'function') processChaff(ctx);
             hitch.paths = nowMs() - hitch.t0;
@@ -84,6 +89,11 @@ function executeTurnSimultaneously() {
                 let ratio = step / steps;
                 resolveGunsForStep(step, ratio, ctx);
                 resolveMissilesForStep(step, ratio, ctx);
+                if (typeof AirArenaBomb !== 'undefined' && typeof AirArenaBomb.resolveBombsForStep === 'function') {
+                    AirArenaBomb.resolveBombsForStep(step, ratio, ctx);
+                } else if (typeof GameContext !== 'undefined' && GameContext.callService) {
+                    GameContext.callService('resolveBombsForStep', step, ratio, ctx);
+                }
                 resolveDamageAndDeathForStep(step, ratio, ctx);
             }
             hitch.resolve = nowMs() - hitch.t0 - hitch.paths;

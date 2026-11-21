@@ -803,8 +803,14 @@ GameContext.stateMachine = {
     setWeaponMode(teamId, weapon) {
         const t = this.getTeamOrNull(teamId);
         if (!t || t.isDestroyed || GameContext.isAnimating() || GameContext.isReplayMode() || t.ready) return false;
-        t.weapon = weapon === 'missile' ? 'missile' : 'gun';
+        if (weapon === 'missile') t.weapon = 'missile';
+        else if (weapon === 'bomb') t.weapon = 'bomb';
+        else t.weapon = 'gun';
         this.clearQueuedAction(teamId);
+        if (typeof AirArenaBomb !== 'undefined') {
+            if (t.weapon === 'bomb') AirArenaBomb.armBombPylons(t);
+            else AirArenaBomb.standbyBombPylons(t);
+        }
         return true;
     },
 
@@ -812,15 +818,28 @@ GameContext.stateMachine = {
     forceWeaponMode(teamId, weapon) {
         const t = this.getTeamOrNull(teamId);
         if (!t || t.isDestroyed) return false;
-        t.weapon = weapon === 'missile' ? 'missile' : 'gun';
+        if (weapon === 'missile') t.weapon = 'missile';
+        else if (weapon === 'bomb') t.weapon = 'bomb';
+        else t.weapon = 'gun';
         this.clearQueuedAction(teamId);
+        if (typeof AirArenaBomb !== 'undefined') {
+            if (t.weapon === 'bomb') AirArenaBomb.armBombPylons(t);
+            else AirArenaBomb.standbyBombPylons(t);
+        }
         return true;
     },
 
     toggleWeaponMode(teamId) {
         const t = this.getTeamOrNull(teamId);
         if (!t) return null;
-        const nextWeapon = t.weapon === 'gun' ? 'missile' : 'gun';
+        // gun → missile → bomb → gun (bomb only when a bomb store exists)
+        let nextWeapon = 'gun';
+        if (t.weapon === 'gun') nextWeapon = 'missile';
+        else if (t.weapon === 'missile') {
+            const hasBomb = typeof AirArenaBomb !== 'undefined'
+                && AirArenaBomb.teamBombPylons(t).length > 0;
+            nextWeapon = hasBomb ? 'bomb' : 'gun';
+        } else nextWeapon = 'gun';
         return this.setWeaponMode(teamId, nextWeapon) ? nextWeapon : null;
     },
 
@@ -842,10 +861,25 @@ GameContext.stateMachine = {
             this.clearQueuedAction(teamId);
             return false;
         }
-        t.wpnQueued = action === 'gun' || action === 'missile';
+        t.wpnQueued = action === 'gun' || action === 'missile' || action === 'bomb';
         t.queuedAction = action;
         t.flaresArmed = action === 'flare';
         return true;
+    },
+
+    /** Human SMS: queue unguided bomb drop (no seeker range gate). */
+    toggleBombQueue(teamId) {
+        const t = this.getTeamOrNull(teamId);
+        if (!t || t.weapon !== 'bomb' || !t.pylons) return false;
+        const armed = (typeof AirArenaBomb !== 'undefined')
+            ? AirArenaBomb.teamBombPylons(t).filter((p) => p.state === 'armed')
+            : t.pylons.filter((p) => p.state === 'armed' && p.weaponType === 'bomb');
+        if (armed.length <= 0) {
+            this.clearQueuedAction(teamId);
+            return false;
+        }
+        if (t.wpnQueued && t.queuedAction === 'bomb') return this.clearQueuedAction(teamId);
+        return this.queueAction(teamId, 'bomb');
     },
 
     toggleGunQueue(teamId) {
@@ -950,8 +984,19 @@ GameContext.stateMachine = {
         if (!t || !t.pylons || t.isDestroyed || GameContext.isAnimating() || GameContext.isReplayMode() || t.ready) return null;
         const p = t.pylons.find(item => item.id === pylonId);
         if (!p || p.state === 'empty') return null;
+        const wType = typeof pylonWeaponType === 'function' ? pylonWeaponType(p) : (p.weaponType || 'fox2');
+        // Bombs: standby ↔ armed (no seeker warm-up). Rockets stay visual-only for now.
+        if (wType === 'bomb') {
+            if (p.state === 'standby' || p.state === 'powering') {
+                p.state = 'armed';
+                if (t.weapon !== 'bomb') this.setWeaponMode(teamId, 'bomb');
+            } else if (p.state === 'armed') {
+                p.state = 'standby';
+                if (t.queuedAction === 'bomb') this.clearQueuedAction(teamId);
+            }
+            return p.state;
+        }
         if (p.state === 'standby') {
-            const wType = typeof pylonWeaponType === 'function' ? pylonWeaponType(p) : (p.weaponType || 'fox2');
             const dropped = typeof dropConflictingPylonPower === 'function'
                 ? dropConflictingPylonPower(t, wType)
                 : 0;

@@ -3017,6 +3017,8 @@ document.addEventListener("DOMContentLoaded", () => {
                     : '🚀 FOX-2 飛彈系統通電中... [請點擊掛架開機]',
                 '#ffbb00'
             );
+        } else if (nextWeapon === 'bomb') {
+            showSMSAlert('💣 炸彈模式｜CCIP 落地預示已開 — ENT 投放', '#c8e06a');
         } else {
             showSMSAlert("⚠️ 主保險關閉：切換至機砲模式", "#ff0055");
         }
@@ -3035,20 +3037,25 @@ document.addEventListener("DOMContentLoaded", () => {
             let pylonId = parseInt(e.currentTarget.getAttribute('data-pylon'));
             let p = t.pylons.find(item => item.id === pylonId);
             if (!p || p.state === 'empty') { showSMSAlert("🛑 警告：該掛架彈藥耗盡", "#ff0055"); return; }
-            // Clicking a pylon implies missile employment — auto-arm SMS if still on gun.
-            let switchedToMissile = false;
-            if (t.weapon !== 'missile') {
+            const slotType = typeof pylonWeaponType === 'function' ? pylonWeaponType(p) : (p.weaponType || 'fox2');
+            // Bomb pylons: arm without seeker warm-up; FOX pylons auto-switch to missile mode.
+            if (slotType === 'bomb') {
+                if (t.weapon !== 'bomb') {
+                    if (!GameContext.stateMachine.setWeaponMode(currentTeam, 'bomb')) return;
+                }
+            } else if (slotType !== 'rocket' && t.weapon !== 'missile') {
                 if (!GameContext.stateMachine.setWeaponMode(currentTeam, 'missile')) return;
-                switchedToMissile = true;
             }
             const nextState = GameContext.stateMachine.togglePylonPower(currentTeam, pylonId);
-            if (nextState === 'powering') {
+            if (slotType === 'bomb') {
                 showSMSAlert(
-                    switchedToMissile
-                        ? `🚀 飛彈模式｜PYLON ${pylonId} 開始開機通電`
-                        : `⚡ PYLON ${pylonId} 開始開機通電`,
-                    "#ffbb00"
+                    nextState === 'armed'
+                        ? `💣 PYLON ${pylonId} 炸彈就緒｜ENT 投放`
+                        : `ℹ️ PYLON ${pylonId} 炸彈保險`,
+                    nextState === 'armed' ? '#c8e06a' : '#aaa'
                 );
+            } else if (nextState === 'powering') {
+                showSMSAlert(`⚡ PYLON ${pylonId} 開始開機通電`, "#ffbb00");
             } else if (nextState === 'standby') {
                 showSMSAlert(`ℹ️ PYLON ${pylonId} 電源切斷`, "#aaa");
             }
@@ -3368,15 +3375,29 @@ function updateDashboardUI(teamObj) {
             const liveType = teamObj.weapon === 'missile'
                 ? (typeof teamLiveMissileType === 'function' ? teamLiveMissileType(teamObj) : 'fox2')
                 : null;
-            let wpnName = teamObj.weapon === 'gun' ? '機砲' : (liveType === 'fox1' ? 'FOX-1' : 'FOX-2');
+            let wpnName = '機砲';
             let statusText = '[就緒]';
-            if (teamObj.wpnQueued) { statusText = '[已排程]'; }
-            else if (teamObj.weapon === 'missile') {
-                let armedCount = teamObj.pylons ? teamObj.pylons.filter(p => p.state === 'armed').length : 0; let poweringCount = teamObj.pylons ? teamObj.pylons.filter(p => p.state === 'powering').length : 0;
-                statusText = armedCount > 0 ? (isLocked ? '[已鎖定]' : '[就緒]') : (poweringCount > 0 ? '[開機中]' : '[未通電]');
-            } else { statusText = isLocked ? '[已鎖定]' : '[就緒]'; wpnName = `機砲 [INF]`; }
+            if (teamObj.weapon === 'bomb') {
+                wpnName = '炸彈 CCIP';
+                const bombArmed = (typeof AirArenaBomb !== 'undefined')
+                    ? AirArenaBomb.teamBombPylons(teamObj).filter((p) => p.state === 'armed').length
+                    : 0;
+                if (teamObj.wpnQueued && teamObj.queuedAction === 'bomb') statusText = '[已排程]';
+                else statusText = bombArmed > 0 ? '[就緒]' : '[未通電]';
+            } else if (teamObj.weapon === 'missile') {
+                wpnName = liveType === 'fox1' ? 'FOX-1' : 'FOX-2';
+                if (teamObj.wpnQueued) { statusText = '[已排程]'; }
+                else {
+                    let armedCount = teamObj.pylons ? teamObj.pylons.filter(p => p.state === 'armed').length : 0;
+                    let poweringCount = teamObj.pylons ? teamObj.pylons.filter(p => p.state === 'powering').length : 0;
+                    statusText = armedCount > 0 ? (isLocked ? '[已鎖定]' : '[就緒]') : (poweringCount > 0 ? '[開機中]' : '[未通電]');
+                }
+            } else {
+                statusText = teamObj.wpnQueued ? '[已排程]' : (isLocked ? '[已鎖定]' : '[就緒]');
+                wpnName = '機砲 [INF]';
+            }
             elSmsContent.innerText = `狀態 ${statusText} ${wpnName}`;
-            elSmsContent.style.color = '#ffeb3b';
+            elSmsContent.style.color = teamObj.weapon === 'bomb' ? '#c8e06a' : '#ffeb3b';
         }
     }
     uiUpdateSmsRadarLockWarn(teamObj);
@@ -3385,7 +3406,8 @@ function updateDashboardUI(teamObj) {
         teamObj.pylons.forEach(p => {
             let stick = document.getElementById(`pylon-stick-${p.id}`);
             let label = document.querySelector(`.pylon-switch-wrapper[data-pylon="${p.id}"] .pylon-label`);
-            const wLabel = (typeof pylonWeaponType === 'function' ? pylonWeaponType(p) : p.weaponType) === 'fox1' ? 'F1' : 'F2';
+            const wt = typeof pylonWeaponType === 'function' ? pylonWeaponType(p) : p.weaponType;
+            const wLabel = wt === 'fox1' ? 'F1' : (wt === 'bomb' ? 'BOMB' : (wt === 'rocket' ? 'RKT' : 'F2'));
             if (label) label.innerText = `PYLON ${p.id} ${wLabel}`;
             if (stick) {
                 stick.className = 'pylon-stick';
@@ -3628,13 +3650,29 @@ function uiToggleWeaponFireQueue(teamId = null) {
         } else {
             showSMSAlert(wasQueued ? '⚠️ 機砲保險已關閉' : '⚡ 機砲射擊線已通電', wasQueued ? '#aaa' : '#00ff88');
         }
+    } else if (t.weapon === 'bomb') {
+        const bombArmed = (typeof AirArenaBomb !== 'undefined')
+            ? AirArenaBomb.teamBombPylons(t).filter((p) => p.state === 'armed').length
+            : 0;
+        const wasQueued = t.wpnQueued && t.queuedAction === 'bomb';
+        const ok = GameContext.stateMachine.toggleBombQueue
+            ? GameContext.stateMachine.toggleBombQueue(currentTeam)
+            : false;
+        if (!ok && !wasQueued) {
+            showSMSAlert(bombArmed > 0 ? '🛑 炸彈無法排程' : '🛑 無炸彈就緒（點掛架或切炸彈模式）', '#ff0055');
+        } else {
+            showSMSAlert(
+                wasQueued ? '⚠️ 炸彈投放已取消' : '💣 炸彈投放已排程 — 執行回合後落下',
+                wasQueued ? '#aaa' : '#c8e06a'
+            );
+        }
     } else {
-        const armedCount = t.pylons ? t.pylons.filter((item) => item.state === 'armed').length : 0;
+        const armedCount = t.pylons ? t.pylons.filter((item) => item.state === 'armed' && item.weaponType !== 'bomb' && item.weaponType !== 'rocket').length : 0;
         const poweringCount = t.pylons ? t.pylons.filter((item) => item.state === 'powering').length : 0;
         if (armedCount > 0) {
             const wasQueued = t.wpnQueued && t.queuedAction === 'missile';
             const liveType = typeof pylonWeaponType === 'function'
-                ? pylonWeaponType(t.pylons.find((p) => p.state === 'armed'))
+                ? pylonWeaponType(t.pylons.find((p) => p.state === 'armed' && p.weaponType !== 'bomb' && p.weaponType !== 'rocket'))
                 : 'fox2';
             const ok = GameContext.stateMachine.toggleMissileQueue(currentTeam);
             if (!wasQueued && !ok) {

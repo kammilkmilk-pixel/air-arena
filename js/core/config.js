@@ -93,10 +93,10 @@ const CONFIG = {
             // Underwing hardpoints matched to reimported MiG mesh pylon tips (wrapper-local).
             // Y ≈ tip+0.02 so stores hang under the rail, not above the wing (old Y=0.37).
             pylons: [
-                { id: 1, position: [-0.15, -0.06, -0.05], weapon: 'fox1' },
-                { id: 2, position: [-0.25, -0.06, -0.15], weapon: 'fox2' },
-                { id: 3, position: [ 0.25, -0.06, -0.15], weapon: 'fox2' },
-                { id: 4, position: [ 0.15, -0.06, -0.05], weapon: 'fox1' }
+                { id: 1, position: [-0.14, -0.06, 0.03], weapon: 'fox1' },
+                { id: 2, position: [-0.25, -0.06, -0.01], weapon: 'fox2' },
+                { id: 3, position: [ 0.25, -0.06, -0.01], weapon: 'fox2' },
+                { id: 4, position: [ 0.14, -0.06, 0.03], weapon: 'fox1' }
             ]
         }
     },
@@ -154,7 +154,7 @@ const CONFIG = {
                 // Applied via prepareStoreMeshBase (same XYZ map as bomb/rocket).
                 scale: 0.3,
                 offsetX: 0,
-                offsetY: -0.14,
+                offsetY: -0.06,
                 offsetZ: 0,
                 rotX: Math.PI / 2,
                 rotY: 0,
@@ -191,7 +191,7 @@ const CONFIG = {
             model: {
                 scale: 0.3,
                 offsetX: 0,
-                offsetY: -0.14,
+                offsetY: -0.06,
                 offsetZ: 0,
                 rotX: Math.PI / 2,
                 rotY: 0,
@@ -223,32 +223,45 @@ const CONFIG = {
                  */
                 scale: 0.18,
                 offsetX: 0,
-                offsetY: -0.14,
+                offsetY: -0.08,
                 offsetZ: 0.02,
                 rotX: 0,
                 rotY: 0,
-                rotZ: 0
+                rotZ: 0,
+                tint: 0x9aa3ad,
+                metalness: 0.85,
+                roughness: 0.28
             }
         },
         /**
-         * Unguided bomb stub — visual preview only until Phase B A2G.
-         * Not in sanitize / decide / SMS fire paths.
+         * Unguided bomb — Phase B human SMS path (ballistic + CCIP UI).
+         * AI decide still disabled (aiEnabled:false).
          */
         'bomb': {
             id: 'bomb',
-            name: '炸彈（佔位）',
+            name: '炸彈',
             aiEnabled: false,
             dualRole: false,
             damage: 80,
+            /** Ballistic (game units ≈ m; step = 1/stepsPerTurn of a turn). */
+            releaseSpeedScale: 1.0,
+            drag: 0.012,
+            gravityScale: 1.0,
+            groundY: 0,
+            fuseDelaySteps: 2,
+            blastRadius: 8,
+            /** CCIP preview sample count along fall. */
+            previewSamples: 48,
             model: {
                 // Same axis map as rocket.model (X=L-R, Y=up-down, Z=fore-aft).
                 scale: 0.28,
                 offsetX: 0,
-                offsetY: -0.14,
+                offsetY: -0.08,
                 offsetZ: 0.02,
                 rotX: 0,
                 rotY: 0,
-                rotZ: 0
+                rotZ: 0,
+                tint: 0x556b2f
             }
         },
         'flare': {

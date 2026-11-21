@@ -139,6 +139,8 @@ function processFlightPaths(ctx) {
                     const mType = typeof pylonWeaponType === 'function'
                         ? pylonWeaponType(p)
                         : (p.weaponType || 'fox2');
+                    // A2G stores are handled by bomb.js — never treat as FOX missiles.
+                    if (mType === 'bomb' || mType === 'rocket') return;
                     if (mType === 'fox2' && typeof fox2LaunchAngleOk === 'function') {
                         const maxA = typeof fox2MaxLaunchAngleDeg === 'function' ? fox2MaxLaunchAngleDeg() : 10;
                         const honor = typeof fox2SameTurnCommitOk === 'function' && fox2SameTurnCommitOk(t, maxA);

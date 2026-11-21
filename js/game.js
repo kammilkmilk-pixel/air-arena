@@ -106,8 +106,34 @@ function prepareStoreMeshBase(gltf, weaponId, fallbackScale, fallbackRotX) {
     const ox = Number.isFinite(Number(cfg.offsetX)) ? Number(cfg.offsetX) : 0;
     const oy = Number.isFinite(Number(cfg.offsetY)) ? Number(cfg.offsetY) : 0;
     const oz = Number.isFinite(Number(cfg.offsetZ)) ? Number(cfg.offsetZ) : 0;
+    // Store tint (aircraft paint path unchanged). Rocket = metal; bomb = olive.
+    let tint = 0xdddddd;
+    let metal = 0.15;
+    let rough = 0.55;
+    if (weaponId === 'rocket') {
+        tint = 0x9aa3ad;
+        metal = 0.85;
+        rough = 0.28;
+    } else if (weaponId === 'bomb') {
+        tint = 0x556b2f; // olive drab
+        metal = 0.08;
+        rough = 0.72;
+    } else if (weaponId === 'fox1' || weaponId === 'fox2') {
+        tint = 0xc8c8c8;
+        metal = 0.55;
+        rough = 0.4;
+    }
     m.traverse((c) => {
-        if (c.isMesh) c.material = new THREE.MeshBasicMaterial({ color: 0xdddddd });
+        if (!c.isMesh) return;
+        c.material = new THREE.MeshStandardMaterial({
+            color: tint,
+            metalness: metal,
+            roughness: rough,
+            flatShading: false
+        });
+        if (c.geometry && !c.geometry.attributes.normal) {
+            c.geometry.computeVertexNormals();
+        }
     });
     // Unit-normalize → rotate → re-center → apply free XYZ nudge (no axis lock/clamp).
     m.position.set(0, 0, 0);
@@ -766,7 +792,12 @@ window.updateTacticalPreview = function(teamObj) {
 
     if (typeof updateTargetingLock === 'function') updateTargetingLock(teamObj); 
     if (typeof updateMissilePreview === 'function') updateMissilePreview(teamObj); 
-    if (typeof updateGunPreview === 'function') updateGunPreview(teamObj); 
+    if (typeof updateGunPreview === 'function') updateGunPreview(teamObj);
+    if (typeof AirArenaBomb !== 'undefined' && typeof AirArenaBomb.updateCcipPreview === 'function') {
+        AirArenaBomb.updateCcipPreview(teamObj);
+    } else if (typeof GameContext !== 'undefined' && GameContext.callService) {
+        GameContext.callService('updateBombCcipPreview', teamObj);
+    }
     if (typeof updateDashboardUI === 'function') updateDashboardUI(teamObj);
     if (typeof updateDynamicHUD === 'function') updateDynamicHUD(); 
 };

@@ -3,14 +3,19 @@
 // ============================================================================
 
 function sanitizePylonWeapon(w) {
-    return w === 'fox1' ? 'fox1' : 'fox2';
+    if (w === 'fox1') return 'fox1';
+    if (w === 'bomb') return 'bomb';
+    if (w === 'rocket') return 'rocket';
+    return 'fox2';
 }
 
-/** Per-slot loadout: fox1 | fox2 | empty (gun-only seats). */
+/** Per-slot loadout: fox1 | fox2 | bomb | rocket | empty (gun-only seats). */
 function sanitizePylonSlot(w) {
     if (w === 'empty' || w === 'none' || w === 'gun') return 'empty';
     if (w === 'fox1') return 'fox1';
     if (w === 'fox2') return 'fox2';
+    if (w === 'bomb') return 'bomb';
+    if (w === 'rocket') return 'rocket';
     return null;
 }
 
@@ -38,7 +43,9 @@ function sanitizePylonLoadout(arr) {
 }
 
 function getMissileWeaponConfig(missileType) {
-    const type = sanitizePylonWeapon(missileType === 'empty' ? 'fox2' : missileType);
+    let type = sanitizePylonWeapon(missileType === 'empty' ? 'fox2' : missileType);
+    // Bomb/rocket are not FOX seekers — fall back to fox2 envelope if mis-queried.
+    if (type === 'bomb' || type === 'rocket') type = 'fox2';
     if (typeof CONFIG !== 'undefined' && CONFIG.weapons && CONFIG.weapons[type]) {
         return CONFIG.weapons[type];
     }
@@ -48,7 +55,8 @@ function getMissileWeaponConfig(missileType) {
 function pylonWeaponType(pylon) {
     if (!pylon) return 'fox2';
     // Prefer stored weaponType even while empty (reload / SMS); only default fox2 for true gun-empty.
-    if (pylon.weaponType === 'fox1' || pylon.weaponType === 'fox2') {
+    if (pylon.weaponType === 'fox1' || pylon.weaponType === 'fox2'
+        || pylon.weaponType === 'bomb' || pylon.weaponType === 'rocket') {
         return pylon.weaponType;
     }
     if (pylon.weaponType === 'empty' || pylon.state === 'empty') return 'fox2';
@@ -57,7 +65,11 @@ function pylonWeaponType(pylon) {
 
 function teamLiveMissileType(team) {
     if (!team || !team.pylons) return null;
-    const live = team.pylons.find((p) => p.state === 'armed' || p.state === 'powering');
+    const live = team.pylons.find((p) => {
+        if (!(p.state === 'armed' || p.state === 'powering')) return false;
+        const wt = pylonWeaponType(p);
+        return wt !== 'bomb' && wt !== 'rocket';
+    });
     return live ? pylonWeaponType(live) : null;
 }
 
@@ -79,10 +91,14 @@ function teamHasFox1InFlight(team) {
 function dropConflictingPylonPower(team, keepType) {
     if (!team || !team.pylons) return 0;
     const keep = sanitizePylonWeapon(keepType);
+    // A2G stores do not share the FOX seeker bus — never auto-drop them here.
+    if (keep === 'bomb' || keep === 'rocket') return 0;
     let n = 0;
     team.pylons.forEach((p) => {
         if (p.state !== 'powering' && p.state !== 'armed') return;
-        if (pylonWeaponType(p) === keep) return;
+        const wt = pylonWeaponType(p);
+        if (wt === 'bomb' || wt === 'rocket') return;
+        if (wt === keep) return;
         p.state = 'standby';
         n += 1;
     });
