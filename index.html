@@ -335,14 +335,9 @@
                 <line x1="126" y1="58" x2="126" y2="82" stroke="#fff" stroke-width="1.2" opacity="0.7"/>
                 <line x1="132" y1="58" x2="132" y2="82" stroke="#fff" stroke-width="1.2" opacity="0.7"/>
             </g>
-            <!-- Inner aim / nose grab (same role as LCOS / FOX ring) -->
+            <!-- Nose grab ring (no crosshair / aim marks) -->
             <circle id="ghost-grab-hit" cx="70" cy="70" r="40" fill="rgba(255,255,255,0.02)" style="cursor:grab"/>
             <circle id="ghost-grab-ring" cx="70" cy="70" r="32" fill="none" stroke="#ffffff" stroke-width="2.4"/>
-            <circle id="ghost-grab-inner" cx="70" cy="70" r="10" fill="none" stroke="rgba(255,255,255,0.55)" stroke-width="1.4"/>
-            <line x1="70" y1="46" x2="70" y2="58" stroke="#fff" stroke-width="1.6"/>
-            <line x1="70" y1="82" x2="70" y2="94" stroke="#fff" stroke-width="1.6"/>
-            <line x1="46" y1="70" x2="58" y2="70" stroke="#fff" stroke-width="1.6"/>
-            <line x1="82" y1="70" x2="94" y2="70" stroke="#fff" stroke-width="1.6"/>
             <circle id="ghost-joy-pip" cx="70" cy="70" r="3.2" fill="#ffeb3b"/>
         </svg>
         <div id="ghost-steer-thr" class="ghost-steer-thr">THR —</div>
@@ -352,10 +347,10 @@
     <div id="ops-radial-root" hidden aria-hidden="true">
         <div id="ops-radial-anchor">
             <div id="ops-radial-ring" aria-label="ops radial">
-                <svg id="ops-radial-svg" viewBox="0 0 280 280" role="presentation">
+                <svg id="ops-radial-svg" viewBox="-20 -20 320 320" role="presentation">
                     <g id="ops-radial-wedges"></g>
-                    <circle class="ops-radial-rim" cx="140" cy="140" r="134" fill="none"/>
-                    <!-- Center ×2, transparent fill; rim = HP -->
+                    <circle class="ops-radial-rim" cx="140" cy="140" r="154" fill="none"/>
+                    <!-- Center transparent hollow (no hit) — rim = HP -->
                     <circle id="ops-center-disc" cx="140" cy="140" r="110" fill="none"/>
                     <circle id="ops-hp-track" cx="140" cy="140" r="110" fill="none"
                         stroke="rgba(255,255,255,0.16)" stroke-width="5"/>

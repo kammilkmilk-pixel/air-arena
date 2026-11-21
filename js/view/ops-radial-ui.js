@@ -7,8 +7,9 @@
     const SVG_CX = 140;
     const HP_R = 110;
     const HP_CIRC = 2 * Math.PI * HP_R;
+    // Outer pylon/CM ring: ~2× annulus area (was r 114–132).
     const WEDGE_R0 = 114;
-    const WEDGE_R1 = 132;
+    const WEDGE_R1 = 150;
 
     const OpsRadial = {
         open: false,
@@ -483,11 +484,11 @@
     }
 
     function wedgeColor(state) {
-        // Outer pylon / CM wedges: semi-transparent black base; tint by state.
-        if (state === 'armed') return 'rgba(0, 40, 28, 0.72)';
-        if (state === 'powering') return 'rgba(40, 28, 0, 0.72)';
-        if (state === 'empty') return 'rgba(40, 0, 8, 0.72)';
-        if (state === 'active') return 'rgba(20, 20, 20, 0.78)';
+        // Idle = translucent black; selected/armed/powering = fully opaque.
+        if (state === 'armed') return 'rgb(0, 120, 72)';
+        if (state === 'powering') return 'rgb(180, 110, 0)';
+        if (state === 'empty') return 'rgb(140, 0, 30)';
+        if (state === 'active') return 'rgb(40, 40, 40)';
         return 'rgba(0, 0, 0, 0.55)';
     }
 
@@ -510,20 +511,22 @@
         const g = $('ops-radial-wedges');
         if (!g) return;
         while (g.firstChild) g.removeChild(g.firstChild);
-        const mk = (a0, a1, fill, id) => {
+        const mk = (a0, a1, fill, id, selected) => {
             const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
             path.setAttribute('d', wedgePath(a0, a1, WEDGE_R0, WEDGE_R1));
             path.setAttribute('fill', fill);
-            path.setAttribute('stroke', 'rgba(255,255,255,0.28)');
-            path.setAttribute('stroke-width', '1');
+            path.setAttribute('stroke', selected ? 'rgba(255,255,255,0.85)' : 'rgba(255,255,255,0.28)');
+            path.setAttribute('stroke-width', selected ? '1.5' : '1');
+            path.style.pointerEvents = 'fill';
             path.dataset.ops = id;
+            if (selected) path.classList.add('is-selected');
             g.appendChild(path);
         };
         // Top 90° (−45…+45): flare then chaff. SVG 0° = up via polar helper.
         const flareArmed = !!(team && team.flaresArmed);
         const chaffArmed = !!(team && team.chaffArmed);
-        mk(-45, 0, wedgeColor(flareArmed ? 'active' : 'idle'), 'flare');
-        mk(0, 45, wedgeColor(chaffArmed ? 'active' : 'idle'), 'chaff');
+        mk(-45, 0, wedgeColor(flareArmed ? 'active' : 'idle'), 'flare', flareArmed);
+        mk(0, 45, wedgeColor(chaffArmed ? 'active' : 'idle'), 'chaff', chaffArmed);
         // Bottom 270°: four pylons (45 → 315)
         const pylons = (team && Array.isArray(team.pylons)) ? team.pylons : [];
         const spans = [
@@ -534,7 +537,9 @@
         ];
         spans.forEach(([a0, a1, idx]) => {
             const p = pylons[idx];
-            mk(a0, a1, wedgeColor(p && p.state), `pylon-${idx + 1}`);
+            const st = p && p.state;
+            const selected = st === 'armed' || st === 'powering';
+            mk(a0, a1, wedgeColor(st), `pylon-${idx + 1}`, selected);
         });
     }
 
@@ -624,7 +629,7 @@
         const t = team || (teams && teams[OpsRadial.teamId]);
         const world = (t && t.wrapper) ? t.wrapper.position : null;
         const scr = projectWorldToScreen(world);
-        const half = 160; // ~half of 320px ring
+        const half = 180; // ~half of 360px ring
         if (!scr) {
             anchor.style.left = '50%';
             anchor.style.top = '55%';
