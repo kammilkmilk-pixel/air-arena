@@ -221,6 +221,12 @@ const CONFIG = {
             /** Launch speed (world units / turn-second) along nose. */
             launchSpeed: 55,
             launchSpeedScale: 1.0,
+            /**
+             * Per-rocket aim dispersion (radians) about nose: yaw/pitch jitter so
+             * the 3 mid-path impact points fan slightly along the flight curve.
+             */
+            aimDispersionYaw: 0.028,
+            aimDispersionPitch: 0.018,
             drag: 0.002,
             gravityScale: 0.55,
             substeps: 2,

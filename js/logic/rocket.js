@@ -114,12 +114,37 @@
         return { hitGround, oldPos };
     }
 
-    function estimateLaunchState(team, pylon) {
+    /**
+     * Deterministic per-salvo dispersion (yaw/pitch radians about nose).
+     * index 0..n-1 → slight left/right + up/down fan so 3 impacts are distinct.
+     */
+    function dispersionForIndex(index) {
+        const cfg = rocketConfig();
+        const yawAmp = cfg.aimDispersionYaw != null ? Number(cfg.aimDispersionYaw) : 0.028;
+        const pitchAmp = cfg.aimDispersionPitch != null ? Number(cfg.aimDispersionPitch) : 0.018;
+        const i = Number(index) || 0;
+        // Pattern: center, right-down, left-up (or mirrored for even salvos).
+        const pattern = [
+            { yaw: 0, pitch: 0 },
+            { yaw: yawAmp, pitch: -pitchAmp * 0.6 },
+            { yaw: -yawAmp, pitch: pitchAmp * 0.7 }
+        ];
+        return pattern[i % pattern.length] || { yaw: 0, pitch: 0 };
+    }
+
+    /**
+     * Launch pose at a point along the planned path (ratio 0..1).
+     * Rockets fire mid-turn while the jet flies — each salvo uses its launch ratio.
+     * @param {{ ratio?: number, dispersion?: { yaw:number, pitch:number } }} opts
+     */
+    function estimateLaunchState(team, pylon, opts) {
         const cfg = rocketConfig();
         const scale = cfg.launchSpeedScale != null ? Number(cfg.launchSpeedScale) : 1;
         const baseSpeed = cfg.launchSpeed != null ? Number(cfg.launchSpeed) : 55;
         const stepsPerTurn = (typeof CONFIG !== 'undefined' && CONFIG.rules && CONFIG.rules.stepsPerTurn)
             ? Number(CONFIG.rules.stepsPerTurn) : 100;
+        const ratio = Math.max(0, Math.min(1, Number(opts && opts.ratio) || 0));
+        const disp = (opts && opts.dispersion) || { yaw: 0, pitch: 0 };
 
         let pos;
         let quat;
@@ -127,20 +152,28 @@
 
         if (team.pathPoints && team.pathPoints.length >= 2 && typeof getPosAt === 'function') {
             const eps = 1 / Math.max(8, stepsPerTurn);
-            const p0 = getPosAt(0, team.pathPoints);
-            const p1 = getPosAt(Math.min(1, eps), team.pathPoints);
+            const r0 = ratio;
+            const r1 = Math.min(1, ratio + eps);
+            const p0 = getPosAt(r0, team.pathPoints);
+            const p1 = getPosAt(r1, team.pathPoints);
             pos = p0.clone();
             quat = (team.pathQuats && typeof getQuatAt === 'function')
-                ? getQuatAt(0, team.pathQuats)
+                ? getQuatAt(r0, team.pathQuats)
                 : ((team.wrapper && (team.wrapper.userData && team.wrapper.userData.logicalQuat || team.wrapper.quaternion))
                     || new THREE.Quaternion()).clone();
-            // Aircraft velocity + rocket motor impulse along nose.
-            const acVel = new THREE.Vector3().subVectors(p1, p0).multiplyScalar(1 / Math.max(1e-6, eps));
-            const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(quat);
+            // Aircraft velocity at this path point + rocket motor impulse along (dispersed) nose.
+            const acVel = new THREE.Vector3().subVectors(p1, p0).multiplyScalar(1 / Math.max(1e-6, (r1 - r0) || eps));
+            const aimQuat = quat.clone();
+            if (disp.yaw) aimQuat.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), disp.yaw));
+            if (disp.pitch) aimQuat.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), disp.pitch));
+            const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(aimQuat);
             vel = acVel.add(fwd.multiplyScalar(baseSpeed * scale));
+            quat = aimQuat;
         } else if (team.wrapper) {
             pos = team.wrapper.position.clone();
             quat = (team.wrapper.userData.logicalQuat || team.wrapper.quaternion).clone();
+            if (disp.yaw) quat.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), disp.yaw));
+            if (disp.pitch) quat.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), disp.pitch));
             const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(quat);
             vel = fwd.multiplyScalar(baseSpeed * scale);
         } else {
@@ -150,10 +183,38 @@
         }
 
         if (pylon && pylon.localPosition && pos && quat) {
-            pos.add(pylon.localPosition.clone().applyQuaternion(quat));
-            pos.add(new THREE.Vector3(0, -0.05, 0.15).applyQuaternion(quat));
+            // Pylon offset uses airframe attitude (pre-dispersion stored separately — use path quat).
+            const bodyQuat = (team.pathQuats && typeof getQuatAt === 'function' && team.pathPoints)
+                ? getQuatAt(ratio, team.pathQuats)
+                : ((team.wrapper && (team.wrapper.userData && team.wrapper.userData.logicalQuat || team.wrapper.quaternion))
+                    || quat).clone();
+            pos.add(pylon.localPosition.clone().applyQuaternion(bodyQuat));
+            pos.add(new THREE.Vector3(0, -0.05, 0.15).applyQuaternion(bodyQuat));
         }
-        return { pos, quat, vel };
+        return { pos, quat, vel, ratio };
+    }
+
+    /** Integrate until VT ground / impact; returns path samples + impact. */
+    function predictRocketImpact(origin, velocity, quatSeed) {
+        const knobs = ballisticKnobs();
+        const cfg = rocketConfig();
+        const vtGround = cfg.vtGroundHeight != null ? Number(cfg.vtGroundHeight) : 3.5;
+        const pos = origin.clone();
+        const vel = velocity.clone();
+        const quat = (quatSeed && quatSeed.clone) ? quatSeed.clone() : new THREE.Quaternion();
+        const points = [pos.clone()];
+        let impact = null;
+        const maxSteps = cfg.maxFlightSteps != null ? Math.min(Number(cfg.maxFlightSteps), 240) : 160;
+        for (let i = 0; i < maxSteps; i++) {
+            const res = integrateRocketFrame(pos, vel, quat, knobs);
+            points.push(pos.clone());
+            if (res.hitGround || pos.y <= knobs.groundY + vtGround) {
+                impact = pos.clone();
+                break;
+            }
+        }
+        if (!impact) impact = points[points.length - 1].clone();
+        return { points, impact };
     }
 
     function pushRocketExplosionVfx(ctx, step, pos, cfg) {
@@ -225,15 +286,21 @@
                 Number((typeof GameContext !== 'undefined' && GameContext.state && GameContext.state.currentTurn) || 1)
             );
             const seqBase = (Number(t._rocketSeq) || 0);
+            const stepsPerTurn = (typeof CONFIG !== 'undefined' && CONFIG.rules && CONFIG.rules.stepsPerTurn)
+                ? Number(CONFIG.rules.stepsPerTurn) : 100;
             for (let i = 0; i < fireCount; i++) {
                 t._rocketSeq = seqBase + i + 1;
                 const trackId = `r${id}_p${pod.id}_t${turn}_${t._rocketSeq}`;
+                const launchStep = i * gap;
                 const rocket = {
                     pylonId: pod.id,
                     trackId,
                     weaponType: 'rocket',
                     active: false,
-                    launchStep: i * gap,
+                    launchStep,
+                    launchRatio: Math.min(1, launchStep / Math.max(1, stepsPerTurn)),
+                    salvoIndex: i,
+                    dispersion: dispersionForIndex(i),
                     ageSteps: 0,
                     pos: new THREE.Vector3(),
                     vel: new THREE.Vector3(),
@@ -328,25 +395,17 @@
                     }
                     if (step === r.launchStep) {
                         r.active = true;
-                        const acPos = (t.pathPoints && typeof getPosAt === 'function')
-                            ? getPosAt(ratio, t.pathPoints)
-                            : t.wrapper.position.clone();
-                        const acQuat = (t.pathQuats && typeof getQuatAt === 'function')
-                            ? getQuatAt(ratio, t.pathQuats)
-                            : (t.wrapper.userData.logicalQuat || t.wrapper.quaternion).clone();
                         const pylon = (t.pylons || []).find((p) => p.id === r.pylonId);
-                        const rel = estimateLaunchState(
-                            Object.assign({}, t, {
-                                pathPoints: t.pathPoints,
-                                pathQuats: t.pathQuats,
-                                wrapper: { position: acPos, quaternion: acQuat, userData: { logicalQuat: acQuat } },
-                                ap: t.ap
-                            }),
-                            pylon
-                        );
-                        r.pos.copy(rel.pos || acPos);
-                        r.quat.copy(rel.quat || acQuat);
-                        r.vel.copy(rel.vel || new THREE.Vector3(0, 0, 1).applyQuaternion(acQuat).multiplyScalar(50));
+                        const launchRatio = (r.launchRatio != null)
+                            ? Number(r.launchRatio)
+                            : ratio;
+                        const rel = estimateLaunchState(t, pylon, {
+                            ratio: launchRatio,
+                            dispersion: r.dispersion || dispersionForIndex(r.salvoIndex || 0)
+                        });
+                        r.pos.copy(rel.pos);
+                        r.quat.copy(rel.quat);
+                        r.vel.copy(rel.vel);
                         r.ageSteps = 0;
                         if (!tracks[r.trackId]) tracks[r.trackId] = [];
                         tracks[r.trackId].push({ pos: r.pos.clone(), quat: r.quat.clone() });
@@ -473,68 +532,119 @@
         });
     }
 
-    /** Lightweight aiming hint: forward cone / impact estimate for rocket mode. */
+    function ensureAimVisuals(count) {
+        if (typeof scene === 'undefined' || !scene) return null;
+        if (!Rocket._aimGroup) {
+            Rocket._aimGroup = new THREE.Group();
+            Rocket._aimGroup.name = 'rocketAimPreview';
+            Rocket._aimSlots = [];
+            scene.add(Rocket._aimGroup);
+        }
+        const colors = [0xff9966, 0xffcc66, 0xff7755];
+        while (Rocket._aimSlots.length < count) {
+            const idx = Rocket._aimSlots.length;
+            const color = colors[idx % colors.length];
+            const line = new THREE.Line(
+                new THREE.BufferGeometry(),
+                new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.75 })
+            );
+            const ring = new THREE.Mesh(
+                new THREE.RingGeometry(0.55, 0.95, 20),
+                new THREE.MeshBasicMaterial({
+                    color, transparent: true, opacity: 0.9,
+                    side: THREE.DoubleSide, depthWrite: false
+                })
+            );
+            ring.rotation.x = -Math.PI / 2;
+            // Small cross at impact
+            const cross = new THREE.LineSegments(
+                new THREE.BufferGeometry().setFromPoints([
+                    new THREE.Vector3(-1.2, 0.03, 0),
+                    new THREE.Vector3(1.2, 0.03, 0),
+                    new THREE.Vector3(0, 0.03, -1.2),
+                    new THREE.Vector3(0, 0.03, 1.2)
+                ]),
+                new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.95 })
+            );
+            // Release pip along aircraft path
+            const pip = new THREE.Mesh(
+                new THREE.SphereGeometry(0.28, 8, 8),
+                new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.85 })
+            );
+            Rocket._aimGroup.add(line, ring, cross, pip);
+            Rocket._aimSlots.push({ line, ring, cross, pip });
+        }
+        return Rocket._aimGroup;
+    }
+
+    /**
+     * Aim preview: one impact per salvo rocket, launched mid-path at 0 / 33 / 66…
+     * Impacts move when the planned flight curve changes; each has slight dispersion.
+     */
     function updateRocketAimPreview(team) {
         if (!team || team.weapon !== 'rocket' || team.isDestroyed) {
-            if (Rocket._aimGroup) Rocket._aimGroup.visible = false;
-            const hud = document.getElementById('rocket-aim-hud');
-            if (hud) hud.style.display = 'none';
+            hideRocketAimPreview();
             return;
         }
         if (typeof GameContext !== 'undefined' && (GameContext.isAnimating() || GameContext.isReplayMode())) {
-            if (Rocket._aimGroup) Rocket._aimGroup.visible = false;
+            hideRocketAimPreview();
             return;
         }
         const pods = teamRocketPylons(team);
         const armed = pods.filter((p) => p.state === 'armed' && ensurePodAmmo(p) > 0);
         const pod = armed[0] || pods[0];
         if (!pod) {
-            if (Rocket._aimGroup) Rocket._aimGroup.visible = false;
+            hideRocketAimPreview();
             return;
         }
 
-        const rel = estimateLaunchState(team, pod);
+        const ammo = ensurePodAmmo(pod);
+        const max = Number(pod.ammoMax) || roundsPerPod();
+        const salvo = Math.min(salvoPerTurn(), ammo);
+        const gap = intervalSteps();
+        const stepsPerTurn = (typeof CONFIG !== 'undefined' && CONFIG.rules && CONFIG.rules.stepsPerTurn)
+            ? Number(CONFIG.rules.stepsPerTurn) : 100;
         const knobs = ballisticKnobs();
-        const pos = rel.pos.clone();
-        const vel = rel.vel.clone();
-        const quat = rel.quat.clone();
-        const pts = [pos.clone()];
-        let impact = null;
-        for (let i = 0; i < 160; i++) {
-            const res = integrateRocketFrame(pos, vel, quat, knobs);
-            pts.push(pos.clone());
-            if (res.hitGround || pos.y <= (rocketConfig().vtGroundHeight || 3.5)) {
-                impact = pos.clone();
-                break;
-            }
-        }
-        if (!impact) impact = pts[pts.length - 1].clone();
+        const groundY = knobs.groundY || 0;
 
-        if (typeof scene !== 'undefined' && scene) {
-            if (!Rocket._aimGroup) {
-                Rocket._aimGroup = new THREE.Group();
-                Rocket._aimLine = new THREE.Line(
-                    new THREE.BufferGeometry(),
-                    new THREE.LineBasicMaterial({ color: 0xff9966, transparent: true, opacity: 0.8 })
-                );
-                const ring = new THREE.Mesh(
-                    new THREE.RingGeometry(0.7, 1.1, 24),
-                    new THREE.MeshBasicMaterial({
-                        color: 0xff9966, transparent: true, opacity: 0.85,
-                        side: THREE.DoubleSide, depthWrite: false
-                    })
-                );
-                ring.rotation.x = -Math.PI / 2;
-                Rocket._aimImpact = ring;
-                Rocket._aimGroup.add(Rocket._aimLine, ring);
-                scene.add(Rocket._aimGroup);
-            }
-            Rocket._aimLine.geometry.dispose();
-            Rocket._aimLine.geometry = new THREE.BufferGeometry().setFromPoints(pts.filter((_, i) => i % 2 === 0));
-            Rocket._aimImpact.position.copy(impact);
-            Rocket._aimImpact.position.y = (knobs.groundY || 0) + 0.06;
-            Rocket._aimGroup.visible = true;
+        const grp = ensureAimVisuals(Math.max(salvo, 3));
+        if (!grp) return;
+
+        const impactSummaries = [];
+        for (let i = 0; i < Rocket._aimSlots.length; i++) {
+            const slot = Rocket._aimSlots[i];
+            const show = i < salvo;
+            slot.line.visible = show;
+            slot.ring.visible = show;
+            slot.cross.visible = show;
+            slot.pip.visible = show;
+            if (!show) continue;
+
+            const launchStep = i * gap;
+            const ratio = Math.min(1, launchStep / Math.max(1, stepsPerTurn));
+            const rel = estimateLaunchState(team, pod, {
+                ratio,
+                dispersion: dispersionForIndex(i)
+            });
+            const pred = predictRocketImpact(rel.pos, rel.vel, rel.quat);
+            const sample = pred.points.filter((_, idx) => idx % 2 === 0);
+            if (sample.length < 2) sample.push(rel.pos.clone(), pred.impact.clone());
+
+            slot.line.geometry.dispose();
+            slot.line.geometry = new THREE.BufferGeometry().setFromPoints(sample);
+            slot.ring.position.copy(pred.impact);
+            slot.ring.position.y = groundY + 0.05 + i * 0.01;
+            slot.cross.position.copy(pred.impact);
+            slot.cross.position.y = groundY + 0.05 + i * 0.01;
+            slot.pip.position.copy(rel.pos);
+
+            impactSummaries.push({
+                i: i + 1,
+                step: launchStep,
+                range: team.wrapper ? team.wrapper.position.distanceTo(pred.impact) : NaN
+            });
         }
+        grp.visible = true;
 
         let hud = document.getElementById('rocket-aim-hud');
         if (!hud) {
@@ -550,10 +660,10 @@
             ].join(';');
             document.body.appendChild(hud);
         }
-        const ammo = ensurePodAmmo(pod);
-        const max = Number(pod.ammoMax) || roundsPerPod();
-        const salvo = Math.min(salvoPerTurn(), ammo);
-        hud.innerText = `RKT VT  ${ammo}/${max}  ·  本回 ${salvo}× / ${intervalSteps()}fr  ·  ENT 齊射`;
+        const ranges = impactSummaries
+            .map((s) => (Number.isFinite(s.range) ? `${s.range.toFixed(0)}m@${s.step}fr` : `—@${s.step}fr`))
+            .join('  ');
+        hud.innerText = `RKT VT  ${ammo}/${max}  ·  ${salvo}彈著  ${ranges}  ·  ENT 齊射`;
         hud.style.display = 'block';
     }
 
