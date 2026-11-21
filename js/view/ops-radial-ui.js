@@ -3,7 +3,12 @@
 // ============================================================================
 (function () {
     const COLLAPSE_KEY = 'airarena.opsPanelCollapsed';
-    const RADIAL_SIZE = 220;
+    /** SVG layout (viewBox 280², center 140). Center HP disc ≈2× prior r=58. */
+    const SVG_CX = 140;
+    const HP_R = 110;
+    const HP_CIRC = 2 * Math.PI * HP_R;
+    const WEDGE_R0 = 114;
+    const WEDGE_R1 = 132;
 
     const OpsRadial = {
         open: false,
@@ -70,62 +75,77 @@
         });
     }
 
-    function projectWorld(pos, camera) {
-        if (!pos || !camera) return null;
-        const v = pos.clone();
-        v.project(camera);
-        if (v.z > 1) return null;
-        return {
-            x: (v.x * 0.5 + 0.5) * window.innerWidth,
-            y: (-v.y * 0.5 + 0.5) * window.innerHeight
-        };
-    }
-
     function ensure3dOverlays() {
         if (typeof THREE === 'undefined' || typeof scene === 'undefined') return null;
-        if (OpsRadial._3d) return OpsRadial._3d;
+        if (OpsRadial._3d && OpsRadial._3d.isReticle) return OpsRadial._3d;
+        if (OpsRadial._3d && OpsRadial._3d.gizmo && OpsRadial._3d.gizmo.parent) {
+            OpsRadial._3d.gizmo.parent.remove(OpsRadial._3d.gizmo);
+        }
 
-        const whiteMat = new THREE.MeshBasicMaterial({
-            color: 0xffffff, transparent: true, opacity: 0.85,
+        const lineMat = new THREE.MeshBasicMaterial({
+            color: 0xffffff, transparent: true, opacity: 0.9,
             depthWrite: false, side: THREE.DoubleSide
         });
-        const ringMat = whiteMat.clone();
-        ringMat.opacity = 0.55;
 
+        // Aiming-reticle style grab ring on the ghost (LCOS-like handles), not sphere dots.
         const gizmo = new THREE.Group();
-        gizmo.name = 'opsGhostGizmo';
+        gizmo.name = 'opsGhostReticle';
         gizmo.visible = false;
+        gizmo.userData.isReticle = true;
 
-        const outer = new THREE.Mesh(new THREE.RingGeometry(0.55, 0.62, 48), ringMat);
-        outer.rotation.x = Math.PI / 2;
-        const inner = new THREE.Mesh(new THREE.RingGeometry(0.28, 0.34, 32), ringMat.clone());
-        inner.rotation.x = Math.PI / 2;
-        gizmo.add(outer, inner);
+        const mkRing = (r0, r1, opacity) => {
+            const m = lineMat.clone();
+            m.opacity = opacity;
+            const mesh = new THREE.Mesh(new THREE.RingGeometry(r0, r1, 64), m);
+            return mesh;
+        };
+        const outer = mkRing(0.62, 0.68, 0.85);
+        const mid = mkRing(0.42, 0.46, 0.55);
+        const inner = mkRing(0.16, 0.2, 0.7);
+        gizmo.add(outer, mid, inner);
 
-        const pts = [];
-        const dirs = [
-            new THREE.Vector3(0.48, 0, 0),
-            new THREE.Vector3(-0.48, 0, 0),
-            new THREE.Vector3(0, 0, 0.48),
-            new THREE.Vector3(0, 0, -0.48)
-        ];
-        dirs.forEach((d, i) => {
-            const s = new THREE.Mesh(new THREE.SphereGeometry(0.055, 12, 12), whiteMat.clone());
-            s.position.copy(d);
-            s.userData.opsPoint = i;
-            gizmo.add(s);
-            pts.push(s);
-        });
-        // Stick tip (joy)
-        const stick = new THREE.Mesh(new THREE.SphereGeometry(0.07, 12, 12), whiteMat.clone());
+        // Crosshair
+        const barGeo = new THREE.PlaneGeometry(0.55, 0.03);
+        const stemGeo = new THREE.PlaneGeometry(0.03, 0.55);
+        const crossH = new THREE.Mesh(barGeo, lineMat.clone());
+        const crossV = new THREE.Mesh(stemGeo, lineMat.clone());
+        gizmo.add(crossH, crossV);
+
+        // Cardinal grab handles (brackets) — “把手”
+        const handles = [];
+        const handleMat = lineMat.clone();
+        handleMat.opacity = 0.95;
+        const mkHandle = (rotZ) => {
+            const h = new THREE.Group();
+            const a = new THREE.Mesh(new THREE.PlaneGeometry(0.18, 0.045), handleMat.clone());
+            const b = new THREE.Mesh(new THREE.PlaneGeometry(0.045, 0.14), handleMat.clone());
+            a.position.set(0, 0.55, 0);
+            b.position.set(0.07, 0.50, 0);
+            const b2 = b.clone();
+            b2.position.set(-0.07, 0.50, 0);
+            h.add(a, b, b2);
+            h.rotation.z = rotZ;
+            gizmo.add(h);
+            handles.push(h);
+            return h;
+        };
+        mkHandle(0);
+        mkHandle(Math.PI / 2);
+        mkHandle(Math.PI);
+        mkHandle(-Math.PI / 2);
+
+        // Joy pipper (moves inside reticle)
+        const stick = new THREE.Mesh(new THREE.RingGeometry(0.05, 0.09, 24), lineMat.clone());
         stick.name = 'opsStickTip';
         gizmo.add(stick);
+
+        // Slightly above ghost so it reads as a gunsight, not a ground disc.
+        gizmo.position.y = 0.35;
 
         if (window.ghostWrapper) window.ghostWrapper.add(gizmo);
         else scene.add(gizmo);
 
-        // HP lives on the 2D center rim (ops-hp-ring) — no 3D AABB ring (was jittering).
-        OpsRadial._3d = { gizmo, pts, stick, outer, inner };
+        OpsRadial._3d = { gizmo, stick, outer, mid, inner, handles, isReticle: true };
         return OpsRadial._3d;
     }
 
@@ -134,27 +154,28 @@
         if (!o || !team) return;
         const show = !!OpsRadial.open && !GameContext.isReplayMode() && !GameContext.isAnimating();
 
-        // Ghost gizmo only (white rings / control points)
         if (o.gizmo) {
             const ghostOn = show && window.ghostWrapper && window.ghostWrapper.visible;
             o.gizmo.visible = !!ghostOn;
-            if (ghostOn && o.stick) {
-                const jx = Number(team.joyX) || 0;
-                const jy = Number(team.joyY) || 0;
-                o.stick.position.set(jx * 0.42, 0.02, -jy * 0.42);
-            }
-            if (ghostOn && o.outer) {
-                const roll = (team.pendingRoll != null && team.pendingRoll !== 0)
-                    ? team.pendingRoll
-                    : (Number(team.roll) || 0);
-                o.outer.rotation.z = -roll;
+            if (ghostOn) {
+                // Billboard toward camera so it reads as an aiming reticle.
+                if (typeof camera !== 'undefined' && camera) {
+                    o.gizmo.quaternion.copy(camera.quaternion);
+                }
+                if (o.stick) {
+                    const jx = Number(team.joyX) || 0;
+                    const jy = Number(team.joyY) || 0;
+                    o.stick.position.set(jx * 0.38, -jy * 0.38, 0.02);
+                }
+                if (o.outer) {
+                    const roll = (team.pendingRoll != null && team.pendingRoll !== 0)
+                        ? team.pendingRoll
+                        : (Number(team.roll) || 0);
+                    o.outer.rotation.z = -roll;
+                }
             }
         }
     }
-
-    /** Center-disc rim = HP (stable SVG stroke; no per-frame mesh rebuild). */
-    const HP_R = 58;
-    const HP_CIRC = 2 * Math.PI * HP_R;
 
     function syncHpRing(team) {
         const el = $('ops-hp-ring');
@@ -228,11 +249,12 @@
     }
 
     function wedgeColor(state) {
-        if (state === 'armed') return 'rgba(0,255,136,0.35)';
-        if (state === 'powering') return 'rgba(255,170,0,0.35)';
-        if (state === 'empty') return 'rgba(255,0,51,0.28)';
-        if (state === 'active') return 'rgba(255,255,255,0.28)';
-        return 'rgba(255,255,255,0.12)';
+        // Outer pylon / CM wedges: semi-transparent black base; tint by state.
+        if (state === 'armed') return 'rgba(0, 40, 28, 0.72)';
+        if (state === 'powering') return 'rgba(40, 28, 0, 0.72)';
+        if (state === 'empty') return 'rgba(40, 0, 8, 0.72)';
+        if (state === 'active') return 'rgba(20, 20, 20, 0.78)';
+        return 'rgba(0, 0, 0, 0.55)';
     }
 
     function polar(cx, cy, r, deg) {
@@ -241,7 +263,7 @@
     }
 
     function wedgePath(a0, a1, r0, r1) {
-        const c = 100;
+        const c = SVG_CX;
         const large = (a1 - a0) > 180 ? 1 : 0;
         const p0 = polar(c, c, r1, a0);
         const p1 = polar(c, c, r1, a1);
@@ -258,7 +280,7 @@
             const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
             path.setAttribute('d', wedgePath(a0, a1, WEDGE_R0, WEDGE_R1));
             path.setAttribute('fill', fill);
-            path.setAttribute('stroke', 'rgba(255,255,255,0.45)');
+            path.setAttribute('stroke', 'rgba(255,255,255,0.28)');
             path.setAttribute('stroke-width', '1');
             path.dataset.ops = id;
             g.appendChild(path);
@@ -281,10 +303,6 @@
             mk(a0, a1, wedgeColor(p && p.state), `pylon-${idx + 1}`);
         });
     }
-
-    // Outer weapon ring sits outside the enlarged HP center disc (r≈58).
-    const WEDGE_R0 = 60;
-    const WEDGE_R1 = 92;
 
     function refresh(teamObj) {
         const id = OpsRadial.teamId || (typeof uiCurrentTeamId === 'function' ? uiCurrentTeamId() : null);
@@ -350,30 +368,17 @@
 
         sync3dOverlays(team);
         paintGhostThrottle(team);
-        layoutAnchor(team);
+        layoutAnchor();
     }
 
-    function layoutAnchor(team) {
+    function layoutAnchor() {
         const anchor = $('ops-radial-anchor');
-        if (!anchor || typeof camera === 'undefined') return;
-        let world = null;
-        if (OpsRadial.focus === 'ghost' && window.ghostWrapper && window.ghostWrapper.visible) {
-            world = window.ghostWrapper.position;
-        } else if (team && team.wrapper) {
-            world = team.wrapper.position;
-        }
-        const scr = projectWorld(world, camera);
-        if (!scr) {
-            anchor.style.left = '50%';
-            anchor.style.top = '58%';
-            return;
-        }
-        const half = RADIAL_SIZE * 0.5;
-        const x = Math.max(half + 8, Math.min(window.innerWidth - half - 8, scr.x));
-        // Bias below selection so it doesn't cover the aircraft silhouette.
-        const y = Math.max(half + 8, Math.min(window.innerHeight - 160, scr.y + 70));
-        anchor.style.left = `${x}px`;
-        anchor.style.top = `${y}px`;
+        if (!anchor) return;
+        // Stable lower-center dock — do not follow aircraft or forward ghost.
+        anchor.style.left = '50%';
+        anchor.style.top = 'auto';
+        anchor.style.bottom = '200px';
+        anchor.style.transform = 'translateX(-50%)';
     }
 
     function startTrack() {
@@ -382,10 +387,7 @@
             if (!OpsRadial.open) return;
             const id = OpsRadial.teamId;
             const team = teams && teams[id];
-            if (team) {
-                layoutAnchor(team);
-                sync3dOverlays(team);
-            }
+            if (team) sync3dOverlays(team);
             OpsRadial._raf = requestAnimationFrame(tick);
         };
         OpsRadial._raf = requestAnimationFrame(tick);

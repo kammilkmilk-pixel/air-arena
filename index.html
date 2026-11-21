@@ -314,21 +314,20 @@
     <div id="ops-radial-root" hidden aria-hidden="true">
         <div id="ops-radial-anchor">
             <div id="ops-radial-ring" aria-label="ops radial">
-                <svg id="ops-radial-svg" viewBox="0 0 200 200" role="presentation">
+                <svg id="ops-radial-svg" viewBox="0 0 280 280" role="presentation">
                     <g id="ops-radial-wedges"></g>
-                    <circle class="ops-radial-rim" cx="100" cy="100" r="92" fill="none"/>
-                    <!-- Enlarged center disc; rim stroke = HP -->
-                    <circle id="ops-center-disc" cx="100" cy="100" r="58" fill="rgba(8,10,14,0.58)"/>
-                    <circle id="ops-hp-track" cx="100" cy="100" r="58" fill="none"
-                        stroke="rgba(255,255,255,0.14)" stroke-width="5"/>
-                    <circle id="ops-hp-ring" cx="100" cy="100" r="58" fill="none"
+                    <circle class="ops-radial-rim" cx="140" cy="140" r="134" fill="none"/>
+                    <!-- Center ×2, transparent fill; rim = HP -->
+                    <circle id="ops-center-disc" cx="140" cy="140" r="110" fill="none"/>
+                    <circle id="ops-hp-track" cx="140" cy="140" r="110" fill="none"
+                        stroke="rgba(255,255,255,0.16)" stroke-width="5"/>
+                    <circle id="ops-hp-ring" cx="140" cy="140" r="110" fill="none"
                         stroke="#00ff88" stroke-width="5" stroke-linecap="butt"
-                        transform="rotate(-90 100 100)"
-                        stroke-dasharray="364.4 364.4" stroke-dashoffset="0"/>
-                    <!-- Bottom ~1/5 of center = OK wedge (visual); button overlays it -->
-                    <!-- Bottom 1/5 sector (216°→144° via bottom, 0°=up): OK -->
+                        transform="rotate(-90 140 140)"
+                        stroke-dasharray="691.2 691.2" stroke-dashoffset="0"/>
+                    <!-- OK = horizontal chord cut across bottom of center disc -->
                     <path id="ops-ok-wedge" class="ops-ok-wedge"
-                        d="M 100 100 L 65.9 147.2 A 58 58 0 0 0 134.1 147.2 Z"/>
+                        d="M 52 206 L 228 206 A 110 110 0 0 1 52 206 Z"/>
                 </svg>
                 <button type="button" id="ops-radial-ok" class="ops-radial-ok" title="確認交戰">OK</button>
                 <button type="button" class="ops-wedge-hit" data-ops="flare" id="ops-hit-flare" style="--a0:-45deg;--span:45deg" title="FLARE">FL</button>

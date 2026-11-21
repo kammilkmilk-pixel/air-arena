@@ -754,9 +754,11 @@ html.startup-lock body {
 #ops-radial-anchor {
     position: absolute;
     left: 50%;
-    top: 58%;
-    width: 220px;
-    transform: translate(-50%, -50%);
+    /* Fixed lower-center — never tracks the forward ghost */
+    top: auto;
+    bottom: 200px;
+    width: 320px;
+    transform: translateX(-50%);
     pointer-events: none;
     display: flex;
     flex-direction: column;
@@ -765,8 +767,8 @@ html.startup-lock body {
 }
 #ops-radial-ring {
     position: relative;
-    width: 220px;
-    height: 220px;
+    width: 320px;
+    height: 320px;
     pointer-events: auto;
 }
 #ops-radial-svg {
@@ -775,8 +777,8 @@ html.startup-lock body {
     filter: drop-shadow(0 2px 10px rgba(0,0,0,0.45));
 }
 .ops-radial-rim {
-    stroke: rgba(255,255,255,0.55);
-    stroke-width: 1.5;
+    stroke: rgba(255,255,255,0.4);
+    stroke-width: 1.25;
 }
 #ops-hp-ring {
     transition: stroke 0.2s ease, stroke-dashoffset 0.25s ease;
@@ -784,37 +786,37 @@ html.startup-lock body {
 }
 #ops-hp-track, #ops-center-disc { pointer-events: none; }
 .ops-ok-wedge {
-    fill: rgba(255, 235, 59, 0.22);
-    stroke: rgba(255, 235, 59, 0.75);
+    fill: rgba(255, 235, 59, 0.28);
+    stroke: rgba(255, 235, 59, 0.8);
     stroke-width: 1.25;
     pointer-events: none;
 }
 #ops-radial-ring.is-ok-ready .ops-ok-wedge {
-    fill: rgba(0, 255, 136, 0.28);
+    fill: rgba(0, 255, 136, 0.32);
     stroke: rgba(0, 255, 136, 0.9);
 }
 #ops-radial-ring.is-ok-ai .ops-ok-wedge {
-    fill: rgba(74, 163, 255, 0.25);
+    fill: rgba(74, 163, 255, 0.28);
     stroke: rgba(74, 163, 255, 0.85);
 }
-/* Bottom ~1/5 of enlarged center circle = OK hit target */
+/* Horizontal bottom chord of center disc = OK */
 .ops-radial-ok {
     position: absolute;
     left: 50%;
     top: 50%;
-    width: 118px;
-    height: 118px;
+    width: 252px;
+    height: 252px;
     margin: 0;
     transform: translate(-50%, -50%);
     border: 0;
     border-radius: 50%;
     padding: 0;
-    /* Sector matches SVG ops-ok-wedge (bottom 72°) */
-    clip-path: path("M 59 59 L 24.9 105.9 A 58 58 0 0 0 93.1 105.9 Z");
+    /* Matches SVG horizontal cut at ~bottom fifth (y≈206 in 280 viewBox → ~73.5%) */
+    clip-path: inset(73.5% 8% 0 8% round 0 0 120px 120px);
     background: transparent;
     color: #ffeb3b;
     font-family: 'Courier New', monospace;
-    font-size: 12px;
+    font-size: 14px;
     font-weight: bold;
     letter-spacing: 1px;
     cursor: pointer;
@@ -823,7 +825,7 @@ html.startup-lock body {
     display: flex;
     align-items: flex-end;
     justify-content: center;
-    padding-bottom: 10px;
+    padding-bottom: 18px;
     box-sizing: border-box;
     text-shadow: 0 1px 3px #000;
 }
@@ -835,10 +837,10 @@ html.startup-lock body {
     position: absolute;
     left: 50%;
     top: 50%;
-    width: 44px;
-    height: 28px;
-    margin-left: -22px;
-    margin-top: -14px;
+    width: 48px;
+    height: 30px;
+    margin-left: -24px;
+    margin-top: -15px;
     border: 0;
     background: transparent;
     color: transparent;
@@ -846,15 +848,15 @@ html.startup-lock body {
     cursor: pointer;
     pointer-events: auto;
     z-index: 2;
-    /* place along ring: mid-angle of wedge */
-    transform: rotate(calc(var(--a0) + var(--span) / 2)) translateY(-78px) rotate(calc(-1 * (var(--a0) + var(--span) / 2)));
+    /* Outer thin ring mid-radius (~123/140 of half) */
+    transform: rotate(calc(var(--a0) + var(--span) / 2)) translateY(-140px) rotate(calc(-1 * (var(--a0) + var(--span) / 2)));
 }
 .ops-label {
     position: absolute;
     left: 50%;
     top: 50%;
-    width: 72px;
-    margin-left: -36px;
+    width: 78px;
+    margin-left: -39px;
     margin-top: -18px;
     text-align: center;
     color: #fff;
@@ -867,15 +869,15 @@ html.startup-lock body {
     pointer-events: none;
     z-index: 1;
 }
-.ops-label-flare { transform: rotate(-22.5deg) translateY(-78px) rotate(22.5deg); }
-.ops-label-chaff { transform: rotate(22.5deg) translateY(-78px) rotate(-22.5deg); }
-.ops-label-p1 { transform: rotate(78.75deg) translateY(-78px) rotate(-78.75deg); }
-.ops-label-p2 { transform: rotate(146.25deg) translateY(-78px) rotate(-146.25deg); }
-.ops-label-p3 { transform: rotate(213.75deg) translateY(-78px) rotate(-213.75deg); }
-.ops-label-p4 { transform: rotate(281.25deg) translateY(-78px) rotate(-281.25deg); }
+.ops-label-flare { transform: rotate(-22.5deg) translateY(-140px) rotate(22.5deg); }
+.ops-label-chaff { transform: rotate(22.5deg) translateY(-140px) rotate(-22.5deg); }
+.ops-label-p1 { transform: rotate(78.75deg) translateY(-140px) rotate(-78.75deg); }
+.ops-label-p2 { transform: rotate(146.25deg) translateY(-140px) rotate(-146.25deg); }
+.ops-label-p3 { transform: rotate(213.75deg) translateY(-140px) rotate(-213.75deg); }
+.ops-label-p4 { transform: rotate(281.25deg) translateY(-140px) rotate(-281.25deg); }
 
 #ops-tactical-strip {
-    width: 260px;
+    width: 300px;
     display: grid;
     grid-template-columns: 58px 1fr 58px;
     gap: 4px;
@@ -932,9 +934,18 @@ html.startup-lock body {
 
 @media (max-width: 720px) {
     .ops-panel-toggle { bottom: 168px !important; }
-    #ops-radial-anchor { width: 200px; }
-    #ops-radial-ring { width: 200px; height: 200px; }
-    #ops-tactical-strip { width: 230px; }
+    #ops-radial-anchor { width: 260px; bottom: 170px; }
+    #ops-radial-ring { width: 260px; height: 260px; }
+    #ops-tactical-strip { width: 240px; }
+    .ops-wedge-hit {
+        transform: rotate(calc(var(--a0) + var(--span) / 2)) translateY(-114px) rotate(calc(-1 * (var(--a0) + var(--span) / 2)));
+    }
+    .ops-label-flare { transform: rotate(-22.5deg) translateY(-114px) rotate(22.5deg); }
+    .ops-label-chaff { transform: rotate(22.5deg) translateY(-114px) rotate(-22.5deg); }
+    .ops-label-p1 { transform: rotate(78.75deg) translateY(-114px) rotate(-78.75deg); }
+    .ops-label-p2 { transform: rotate(146.25deg) translateY(-114px) rotate(-146.25deg); }
+    .ops-label-p3 { transform: rotate(213.75deg) translateY(-114px) rotate(-213.75deg); }
+    .ops-label-p4 { transform: rotate(281.25deg) translateY(-114px) rotate(-281.25deg); }
 }
 
 #wingman-order-hud {
