@@ -35,8 +35,8 @@
 
 | 階段 | 內容 | 現況 |
 |------|------|------|
-| **A 單機空戰** | A.0：`seek_angle` 優先目錄＋回退；A.1 dump 已關；A.2a press／extend 目錄閘（碼已上）。可選新 A2A（佔位、不進 `decide`） | **停在 A.2** |
-| **B 對地武器** | 地圖地面目標 schema；bake 終點可改地面點；單機 A2G envelope＋decide | schema 未開 |
+| **A 單機空戰** | A.0：`seek_angle` 優先目錄＋回退；A.1 dump 已關；A.2a press／extend 目錄閘（碼已上）。目前基準 `-pulloverclean`（80／140 n=6 building 0、combat 6、gate 6/6）。可選新 A2A（佔位、不進 `decide`） | **狀態凍結（2026-11-19）** |
+| **B 對地武器** | 地圖地面目標 schema；bake 終點可改地面點；單機 A2G envelope＋decide | **下一步（schema 未開）** |
 | **C 編隊 AI** | 兩架 AI 共用契約（不是人類 HUD）；A2G 已上才可選 `strike_cover` | 全 AI 仍各打各的 |
 
 ```
@@ -47,7 +47,9 @@ A 單機空戰 → B 對地武器 → C 編隊 AI
 
 ---
 
-## 階段 A — 單機空戰（現役）
+## 階段 A — 單機空戰（狀態凍結 2026-11-19）
+
+> **凍結基準（2026-11-19）：** `test_01` 停在 `-pulloverclean`（80／140 n=6 **building 0、combat 6、gate 6/6**；H7 關帳改平台鎖；`-cmhold` 暫時凍結撤回）。A.2 單機空戰不再開新 stick／dump 刀。下一步依總序進 **階段 B — 對地武器**（先做地圖地面目標 schema）。
 
 | 步 | 內容 | 驗收 | 非目標 |
 |----|------|------|--------|

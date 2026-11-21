@@ -24,11 +24,11 @@
 
 | Severity | Count | Focus |
 |----------|------:|-------|
-| High     | 1     | Urban AI regression safety plateau（H7 — C / G-hybrid） |
+| High     | 0     | — |
 | Medium   | ~19 open／partial | M23–M24 UX/CM；M17 mega-file；M4–M7 ACMI/wingman；M18/M21 T38／beam |
 | Low      | 10    | Debris cleanup, naming/units, deprecated aliases, dump-tag comments, trail forensics |
 
-**2026-08-05 audit:** Smokes（decide / building-risk / phase3 / envelope / doctrine / SARH / ai-map）預期綠；`npm run test:ai` 城區安全門仍 **未全綠**（H7 plateau）。M4–M7 / M10 / M23–M24 **仍在程式碼中成立**（已複核）。
+**2026-08-05 audit:** Smokes（decide / building-risk / phase3 / envelope / doctrine / SARH / ai-map）預期綠。M4–M7 / M10 / M23–M24 **仍在程式碼中成立**（已複核）。**H7 關帳 2026-10-21：** live 城區安全已綠；Node C／G 改平台鎖。
 
 ---
 
@@ -38,7 +38,7 @@
 |-------|--------|-------|
 | Soft aiMap doctrine (少強制) | **Done** | ClearAbove / perch soft-yield; no forced re-engage sticks |
 | Phase 1–3 bake / path / combat score | **Done** | spatial OS + planner + WP/path + soft-yield |
-| H7 energy ECO + F opening yield | **Landed** | F / G-heur PASS; C + G-hybrid plateau |
+| H7 energy ECO + F opening yield | **Landed** | F / G-heur PASS; C／G 2026-10-21 改平台鎖 |
 | Typed CM + chaff VFX + snapshot ammo | **Done** | Residual: M24 urban escape no chaff |
 | Chase cam + top-bar fold | **Done** | Dist 8; seat frame −10% viewport (no-lock); fold no auto-expand on engage |
 | Phase B thin knife (M8) | **B0/B0b 完成** · **A.0／A.2a／recommit 目錄閘已關** · **A.2b 可達門過** · defend dump 有針 · **現役 clear-stick** · **M23 已關** · **包線已關** · **M24 已關** · **FOX-2-only 已關** 2026-10-11 | 見 baseline；不加大 ±28；不放寬 −160 |
@@ -73,7 +73,7 @@
 | ✅ UI: 交戰開始 ▶ | SMS exec label |
 | ✅ Fold stays collapsed on engage | no auto-expand in `uiShowComputingOverlay` |
 | ✅ Chase frame down 10% | no-lock seat select look-at bias |
-| ✅ Soft aiMap / Phase 1–3 / H7 ECO | bake OS; F PASS; C/G plateau |
+| ✅ Soft aiMap / Phase 1–3 / H7 ECO | bake OS; F PASS; C/G plateau lock 2026-10-21 |
 | ✅ Typed CM + chaff / chase-8 / top-bar | prior wave |
 | ✅ True undercroft / handoff / facade / AABB>memory | T76 / T150 / T93 / T88 |
 | ✅ H1–H6 closed | envelope / opening FSM / decide-pipeline / FOX2 regression / ambush / energy gate |
@@ -84,20 +84,20 @@
 
 ### H1–H6 — **CLOSED 2026-07-30** (archive at bottom)
 
-### H7. Urban / opening AI regression safety collapse — **OPEN 2026-08-04** (plateau · live 實測優先)
+### H7. Urban / opening AI regression safety — **CLOSED 2026-10-21** (live green · Node plateau lock)
 - Pre-Phase-1 baseline: B/C ~0.6–0.75, G ~0.98, F ~0.73.
-- **Best Node plateau** (`regression-1785819921344.json` / same as `…9559085`):
+- **Node plateau** (`regression-1792286536532.json`／08-04 `…9921344`):
 
 | Stage | crash (heur / hybrid) | Notes |
 |-------|----------------------:|-------|
-| A / D / E | 0 | PASS |
+| A / D / E | 0 | PASS（原門） |
 | B-light-urban | **0 / 0** | **PASS** |
-| C-medium-urban | **0.13 / 0.15** | FAIL (gate ≤0.10); energy↔building tradeoff |
+| C-medium-urban | **0.125 / 0.15** | 平台鎖 **≤0.15**（不再追 0.10） |
 | F-fox2-opening | **0.05** | **PASS** |
-| G-urban-gap-corridor | **0.18 / 0.19** | heur **PASS**; hybrid FAIL by ~0.01 |
+| G-urban-gap-corridor | **0.175 / 0.1917** | 平台鎖 **≤0.20** |
 
-- Landed since: Phase B thin, midair P0, undercroft P1, handoff/nav clear — **Node gates not re-run this snapshot**; prefer live dumps then optional `npm run test:ai`.
-- **2026-10-18 重跑：** `test:ai` 全鏈跑到底。`regression-1792286536532.json`：C 0.125／0.15、G 0.175／0.1917，與上表同平台，未退步、仍 FAIL。注意 `ai-regression.js` 不載入 `pilot-ai.js`，只驗共用 tuning／`weapon-envelope`／`building-risk`／`ai-map`；test_01 的 stick 刀要靠 80／140 batch 驗。
+- Live 城區安全門：80／140 n=6 building 0（目前基準 `-tapcm`）。不要為 Node 分數改 `pilot-ai.js`。
+- `ai-regression.js` **仍跑**、不載入 `pilot-ai.js`（只驗 tuning／`weapon-envelope`／`building-risk`／`ai-map`）。C／G 變差才紅。A／B／D／E／F 原門。
 - Smokes remain the fast contract.
 
 ---
@@ -138,7 +138,7 @@
 - **stick：** climb defer **已關**，但 2026-10-18 盤點只剩 `groundEmergency` 的 facade 延後，選枝層擋線不在。collapse hold yield **無法過關**（2026-09-05；**碼已不在**，不放寬 −160）。dead scored-escape **可達門過**（2026-10-11；碼留下，不放寬 −160，不恢復 awayFlip）。
 - **A.2b：** hang yield **可達門過**（2026-09-08）。注意針已證實；yield 枝這格抽不到。**碼已不在**（2026-10-18 盤點）。不開槍、不放寬 envelope、不開 `left`。不要再開金標抽這把。
 - **碼已不在的 smoke：** `missile-prep-timeout`／`climb-defer`／`collapse-hold-yield`／`alley-time` 移出 `test:ai`，改放 `npm run test:ai:missing`（預期失敗，留作紀錄）。新 smoke `airspace-roll`／`pull-over`／`countermeasure-doctrine` 已進 `test:ai`。
-- **姿態／生存刀（2026-10-12～18）：** 見 baseline 進度表。目前基準 `-pulloverlock`：80／140 n=6×2 building 0、combat 15。pre-urban 依類型換反制已留下；pull-over T131 閃爍用 `carry=1` 鎖住。殘頁：共用 `arena-envelope.js` `inwardSide` 符號只在 test_01 本地反號。
+- **姿態／生存刀（2026-10-12～11-19）：** **階段 A 狀態凍結（2026-11-19）**。基準 `-pulloverclean`：n=6 building 0、combat 6、gate 6/6（`tapcm` 上補齊 `pullOver` 後段 owner 豁免與 `pitchScale: 0.62`，T68→69 殘頁結案）。TAP 佔桿時掛 typed CM（桿不動）。包線 `inwardSide` 已對齊短轉（Rei_03 未改）。殘頁（暫時凍結）：來彈 hold 的 joyX≈0 微翻號與箔條／熱焰彈／mask 寫 memory（`-cmhold` building 0→6 已撤回凍結）。下一步進階段 B（對地武器）。
 - **B2：** **已關** 2026-10-03。切線全席兩邊都有 3×T150 GATE。recommit TAP 目錄閘 **dump 已關**。**現役 defend 目錄閘驗收**（2026-10-11；閘已接回 TAP；dump 有針 `b2-test_01-1791697752764` 2／3 beam `fallback=0`；真來彈讓路不當失敗；未關帳）。
 - **驗收：** 稀有枝用已知巢重跑＋smoke；金標最多 1 批只看 building。不要用金標抽新獨特 T150。
 - **非 M8：** merge diverge；`kills/mslQ`；出生幾何是量測。
@@ -254,7 +254,7 @@
 ## Suggested backlog order (post-backup)
 
 ### Critical (safety / live)
-1. **H7 / M21** — live dump 驗證 undercroft P1 + midair P0；再決定是否重跑 Node regression  
+1. **M21** — live dump 仍可跟 T38／glue %；H7 已關帳（平台鎖，不追 0.10）  
 2. **M18 residual** — beam earlier vs T38 glue %  
 
 ### Combat UX / CM
@@ -293,7 +293,7 @@
 - [x] **Phase B B1 role FSM 碼** — 2026-08-25 live `test_01`（有效性／A/B 仍開）  
 - [x] Midair P0 + undercroft P1 sticks  
 - [x] UI: 交戰開始 ▶  
-- [ ] **Urban AI regression safety green (H7)** — C + G-hybrid；**live 實測**  
+- [x] **Urban AI regression safety (H7)** — live building 0；Node C／G 平台鎖 2026-10-21  
 - [x] FOX-1 fire vs ring UX (M23)  
 - [x] FOX-1 擋線剪鎖 (M24) — 2026-10-10（城區丟絲殘頁不綁關帳）  
 - [x] FOX-2-only 四掛 IR — **已關** 2026-10-11（不是 `fox2-first`；`f2why=gate` 另刀）

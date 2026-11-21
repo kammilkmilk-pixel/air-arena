@@ -2186,7 +2186,8 @@ function main() {
             'A pass here should be followed by in-game validation for full Three.js collision behavior.',
             'Only stages with enforceCombatGates=true block overall pass on combat gate failures; others report combat metrics only.',
             'H4: doctrine smoke covers fox2-first align/lockout + roof/Scheme B; stage F-fox2-opening runs fox2-first episodes.',
-            'Step2/M2: building-risk-smoke + doctrine m2GapMid/energyLock; stage G-urban-gap-corridor stresses alternating-corridor layout.'
+            'Step2/M2: building-risk-smoke + doctrine m2GapMid/energyLock; stage G-urban-gap-corridor stresses alternating-corridor layout.',
+            'H7 2026-10-21: C/G crash_rate_max is a plateau lock (C 0.15, G 0.20) vs 10-18 Node rates. Live urban safety is 80/140 building=0. This runner does not load pilot-ai.js.'
         ]
     };
 

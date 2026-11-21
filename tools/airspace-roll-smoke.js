@@ -63,8 +63,9 @@ assert(airSrc.includes('const crossY = fxx * oz - fzz * ox;'), 'game forced-inwa
 assert(airSrc.includes('const inwardSide = crossY >= 0 ? -1 : 1;'), 'game forced-inward side changed');
 assert(src.includes('        const instant = crossY >= 0 ? 1 : -1;'), 'AI rim side must turn the short way');
 assert(src.includes('crossY: fwdFlat.clone().cross(outFlat).y'), 'AI rim crossY is (fwd x outward).y');
-assert(src.includes('if (sample.inwardSide) sample = { ...sample, inwardSide: -sample.inwardSide };'),
-    'envelope score must read the short-turn side');
+assert(!src.includes('inwardSide: -sample.inwardSide'), 'test_01 must not locally negate envelope inwardSide');
+const envSrc = fs.readFileSync(path.join(ROOT, 'js', 'core', 'arena-envelope.js'), 'utf8');
+assert(envSrc.includes('inwardSide: crossY >= 0 ? 1 : -1'), 'envelope inwardSide must match PilotAI short turn');
 for (let a = 0; a < 360; a += 7) {
     for (let b = 0; b < 360; b += 11) {
         const fx = Math.cos(a * deg), fz = Math.sin(a * deg);
@@ -73,7 +74,7 @@ for (let a = 0; a < 360; a += 7) {
         if (Math.abs(aiCross) < 1e-6) continue;
         const ai = aiCross >= 0 ? 1 : -1;
         const game = (fx * oz - fz * ox) >= 0 ? -1 : 1;
-        const env = -((ox * fz - oz * fx) >= 0 ? -1 : 1);
+        const env = (ox * fz - oz * fx) >= 0 ? 1 : -1;
         assert(ai === game, `AI rim side disagrees with game at fwd ${a} out ${b}`);
         assert(env === game, `envelope score side disagrees with game at fwd ${a} out ${b}`);
     }

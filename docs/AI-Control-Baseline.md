@@ -220,17 +220,24 @@ Soft gate **3/3**. T136 building death is `collapseLevel` stick — **not thawed
 | 姿態／生存刀（2026-10-12～15） | **新基準 predivecm** | 80／140 cross／tangent／standard n=6，同 session A/B `b2-test_01-1791811185637`＋`1791812362391`（共 12 場）。T150 只是時間上限，不是過關門。各刀依序疊加，dump 資料夾後綴即版本名。 |
 | ↳ 邊界內轉方向 | **留下** | `resolveAirspaceInwardSide` 用 `crossY >= 0 ? 1 : -1`。共用 `arena-envelope.js` 的 `inwardSide` 符號相反，只在 test_01 `applyArenaEnvelopeScore` 本地反號；核心檔未改（要同意）。smoke `test:airspace-roll`。 |
 | ↳ align／merge bank target | **留下** | `bankTargetAction` 加 `mergeBreak`／`mandatoryMergeBreak`，roll 轉成 bank target 而不是一直累加。 |
-| ↳ facade pull-over（`-pullover`） | **留下** | 開放天空的 facade 拉起：`isOverheadFootprintOpen`（平面 AABB，邊距 2 m，取代 headroom）＋`isOpenFacadePullOver`；評分原型 `scorePullOver`，免 undercroft −45；出口保持 `joyY≥0.62`、`|joyX|≤0.2`、針 `pullOverHold=1`。building 0、combat 24。smoke `test:pull-over`。**殘頁：** T68→69、T130→131 下一拍切回 undercroft skim 且 `hit=1`。 |
+| ↳ facade pull-over（`-pullover`） | **留下** | 開放天空的 facade 拉起：`isOverheadFootprintOpen`（平面 AABB，邊距 2 m，取代 headroom）＋`isOpenFacadePullOver`；評分原型 `scorePullOver`，免 undercroft −45；出口保持 `joyY≥0.62`、`|joyX|≤0.2`、針 `pullOverHold=1`。building 0、combat 24。smoke `test:pull-over`。**已由 `-pulloverlock`＋`-pulloverclean` 收尾：** T68→69、T130→131 不再切回 undercroft skim。 |
 | ↳ beam bank target（`-beam`） | **留下** | `bankTargetAction` 加 `tacticalBeamReposition`。building 0、combat 24（紅 24、藍 0），因此挖出邊界 pitch 符號錯。 |
 | ↳ 邊界 pitchCmd 符號（`-rimpitch`、`-punchsync`） | **留下** | `pitchCmd` 會覆蓋 joyY 且同號（負＝抬頭）。高空邊界改 `+maxPitchCmd*(0.45／0.32)`；punch-out 改 `-maxPitchCmd*joyY`。rimpitch building 0、combat 28；punchsync building 0、combat 23。 |
 | ↳ pre-dive 依類型反制（`-predivecm`） | **留下** | `flare before shallowDive/level-out` 加 `!inboundFox1 && !shouldChaffNow`，FOX-1 不撒熱焰彈。building 0、combat 11＋10＝21。smoke `test:countermeasure-doctrine`。 |
-| ↳ pre-urban 依類型反制＋pull-over 鎖（`-preurbanchaff`＋`-pulloverlock`） | **留下＝目前基準** 2026-10-18 | 開關／stick 不動，只換 `queueAction`。T131 閃爍用 `carry=1` 強制拉起。80／140 n=6×2 對 predivecm：building 0＝0、combat 21→15。T132 有 `chaff while obstacle-escaping`。 |
+| ↳ pre-urban 依類型反制＋pull-over 鎖（`-preurbanchaff`＋`-pulloverlock`） | **留下** 2026-10-18 | 開關／stick 不動，只換 `queueAction`。T131 閃爍用 `carry=1` 強制拉起。80／140 n=6×2 對 predivecm：building 0＝0、combat 21→15。T132 有 `chaff while obstacle-escaping`。 |
+| ↳ 來彈硬切 diverge hold（`-inboundhold`） | **留下** 2026-10-20 | `hardInboundBreak && !cmNow` 只取 builder joyX／memory。n=6 對 pulloverlock：building 0＝0，combat 8→10。舊 S 彎 T120 −0.83→T121 +1.00 消失。殘頁：joyX≈0 微翻號；箔條／熱焰彈／mask 未接。smoke `test:inbound-diverge`。 |
+| ↳ 包線 inwardSide 短轉（`-envside`） | **留下** 2026-10-20 | `arena-envelope.js` 改 `crossY >= 0 ? 1 : -1`，拿掉 test_01 本地反號。不改 Rei_03。n=6 對 inboundhold：building 0＝0，combat 10→11。rim long-side 0%。 |
+| ↳ TAP 掛 typed CM（`-tapcm`） | **留下** 2026-10-21 | `pickTacticalApproach` 桿／state 不動，只掛 `shouldChaffNow`→chaff、`shouldFlareNow`→flare。n=6 對 envside：building 0＝0，combat 11→6，gate 1/6→6/6。針 T52 blue `tapCm=chaff`。T117 red FOX-2 死亡消失。 |
+| ↳ 來彈 hold 補完（`-cmhold`） | **暫時凍結（撤回）** 2026-11-19 | `cmNow` 改吃 builder `joyX`＋`mask` 寫 memory＋`applyDecideSoftHints` 護 `joyX`。n=6 對 tapcm：building 0→6（T8 `blue2` 提早分岔 → `red T104` pull-over 後 `dead-route` 撞樓），退回 `-tapcm`。 |
+| ↳ pull-over 補完（`-pulloverclean`） | **留下＝目前基準** 2026-11-19 | `decide()` 豁免 `isPullOverEsc`（不讓 `tableOwner=1` 壓成 `thr=3`／橫滾）、`chooseSafeAction` `glueLock` 豁免 `!action.pullOver`、`pitchScale` 0.58→0.62。n=6 對 tapcm：building 0＝0、combat 6＝6、gate 6/6（軌跡全同；T68→69 殘頁結案）。smoke `test:pull-over`。 |
 | ↳ pre-urban 依類型反制（`-preurbancm`） | **撤回** | 同條件加到 `flare before urban route/climb` → building 9、combat 1。原碼不動。**殘頁：** T135 red2 在這枝撒熱焰彈後被 FOX-1 擊落；T117 red1 熱焰彈 0 發被 FOX-2 擊落。 |
-| H7 Node 回歸 | **重跑 2026-10-18，未退步** | `ai-regression.js` 不載入 `pilot-ai.js`（只吃 tuning／`weapon-envelope`／`building-risk`／`ai-map`），所以不驗本輪的刀。`regression-1792286536532.json`：C 0.125／0.15、G 0.175／0.1917，與 08-04 平台 0.13／0.15、0.18／0.19 同。仍 FAIL（門 ≤0.10）。 |
+| H7 Node 回歸 | **關帳 2026-10-21** | Live 城區安全以 80／140 building 0 為準（`-tapcm`）。Node `ai-regression.js` 不載入 `pilot-ai.js`；C／G 改平台鎖（C ≤0.15、G ≤0.20），對齊 10-18：C 0.125／0.15、G 0.175／0.1917。A／B／D／E／F 原門。不刪 runner。變差才紅。 |
 
-**同週但不是 Phase B：** merge diverge hold — `buildCloseMidairBreakAction` 路徑 `divergeHold=1` 有生效（T9 保住符號）。**缺口：** `Inbound missile too close: hard break` 不走 builder，不寫 memory（03:28 藍 T6→T7 仍翻邊）。Hold 到期後可再跟 localX 翻（T10）。樹針 `mergeDiverge:` 只在 engagement TAP 前那條 merge；trail `divergeHold=` 才穩。
+**同週但不是 Phase B：** merge diverge hold — `buildCloseMidairBreakAction` 路徑 `divergeHold=1` 有生效（T9 保住符號）。來彈硬切 **已接** 2026-10-20（`-inboundhold`，只取 joyX）。Hold 到期後可再跟 localX 翻（T10）。箔條／熱焰彈／mask 枝仍不寫 memory。樹針 `mergeDiverge:` 只在 engagement TAP 前那條 merge；trail `divergeHold=` 才穩。
 
 ### 下一刀（只准一條）
+
+**階段 A 狀態凍結（2026-11-19）。** 目前基準：`-pulloverclean`（`-tapcm` 上補齊 `pullOver` 的 `decide`/`chooseSafeAction` owner 豁免與 `pitchScale: 0.62`；n=6 building 0、combat 6、gate 6/6；T68→69 結案）。`-cmhold` 已暫時凍結並撤回（building 0→6）。A.2 不再開新刀；下一步依總序進 [`Path-Cooperation-Roadmap.md`](./Path-Cooperation-Roadmap.md) **階段 B（對地武器）**。
 
 **現役：pre-urban 依類型換反制（2026-10-18）。** `missileDefenseUrgent` 的開關與 stick **完全不動**（上次跳過整枝 → building 0→9）；只把 `queueAction` 換成 `preUrbanCm`：純 FOX-1 來襲時，有干擾絲且冷卻好 → `chaff`，否則 `none`；有 FOX-2 → `flare`。樹針 `defensiveFlare-preUrban cm=`。門：80／140 n=6×2 同 session 對 predivecm，building 不退步（0），T135 red2 不再撒熱焰彈對 FOX-1。smoke `test:countermeasure-doctrine`。不改 Rei_03、不放寬 10°／6°、不改 M24。
 
@@ -244,9 +251,9 @@ B2 **已關** 2026-10-03（生存＋四角色目錄閘）。
 
 collapse hold yield **無法過關**（碼已不在）。dead scored-escape **可達門過** 2026-10-11（碼留下）。climb defer **已關**（只剩 groundEmergency 那一半）。prep 超時 **booth 已關**（碼已不在）。A.2a dump **已關**。A.2b **可達門過**（碼已不在）。B2 recommit **dump 已關**（碼留下）。不要修 collapse／−160／awayFlip、不要再開 ±28、A.0／A.2a／recommit 閘、`left`。不要把 defend／選彈／M24 拆進同一把 dump。
 
-**排隊：** FOX-2 `f2why=gate` **這格飽和、未過關**（碼留下，不再改）。defend 目錄閘 **已關**。clear-stick **這格飽和、未過關**。FOX-2-only **已關**。dead scored-escape **可達門過**。`left` 預測仍未開。現役拿掉。目前基準：pre-urban 換反制＋pull-over 延續鎖（`-pulloverlock`；building 0、combat 15）。
+**排隊：** FOX-2 `f2why=gate` **這格飽和、未過關**（碼留下，不再改）。defend 目錄閘 **已關**。clear-stick **這格飽和、未過關**。FOX-2-only **已關**。dead scored-escape **可達門過**。`left` 預測仍未開。目前基準：`-pulloverclean`（tapcm 上補齊 `pullOver` 後段豁免與 `pitchScale: 0.62`；n=6 building 0、combat 6）。
 
-其後總序：**單機空戰完成 → 對地武器 → 編隊 AI**（現停在單機空戰 A.2）。見 [`Path-Cooperation-Roadmap.md`](./Path-Cooperation-Roadmap.md)。
+其後總序：**單機空戰完成 → 對地武器 → 編隊 AI**（階段 A 狀態凍結 2026-11-19；下一步開階段 B 對地武器）。見 [`Path-Cooperation-Roadmap.md`](./Path-Cooperation-Roadmap.md)。
 
 ---
 

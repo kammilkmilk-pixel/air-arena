@@ -33,6 +33,13 @@ assert(src.includes("reason: 'Scored escape: open-sky facade pull-over carry=1'"
 assert(src.includes('carry: pullOverCarry'), 'scored escape must honour the carry');
 assert(src.includes('(this._pullOverTurn || (this._pullOverTurn = {}))[teamId] = pickTurn;'), 'pick arms carry with opts.turnNo');
 assert(src.includes("out = (out && (out.pullOver || out.branch === 'pullOver'))"), 'table owner must not steal a pull-over');
+assert(src.includes('const isPullOverEsc = !!(scoredEsc.pullOver || scoredEsc.branch === \'pullOver\');'),
+    'decide must exempt pull-over from post-pick glue/table owner overwrite');
+assert(src.includes('!isPullOverEsc &&'), 'decide glue/table owner block must check !isPullOverEsc');
+assert(src.includes('glueLock.active &&\n            !action.pullOver &&') || /glueLock\.active\s*&&\s*!action\.pullOver\s*&&/.test(src),
+    'chooseSafeAction glueLock must not overwrite pull-over');
+assert(src.includes("pitchScale: 0.62,") && src.includes("proto.branch === 'pullOver' ? 0.62 : 0.58"),
+    'pull-over flown pitchScale must match simulated joyY=0.62');
 
 const slab = src.indexOf('    isSlabClimbBlocked(opts = {}) {');
 const slabEnd = src.indexOf('    isOverheadFootprintOpen(', slab);

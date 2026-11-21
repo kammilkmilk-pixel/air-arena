@@ -209,7 +209,9 @@
             outboundDot,
             crossY,
             outward,
-            inwardSide: crossY >= 0 ? -1 : 1
+            // Same (fwd × outward).y as PilotAI; short inward is +1. Game forced-inward
+            // uses the opposite cross product and the opposite ternary, so the flown side matches.
+            inwardSide: crossY >= 0 ? 1 : -1
         };
     }
 

@@ -1871,6 +1871,20 @@ window.AirArenaAI = {
         return null;
     },
 
+    /**
+     * Typed CM while TAP owns the stick. FOX-1/paint → chaff; IR → flare.
+     * Does not change TAP geometry or state — only queueAction.
+     */
+    resolveTapCountermeasure(ctx = {}) {
+        if (ctx.shouldChaffNow) {
+            return { queueAction: 'chaff', tag: 'tapCm=chaff' };
+        }
+        if (ctx.shouldFlareNow) {
+            return { queueAction: 'flare', tag: 'tapCm=flare' };
+        }
+        return null;
+    },
+
     /** True when enemy is inside a useful shoot/align window (softYield bake should not thrash). */
     isWeaponWindowOpen(ctx = {}, tuning = this.getTuning()) {
         const dist = Number(ctx.distance);
@@ -6470,7 +6484,7 @@ window.AirArenaAI = {
                 joyX: 0,
                 joyY: 0.62,
                 throttle: 4,
-                pitchScale: 0.58,
+                pitchScale: 0.62,
                 rollAuth: Math.PI / 10,
                 dirtPullFloor: false,
                 pullOver: 1,
@@ -6729,7 +6743,7 @@ window.AirArenaAI = {
                 joyY: candidate.joyY,
                 throttle: candidate.throttle,
                 pitchScale: slabDirtArrest || proto.branch === 'pullOver'
-                    ? 0.58
+                    ? (proto.branch === 'pullOver' ? 0.62 : 0.58)
                     : (undercroftSkim ? 0.16 : (forwardY < -0.35 ? 0.48 : 0.28)),
                 rollAuth: Math.PI / 10,
                 diveLevelPull: !!candidate.diveLevelPull || slabDirtArrest,
@@ -12287,12 +12301,20 @@ window.AirArenaAI = {
             if (meta.farReengage) tree.push(meta.farReengage);
             if (meta.phaseBRole) tree.push(meta.phaseBRole);
         }
+        const alreadyCm = planned.queueAction === 'chaff' || planned.queueAction === 'flare';
+        const tapCm = alreadyCm ? null : this.resolveTapCountermeasure(ctx);
+        if (tapCm && Array.isArray(tree)) tree.push(`tapCm: ${tapCm.queueAction}`);
+        const queueAction = tapCm ? tapCm.queueAction : (planned.queueAction || 'none');
+        const reason = tapCm
+            ? `${planned.reason || 'Tactical approach'} | ${tapCm.tag}`
+            : planned.reason;
         return this.withDebug({
             ...planned,
             ready: true,
             weapon: planned.weapon || 'gun',
-            queueAction: planned.queueAction || 'none'
-        }, debugBase, [...(tree || []), `selected: ${planned.state}`], planned.state);
+            queueAction,
+            ...(reason ? { reason } : {})
+        }, debugBase, [...(tree || []), `selected: ${planned.state}${tapCm ? ` ${tapCm.tag}` : ''}`], planned.state);
     },
 
     getUrbanAvoidMemory(teamId) {
@@ -13645,6 +13667,7 @@ window.AirArenaAI = {
         // T72 D/G: while glue-escape locked, keep T38/embed stick — stall/preempt must not steal.
         if (
             glueLock.active &&
+            !action.pullOver &&
             (
                 action.state === 'obstacleEmergencyEscape' ||
                 action.state === 'obstacleEnergyClimb' ||
@@ -14443,8 +14466,6 @@ window.AirArenaAI = {
             );
         }
         if (!sample) return Number(score) || 0;
-        // The shared envelope's inwardSide points the long way round; Rei_03 still reads it raw.
-        if (sample.inwardSide) sample = { ...sample, inwardSide: -sample.inwardSide };
         return AirArenaArenaEnvelope.scoreCandidate(score, meta, sample, {
             hardBuilding: !!(ctx.hardBuilding || ctx.hardContact || meta.buildingHit),
             hardContact: !!(ctx.hardContact || ctx.hardBuilding)
@@ -19172,13 +19193,17 @@ altitude,
                                     /scoreUndercroft|scoreAllHit|deepNestUnload|slabDirtArrest/i.test(
                                         String(scoredEsc.navMode || scoredEsc.mode || '')
                                     );
+                                const isPullOverEsc = !!(scoredEsc.pullOver || scoredEsc.branch === 'pullOver');
                                 if (
-                                    hardBuildingContact ||
-                                    deepEmbed ||
-                                    deepNest ||
-                                    midNest ||
-                                    undercroftSkimLock ||
-                                    (Number.isFinite(Number(coverInfo.distance)) && Number(coverInfo.distance) < 4)
+                                    !isPullOverEsc &&
+                                    (
+                                        hardBuildingContact ||
+                                        deepEmbed ||
+                                        deepNest ||
+                                        midNest ||
+                                        undercroftSkimLock ||
+                                        (Number.isFinite(Number(coverInfo.distance)) && Number(coverInfo.distance) < 4)
+                                    )
                                 ) {
                                     const prevGlue = this.getGlueEscapeLock(teamId, turnNo);
                                     const awaySide = this.getAwayFromMeshSide(coverInfo, selfForward);
@@ -22764,6 +22789,8 @@ altitude,
                             predictedShotWindow: !!predictedShotWindow,
                             inboundFox1: !!inboundFox1,
                             inboundFox2: !!inboundFox2,
+                            shouldChaffNow: !!shouldChaffNow,
+                            shouldFlareNow: !!shouldFlareNow,
                             urgentMissileThreat: !!urgentMissileThreat,
                             ap: Number((liveSelf || self).ap),
                             mandatoryMergeBreak,
@@ -23259,7 +23286,7 @@ altitude,
                             const hardInboundBreak =
                                 inboundTooClose ||
                                 ((inboundFox1 || underSarhPaintNow) && (actualMissileThreat || enemyMissileQueued) && !cmNow);
-                            const evadeJoyX = useMaskPoint
+                            let evadeJoyX = useMaskPoint
                                 ? maskJoyX
                                 : (emptyCmPanic || hardInboundBreak
                                     ? this.clamp((-horizontalBias * 0.2) + (0.98 * panicSide), -1, 1)
@@ -23281,9 +23308,32 @@ altitude,
                                         ? maskState
                                         : (hardInboundBreak ? 'mandatoryMergeBreak' : 'evade')));
                             const cmQueue = shouldChaffNow ? 'chaff' : (shouldFlareNow ? 'flare' : 'none');
+                            // Same 3-turn bank hold as merge break. Do not take builder joyY / 12 m auth.
+                            let inboundDiverge = null;
+                            if (hardInboundBreak && !cmNow && !useMaskPoint) {
+                                inboundDiverge = this.buildCloseMidairBreakAction({
+                                    distance,
+                                    altitude,
+                                    forwardY: selfForward.y,
+                                    localToEnemy,
+                                    breakSide: urbanAvoidSide || breakSide,
+                                    teamId,
+                                    turnNo,
+                                    heat: (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(self.heat) : (self.heat || 0)),
+                                    ap: self.ap,
+                                    lowAp: tuning.lowAp,
+                                    faction: GameContext.getFaction && GameContext.getFaction(teamId),
+                                    coverInfo,
+                                    selfForward
+                                });
+                                evadeJoyX = inboundDiverge.joyX;
+                            }
                             if (hardInboundBreak && !cmNow) {
                                 tree.push(
-                                    `missileThreat: hardInboundBreak=1 dist=${distance.toFixed(1)} maskSkip=1 f1=${inboundFox1 ? 1 : 0}`
+                                    `missileThreat: hardInboundBreak=1 dist=${distance.toFixed(1)} maskSkip=1 f1=${inboundFox1 ? 1 : 0}` +
+                                    (inboundDiverge
+                                        ? ` divergeHold=${inboundDiverge.divergeHold ? 1 : 0} until=${inboundDiverge.divergeUntil} des=${inboundDiverge.divergeDesired}`
+                                        : '')
                                 );
                             }
                             return this.withDebug({
@@ -23310,8 +23360,13 @@ altitude,
                                 weapon: hasArmedMissile ? 'missile' : 'gun',
                                 queueAction: cmQueue,
                                 ready: true,
+                                divergeHold: inboundDiverge ? inboundDiverge.divergeHold : undefined,
+                                divergeUntil: inboundDiverge ? inboundDiverge.divergeUntil : undefined,
                                 reason: hardInboundBreak && !cmNow
-                                    ? 'Inbound missile too close: hard break (no maskedHold)'
+                                    ? ('Inbound missile too close: hard break (no maskedHold)' +
+                                        (inboundDiverge
+                                            ? ` | divergeHold=${inboundDiverge.divergeHold ? 1 : 0} until=${inboundDiverge.divergeUntil} des=${inboundDiverge.divergeDesired}`
+                                            : ''))
                                     : (emptyCmPanic
                                         ? 'No CM left: hard break away from inbound missile'
                                         : (shouldChaffNow

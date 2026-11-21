@@ -13,7 +13,7 @@
 - **連線 B／C／BaaS：** `npm start` = 同埠靜態 + LAN WebSocket。目錄可選 **雲端 BaaS（Supabase）**：匿名 Auth + Realtime Broadcast／Presence 私人房與排隊；「雲端設定」存 URL／anon key。協定仍為 `airarena-wego-v1` 房主權威。可選 SQL：`tools/supabase/schema.sql`。
 - **結算卡頓：** `window.AirArenaHitchLast`（decide／paths／resolve ms）；火花改 seed 不寫速度陣列。
 - **音訊：** 三軌 mixer（music／sfx／voice）。BGM 尚未掛檔。
-- **AI：** Phase B 單刀繼續；`CONFIG.weapons.rocket` 僅佔位，**不進 decide**。總序：**單機空戰完成 → 對地武器 → 編隊 AI**（現停在單機空戰 A.2）。見 [`docs/Path-Cooperation-Roadmap.md`](./docs/Path-Cooperation-Roadmap.md)。
+- **AI：** **階段 A（單機空戰）狀態凍結（2026-11-19，基準 `-pulloverclean`：building 0、combat 6）**；`CONFIG.weapons.rocket` 僅佔位，**不進 decide**。總序：**單機空戰完成 → 對地武器 → 編隊 AI**（下一步開階段 B 對地武器）。見 [`docs/Path-Cooperation-Roadmap.md`](./docs/Path-Cooperation-Roadmap.md)。
 - **對地：** 地圖地面目標 schema 仍未開；編隊契約 `strike_cover` 預留到對地開火之後。
 
 ### 已完成（v2.2 基礎）
@@ -41,7 +41,7 @@
 
 | 項目 | 內容 |
 |------|------|
-| **AI 城區** | 屋頂淨空、Scheme B、Phase 1–3 bake OS、H7 ECO（F／G-heur 綠；C／G-hyb plateau） |
+| **AI 城區** | 屋頂淨空、Scheme B、Phase 1–3 bake OS、H7 ECO（live building 0；Node C／G 平台鎖） |
 | **Phase A 能量** | 大轉向降 thr；軟避障能量門（H6） |
 | **ACMI** | 擊墜僚機可再顯示；碎片 VFX 仍缺（M4） |
 | **Decide / envelope** | `decide-pipeline`、`weapon-envelope`、`arena-envelope`、多項 smoke |
@@ -79,12 +79,12 @@
 
 ### 目前技術債（摘要）
 
-- **High（1）：** 城區 AI 回歸安全門（H7）— B／D／F／G-heur 已綠；**C + G-hybrid** plateau；優先 live dump。
+- **High（0）：** H7 已關帳 2026-10-21 — live 80／140 building 0；Node C／G 平台鎖（C ≤0.15、G ≤0.20），runner 留下。
 - **Medium 優先：** M23 **已關**；包線選彈 **已關**；M24 **已關** 2026-10-10；FOX-2-only **已關** 2026-10-11（四掛 IR vs 混掛；不是 `fox2-first`）；T38／beam（M18/M21）；ACMI 碎片（M4–M5）；`pilot-ai` 巨型檔（M17 ~23k，A.2 dump 不拆）。 **M8：** B1 A.0 優先目錄＋回退（`tapRoleGate`）；A.1／A.2a dump 已關；prep 超時 booth 已關；climb defer 已關；collapse hold yield 無法過關；A.2b hang yield 可達門過；dead scored-escape 可達門過 2026-10-11。**B2 已關** 2026-10-03。B2 recommit 目錄閘 dump 已關。defend 目錄閘 **已關** 2026-10-11。clear-stick 這格飽和、未過關。**現役 FOX-2 `f2why=gate`**（解制前只在發射門內跟目標；不放寬 10°／6°）。驗收：已知巢重跑＋smoke，金標 1 批 building。 **M6／M7：** 新場清碎片；全 AI 不再誤標「無長機」。
 - **詳表：** [`TECH-DEBT.md`](./TECH-DEBT.md)（快照 **2026-08-05**）。
 - **新地圖必讀：** [`docs/Arena-Map-Onboarding-Memo.md`](./docs/Arena-Map-Onboarding-Memo.md)。
 - **PilotAI／引擎預先準備：** [`docs/PilotAI-Portability-Memo.md`](./docs/PilotAI-Portability-Memo.md)。
-- **接敵路徑／雙機／武器機體順序：** [`docs/Path-Cooperation-Roadmap.md`](./docs/Path-Cooperation-Roadmap.md)（A 單機空戰 → B 對地 → C 編隊；現停在 A.2）。
+- **接敵路徑／雙機／武器機體順序：** [`docs/Path-Cooperation-Roadmap.md`](./docs/Path-Cooperation-Roadmap.md)（A 單機空戰 → B 對地 → C 編隊；**階段 A 狀態凍結 2026-11-19，下一步開階段 B 對地**）。
 - **歷史備忘（勿當架構）：** `docs/Tactical-Development-Memo.md`。
 
 ### Phase 1 架構（烘焙 = 空間 OS）
