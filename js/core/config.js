@@ -250,8 +250,9 @@ const CONFIG = {
              * Pod muzzle flame sits inside the nest, slightly aft of the rail.
              */
             flightBodyScale: 0.833,
-            flightNozzleOffsetY: -0.17,
+            /** Nozzle is computed from body aft AABB (−Z); kept for docs only. */
             flightTrailPts: 48,
+            flightBodyColor: 0xffffff,
             podFlameOffsetZ: -0.14,
             podFlameOffsetY: -0.02,
             model: {

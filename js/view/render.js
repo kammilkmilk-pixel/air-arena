@@ -1530,11 +1530,12 @@ function renderCombatFrame(currentLog, animProgress) {
                 let explodeFrame = currentLog[`${id}ExplodedAt`] ? currentLog[`${id}ExplodedAt`][p.id] : undefined;
                 
                 const masterMissileOffset = typeof window.mslVisOffset !== 'undefined' ? window.mslVisOffset : new THREE.Vector3(0.0, 0.0, 0.0);
-                const nozzleOffset = new THREE.Vector3(0.0, -0.51, -0.0);
                 
-                if (p.flyingMesh && !p.flyingMesh.isAAA_V3) {
+                // Rebuild if pre-aft-nozzle mesh (missing nozzleOffset) or legacy non-V3.
+                if (p.flyingMesh && (!p.flyingMesh.isAAA_V3 || !p.flyingMesh.userData.nozzleOffset)) {
                     scene.remove(p.flyingMesh);
                     p.flyingMesh = null;
+                    p.flyingGlowMesh = null;
                 }
                 
                 if (mTracks) {
@@ -1546,6 +1547,11 @@ function renderCombatFrame(currentLog, animProgress) {
                         mBody.traverse(c => { if(c.isMesh) c.visible = true; }); 
                         mBody.scale.set(2.5, 2.5, 2.5); 
                         p.flyingMesh.add(mBody);
+                        // Nose = +Z; place plume at aft tip (min Z), not belly (−Y).
+                        const nozzleOffset = (typeof computeAftNozzleLocal === 'function')
+                            ? computeAftNozzleLocal(mBody, p.flyingMesh, 0.03)
+                            : new THREE.Vector3(0, 0, -0.2);
+                        p.flyingMesh.userData.nozzleOffset = nozzleOffset.clone();
                         
                         let fGlowGroup = new THREE.Group();
                         let fOuterMat = new THREE.MeshBasicMaterial({ map: sparkTexShared, color: 0xff4400, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
@@ -1566,6 +1572,9 @@ function renderCombatFrame(currentLog, animProgress) {
                         p.flyingMesh.add(p.flyingGlowMesh); 
                         scene.add(p.flyingMesh);
                     }
+                    const nozzleOffset = (p.flyingMesh && p.flyingMesh.userData.nozzleOffset)
+                        ? p.flyingMesh.userData.nozzleOffset
+                        : new THREE.Vector3(0, 0, -0.2);
                     
                     let mTrack = mTracks[trackIdx];
                     if (mTrack && mTrack.pos && !isNaN(mTrack.pos.x)) { 

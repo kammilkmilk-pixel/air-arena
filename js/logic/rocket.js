@@ -492,15 +492,15 @@
         });
     }
 
-    /** Missile-style nozzle plume (scaled down for rocket body). */
-    function createRocketExhaustGlow(nozzleY) {
+    /** Missile-style nozzle plume. Plume extends −Z; place group at aft tip. */
+    function createRocketExhaustGlow(nozzleLocal) {
         const map = sparkMap();
         const g = new THREE.Group();
         g.name = 'rocketExhaust';
         const mk = (w, h, color, opacity) => {
             const geo = new THREE.PlaneGeometry(w, h);
             geo.translate(0, -h * 0.5, 0);
-            geo.rotateX(Math.PI / 2);
+            geo.rotateX(Math.PI / 2); // local −Y → −Z (aft)
             const mat = new THREE.MeshBasicMaterial({
                 map: map || undefined,
                 color,
@@ -531,8 +531,29 @@
         );
         halo.name = 'halo';
         g.add(outer[0], outer[1], inner[0], inner[1], halo);
-        g.position.set(0, nozzleY != null ? nozzleY : -0.17, 0);
+        if (nozzleLocal && nozzleLocal.isVector3) g.position.copy(nozzleLocal);
+        else if (nozzleLocal && typeof nozzleLocal.z === 'number') {
+            g.position.set(nozzleLocal.x || 0, nozzleLocal.y || 0, nozzleLocal.z);
+        } else {
+            g.position.set(0, 0, -0.18);
+        }
         return g;
+    }
+
+    function paintRocketBodyWhite(body) {
+        if (!body) return;
+        body.traverse((c) => {
+            if (!c.isMesh || !c.material) return;
+            const mats = Array.isArray(c.material) ? c.material : [c.material];
+            const next = mats.map((m) => {
+                const nm = m.clone ? m.clone() : m;
+                if (nm.color && nm.color.setHex) nm.color.setHex(0xffffff);
+                if (nm.metalness != null) nm.metalness = Math.min(Number(nm.metalness) || 0.2, 0.35);
+                if (nm.roughness != null) nm.roughness = Math.max(Number(nm.roughness) || 0.45, 0.4);
+                return nm;
+            });
+            c.material = Array.isArray(c.material) ? next : next[0];
+        });
     }
 
     /** Thick ribbon smoke trail (same technique as FOX missiles). */
@@ -558,7 +579,6 @@
     function buildFlyingRocketMesh() {
         const cfg = rocketConfig();
         const bodyScale = cfg.flightBodyScale != null ? Number(cfg.flightBodyScale) : 0.833;
-        const nozzleY = cfg.flightNozzleOffsetY != null ? Number(cfg.flightNozzleOffsetY) : -0.17;
         const root = new THREE.Group();
         root.name = 'flyingRocket';
 
@@ -567,19 +587,27 @@
             body = missileMeshBase.clone();
             body.traverse((c) => { if (c.isMesh) c.visible = true; });
             body.scale.set(bodyScale, bodyScale, bodyScale);
+            paintRocketBodyWhite(body);
         } else if (typeof rocketMeshBase !== 'undefined' && rocketMeshBase) {
             body = rocketMeshBase.clone();
             body.scale.multiplyScalar(0.5);
+            paintRocketBodyWhite(body);
         } else {
             body = new THREE.Mesh(
                 new THREE.CylinderGeometry(0.03, 0.04, 0.4, 6),
-                new THREE.MeshStandardMaterial({ color: 0xc8c8c8, metalness: 0.55, roughness: 0.4 })
+                new THREE.MeshStandardMaterial({ color: 0xffffff, metalness: 0.25, roughness: 0.45 })
             );
             body.rotation.x = Math.PI / 2;
         }
         root.add(body);
+        root.updateMatrixWorld(true);
+        const nozzle = (typeof computeAftNozzleLocal === 'function')
+            ? computeAftNozzleLocal(body, root, 0.02)
+            : new THREE.Vector3(0, 0, -0.18);
         root.userData.body = body;
-        root.userData.glow = createRocketExhaustGlow(nozzleY);
+        root.userData.bodyPaintedWhite = true;
+        root.userData.nozzleOffset = nozzle.clone();
+        root.userData.glow = createRocketExhaustGlow(nozzle);
         root.add(root.userData.glow);
         root.userData.smoke = createRocketSmokeTrail(cfg.flightTrailPts != null ? Number(cfg.flightTrailPts) : 48);
         return root;
@@ -592,7 +620,7 @@
         const colArr = smoke.geometry.attributes.color.array;
         const uvArr = smoke.geometry.attributes.uv.array;
         let valid = 0;
-        const nozzle = nozzleLocal || new THREE.Vector3(0, -0.17, 0);
+        const nozzle = nozzleLocal || new THREE.Vector3(0, 0, -0.18);
         for (let h = 0; h < maxPts; h++) {
             const past = step - h;
             const tr = past >= 0 ? arr[past] : null;
@@ -630,22 +658,25 @@
         }
     }
 
-    /** Pod muzzle flame — inside nest, slightly protruding aft. */
+    /** Pod muzzle flame — inside nest, slightly protruding aft (−Z). */
     function ensurePodMuzzleFlame(pylon) {
         if (!pylon || !pylon.mesh) return null;
+        // Drop legacy flames that used belly (−Y) offset or extra rotateX.
+        if (pylon.podFlame && (!pylon.podFlame.userData.aftAligned || !pylon.podFlame.parent)) {
+            if (pylon.podFlame.parent) pylon.podFlame.parent.remove(pylon.podFlame);
+            pylon.podFlame = null;
+        }
         if (pylon.podFlame && pylon.podFlame.parent) return pylon.podFlame;
         const cfg = rocketConfig();
-        const flame = createRocketExhaustGlow(-0.08);
-        flame.name = 'podMuzzleFlame';
-        flame.scale.set(0.7, 0.7, 0.85);
-        // Aft of pod (tail / −Z), slightly proud of the nest rear.
-        flame.position.set(
+        const aft = new THREE.Vector3(
             0,
             cfg.podFlameOffsetY != null ? Number(cfg.podFlameOffsetY) : -0.02,
             cfg.podFlameOffsetZ != null ? Number(cfg.podFlameOffsetZ) : -0.14
         );
-        // Point plume aft (−Z body): exhaust builder points −Y after rotateX; rotate into −Z.
-        flame.rotation.x = Math.PI / 2;
+        const flame = createRocketExhaustGlow(aft);
+        flame.name = 'podMuzzleFlame';
+        flame.userData.aftAligned = true;
+        flame.scale.set(0.7, 0.7, 0.85);
         flame.visible = false;
         pylon.mesh.add(flame);
         pylon.podFlame = flame;
@@ -712,9 +743,6 @@
     function applyRocketVisuals(step, log) {
         if (!log || typeof teams === 'undefined' || typeof scene === 'undefined') return;
         if (!Rocket._flightMeshes) Rocket._flightMeshes = {};
-        const cfg = rocketConfig();
-        const nozzleY = cfg.flightNozzleOffsetY != null ? Number(cfg.flightNozzleOffsetY) : -0.17;
-        const nozzleLocal = new THREE.Vector3(0, nozzleY, 0);
 
         const ids = (typeof combatActiveIds === 'function')
             ? combatActiveIds()
@@ -736,6 +764,13 @@
                 if (!(tr && tr.pos && (boomAt == null || step < boomAt))) return;
 
                 let mesh = Rocket._flightMeshes[trackId];
+                // Rebuild pre-aft / pre-white meshes.
+                if (mesh && (!mesh.userData.nozzleOffset || !mesh.userData.bodyPaintedWhite)) {
+                    scene.remove(mesh);
+                    if (mesh.userData.smoke) scene.remove(mesh.userData.smoke);
+                    delete Rocket._flightMeshes[trackId];
+                    mesh = null;
+                }
                 if (!mesh) {
                     mesh = buildFlyingRocketMesh();
                     scene.add(mesh);
@@ -758,6 +793,7 @@
                     }
                 }
                 if (mesh.userData.smoke) {
+                    const nozzleLocal = mesh.userData.nozzleOffset || new THREE.Vector3(0, 0, -0.18);
                     updateRocketSmokeRibbon(mesh.userData.smoke, arr, step, tr.quat, nozzleLocal);
                 }
             });

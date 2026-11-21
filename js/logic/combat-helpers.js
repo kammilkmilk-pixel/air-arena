@@ -25,6 +25,29 @@ function combatFactionOf(id) {
     return String(id).startsWith('blue') ? 'blue' : 'red';
 }
 
+/**
+ * Place nozzle / exhaust at the aft tip of a store body.
+ * Flight convention: nose = +Z, so aft = local AABB min.z (with small pad).
+ * Fixes legacy FOX glow at (0,-0.51,0) which sat under the belly, not the tail.
+ */
+function computeAftNozzleLocal(body, parent, padZ) {
+    if (!body || !parent || typeof THREE === 'undefined') {
+        return new THREE.Vector3(0, 0, -0.2);
+    }
+    parent.updateMatrixWorld(true);
+    body.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(body);
+    const inv = new THREE.Matrix4().copy(parent.matrixWorld).invert();
+    box.applyMatrix4(inv);
+    const pad = Number.isFinite(Number(padZ)) ? Number(padZ) : 0.02;
+    const y = (box.min.y + box.max.y) * 0.5;
+    return new THREE.Vector3(0, y, box.min.z - pad);
+}
+
+if (typeof window !== 'undefined') {
+    window.computeAftNozzleLocal = computeAftNozzleLocal;
+}
+
 /** URL / CONFIG gate for visual-only bomb+rocket eye-check on pylons. */
 function groundStoresPreviewEnabled() {
     try {
