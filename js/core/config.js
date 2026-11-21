@@ -245,6 +245,15 @@ const CONFIG = {
             sparkCount: 48,
             sparkPower: 0.7,
             maxFlightSteps: 220,
+            /**
+             * Flying visual: FOX missile mesh at 1/3 of in-flight missile body scale (2.5 → ≈0.833).
+             * Pod muzzle flame sits inside the nest, slightly aft of the rail.
+             */
+            flightBodyScale: 0.833,
+            flightNozzleOffsetY: -0.17,
+            flightTrailPts: 48,
+            podFlameOffsetZ: -0.14,
+            podFlameOffsetY: -0.02,
             model: {
                 /**
                  * Pylon-local nudge (aircraft axes, no clamp):

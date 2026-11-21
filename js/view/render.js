@@ -547,6 +547,9 @@ function genRibbonTexture() {
 }
 const ribbonTexShared = genRibbonTexture();
 const mslTrailMatShared = new THREE.MeshBasicMaterial({ map: ribbonTexShared, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, vertexColors: true });
+// Shared with rocket.js flight VFX (loaded earlier; read at runtime).
+window.ribbonTexShared = ribbonTexShared;
+window.mslTrailMatShared = mslTrailMatShared;
 
 const vfxPaths = CONFIG.assets.vfx;
 GameContext.vfxReadyPromise = Promise.all([
@@ -598,6 +601,7 @@ function genSparkTextureShared() {
     ctx.fillStyle = g; ctx.beginPath(); ctx.arc(16,16,16,0,Math.PI*2); ctx.fill(); return new THREE.CanvasTexture(canvas);
 }
 const sparkTexShared = genSparkTextureShared();
+window.sparkTexShared = sparkTexShared;
 
 function genSparkStreakTexture() {
     const canvas = document.createElement('canvas'); canvas.width = 32; canvas.height = 128; const ctx = canvas.getContext('2d');

@@ -478,19 +478,252 @@
         });
     }
 
+    function sparkMap() {
+        return (typeof window !== 'undefined' && window.sparkTexShared) ? window.sparkTexShared : null;
+    }
+
+    function trailMat() {
+        if (typeof window !== 'undefined' && window.mslTrailMatShared) {
+            return window.mslTrailMatShared.clone();
+        }
+        return new THREE.MeshBasicMaterial({
+            color: 0xff8844, transparent: true, opacity: 0.7,
+            blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, vertexColors: true
+        });
+    }
+
+    /** Missile-style nozzle plume (scaled down for rocket body). */
+    function createRocketExhaustGlow(nozzleY) {
+        const map = sparkMap();
+        const g = new THREE.Group();
+        g.name = 'rocketExhaust';
+        const mk = (w, h, color, opacity) => {
+            const geo = new THREE.PlaneGeometry(w, h);
+            geo.translate(0, -h * 0.5, 0);
+            geo.rotateX(Math.PI / 2);
+            const mat = new THREE.MeshBasicMaterial({
+                map: map || undefined,
+                color,
+                transparent: true,
+                opacity,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false,
+                side: THREE.DoubleSide
+            });
+            const a = new THREE.Mesh(geo, mat);
+            const b = new THREE.Mesh(geo, mat.clone());
+            b.rotateZ(Math.PI / 2);
+            return [a, b];
+        };
+        const outer = mk(0.12, 0.7, 0xff4400, 0.85);
+        const inner = mk(0.05, 0.32, 0xffffff, 1.0);
+        const halo = new THREE.Mesh(
+            new THREE.PlaneGeometry(0.32, 0.32),
+            new THREE.MeshBasicMaterial({
+                map: map || undefined,
+                color: 0xff8800,
+                transparent: true,
+                opacity: 0.9,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false,
+                side: THREE.DoubleSide
+            })
+        );
+        halo.name = 'halo';
+        g.add(outer[0], outer[1], inner[0], inner[1], halo);
+        g.position.set(0, nozzleY != null ? nozzleY : -0.17, 0);
+        return g;
+    }
+
+    /** Thick ribbon smoke trail (same technique as FOX missiles). */
+    function createRocketSmokeTrail(maxPts) {
+        const n = Math.max(8, maxPts || 48);
+        const tGeo = new THREE.BufferGeometry();
+        tGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(n * 2 * 3), 3));
+        tGeo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(n * 2 * 3), 3));
+        tGeo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(n * 2 * 2), 2));
+        const indices = [];
+        for (let i = 0; i < n - 1; i++) {
+            indices.push(i * 2, i * 2 + 1, i * 2 + 2);
+            indices.push(i * 2 + 2, i * 2 + 1, i * 2 + 3);
+        }
+        tGeo.setIndex(indices);
+        const mesh = new THREE.Mesh(tGeo, trailMat());
+        mesh.frustumCulled = false;
+        mesh.userData.maxPts = n;
+        mesh.visible = false;
+        return mesh;
+    }
+
+    function buildFlyingRocketMesh() {
+        const cfg = rocketConfig();
+        const bodyScale = cfg.flightBodyScale != null ? Number(cfg.flightBodyScale) : 0.833;
+        const nozzleY = cfg.flightNozzleOffsetY != null ? Number(cfg.flightNozzleOffsetY) : -0.17;
+        const root = new THREE.Group();
+        root.name = 'flyingRocket';
+
+        let body;
+        if (typeof missileMeshBase !== 'undefined' && missileMeshBase) {
+            body = missileMeshBase.clone();
+            body.traverse((c) => { if (c.isMesh) c.visible = true; });
+            body.scale.set(bodyScale, bodyScale, bodyScale);
+        } else if (typeof rocketMeshBase !== 'undefined' && rocketMeshBase) {
+            body = rocketMeshBase.clone();
+            body.scale.multiplyScalar(0.5);
+        } else {
+            body = new THREE.Mesh(
+                new THREE.CylinderGeometry(0.03, 0.04, 0.4, 6),
+                new THREE.MeshStandardMaterial({ color: 0xc8c8c8, metalness: 0.55, roughness: 0.4 })
+            );
+            body.rotation.x = Math.PI / 2;
+        }
+        root.add(body);
+        root.userData.body = body;
+        root.userData.glow = createRocketExhaustGlow(nozzleY);
+        root.add(root.userData.glow);
+        root.userData.smoke = createRocketSmokeTrail(cfg.flightTrailPts != null ? Number(cfg.flightTrailPts) : 48);
+        return root;
+    }
+
+    function updateRocketSmokeRibbon(smoke, arr, step, quat, nozzleLocal) {
+        if (!smoke || !arr || typeof camera === 'undefined') return;
+        const maxPts = smoke.userData.maxPts || 48;
+        const posArr = smoke.geometry.attributes.position.array;
+        const colArr = smoke.geometry.attributes.color.array;
+        const uvArr = smoke.geometry.attributes.uv.array;
+        let valid = 0;
+        const nozzle = nozzleLocal || new THREE.Vector3(0, -0.17, 0);
+        for (let h = 0; h < maxPts; h++) {
+            const past = step - h;
+            const tr = past >= 0 ? arr[past] : null;
+            if (!(tr && tr.pos && tr.quat)) break;
+            const q = tr.quat;
+            const nozzlePos = tr.pos.clone().add(nozzle.clone().applyQuaternion(q));
+            const life = h / maxPts;
+            const width = 0.03 + life * 0.9;
+            const toCam = new THREE.Vector3().subVectors(camera.position, nozzlePos).normalize();
+            const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(q).normalize();
+            let right = new THREE.Vector3().crossVectors(fwd, toCam);
+            if (right.lengthSq() < 1e-6) right.set(1, 0, 0).applyQuaternion(q);
+            right.normalize().multiplyScalar(width);
+            const L = nozzlePos.clone().add(right);
+            const R = nozzlePos.clone().sub(right);
+            const idx = valid * 2;
+            posArr[idx * 3] = L.x; posArr[idx * 3 + 1] = L.y; posArr[idx * 3 + 2] = L.z;
+            posArr[idx * 3 + 3] = R.x; posArr[idx * 3 + 4] = R.y; posArr[idx * 3 + 5] = R.z;
+            const intensity = Math.pow(1.0 - life, 1.6);
+            const r = intensity; const g = intensity * 0.85; const b = intensity * 0.7;
+            colArr[idx * 3] = r; colArr[idx * 3 + 1] = g; colArr[idx * 3 + 2] = b;
+            colArr[idx * 3 + 3] = r; colArr[idx * 3 + 4] = g; colArr[idx * 3 + 5] = b;
+            uvArr[idx * 2] = 0; uvArr[idx * 2 + 1] = life;
+            uvArr[idx * 2 + 2] = 1; uvArr[idx * 2 + 3] = life;
+            valid++;
+        }
+        if (valid > 1) {
+            smoke.geometry.setDrawRange(0, (valid - 1) * 6);
+            smoke.geometry.attributes.position.needsUpdate = true;
+            smoke.geometry.attributes.color.needsUpdate = true;
+            smoke.geometry.attributes.uv.needsUpdate = true;
+            smoke.visible = true;
+        } else {
+            smoke.visible = false;
+        }
+    }
+
+    /** Pod muzzle flame — inside nest, slightly protruding aft. */
+    function ensurePodMuzzleFlame(pylon) {
+        if (!pylon || !pylon.mesh) return null;
+        if (pylon.podFlame && pylon.podFlame.parent) return pylon.podFlame;
+        const cfg = rocketConfig();
+        const flame = createRocketExhaustGlow(-0.08);
+        flame.name = 'podMuzzleFlame';
+        flame.scale.set(0.7, 0.7, 0.85);
+        // Aft of pod (tail / −Z), slightly proud of the nest rear.
+        flame.position.set(
+            0,
+            cfg.podFlameOffsetY != null ? Number(cfg.podFlameOffsetY) : -0.02,
+            cfg.podFlameOffsetZ != null ? Number(cfg.podFlameOffsetZ) : -0.14
+        );
+        // Point plume aft (−Z body): exhaust builder points −Y after rotateX; rotate into −Z.
+        flame.rotation.x = Math.PI / 2;
+        flame.visible = false;
+        pylon.mesh.add(flame);
+        pylon.podFlame = flame;
+        return flame;
+    }
+
+    function setPodFlameIntensity(flame, intensity) {
+        if (!flame) return;
+        const on = intensity > 0.02;
+        flame.visible = on;
+        if (!on) return;
+        const pulse = 0.75 + Math.random() * 0.45;
+        flame.scale.set(0.55 * pulse * intensity, 0.55 * pulse * intensity, 0.7 + 0.5 * intensity);
+        flame.traverse((c) => {
+            if (c.isMesh && c.material && c.material.opacity != null && c.name !== 'halo') {
+                // leave base mats; scale handles punch
+            }
+        });
+    }
+
+    function syncPodMuzzleFlames(step, log, previewLit) {
+        if (typeof teams === 'undefined') return;
+        const ids = (typeof combatActiveIds === 'function') ? combatActiveIds() : Object.keys(teams);
+        ids.forEach((id) => {
+            const t = teams[id];
+            if (!t || !t.pylons) return;
+            teamRocketPylons(t).forEach((p) => {
+                const flame = ensurePodMuzzleFlame(p);
+                if (!flame) return;
+                let intensity = 0;
+                if (previewLit && t.weapon === 'rocket' && t.wpnQueued && t.queuedAction === 'rocket' && p.state === 'armed') {
+                    intensity = 0.45 + 0.25 * Math.sin(Date.now() * 0.02);
+                }
+                if (log) {
+                    const tracks = log[`${id}RktTracks`] || {};
+                    Object.keys(tracks).forEach((tid) => {
+                        // trackId encodes pylon: r{id}_p{pylonId}_…
+                        if (tid.indexOf(`_p${p.id}_`) < 0) return;
+                        const arr = tracks[tid];
+                        // Bright flash around launch frames.
+                        for (let d = 0; d <= 4; d++) {
+                            const s = step - d;
+                            if (s < 0) continue;
+                            const cur = arr[s];
+                            const prev = s > 0 ? arr[s - 1] : null;
+                            if (cur && cur.pos && !(prev && prev.pos)) {
+                                intensity = Math.max(intensity, 1.2 - d * 0.2);
+                            }
+                        }
+                    });
+                    // Also use live activeRockets launchStep.
+                    (t.activeRockets || []).forEach((rk) => {
+                        if (!rk || rk.pylonId !== p.id) return;
+                        if (rk.launchStep >= 0 && Math.abs(step - rk.launchStep) <= 4) {
+                            intensity = Math.max(intensity, 1.15 - Math.abs(step - rk.launchStep) * 0.2);
+                        }
+                    });
+                }
+                setPodFlameIntensity(flame, intensity);
+            });
+        });
+    }
+
     function applyRocketVisuals(step, log) {
         if (!log || typeof teams === 'undefined' || typeof scene === 'undefined') return;
         if (!Rocket._flightMeshes) Rocket._flightMeshes = {};
+        const cfg = rocketConfig();
+        const nozzleY = cfg.flightNozzleOffsetY != null ? Number(cfg.flightNozzleOffsetY) : -0.17;
+        const nozzleLocal = new THREE.Vector3(0, nozzleY, 0);
 
         const ids = (typeof combatActiveIds === 'function')
             ? combatActiveIds()
             : Object.keys(teams);
 
-        // Hide all first.
         Object.keys(Rocket._flightMeshes).forEach((key) => {
             const m = Rocket._flightMeshes[key];
             if (m) m.visible = false;
-            if (m && m.userData.trail) m.userData.trail.visible = false;
+            if (m && m.userData.smoke) m.userData.smoke.visible = false;
         });
 
         ids.forEach((id) => {
@@ -504,41 +737,33 @@
 
                 let mesh = Rocket._flightMeshes[trackId];
                 if (!mesh) {
-                    if (typeof rocketMeshBase !== 'undefined' && rocketMeshBase) {
-                        mesh = rocketMeshBase.clone();
-                        mesh.scale.multiplyScalar(0.85);
-                    } else {
-                        mesh = new THREE.Mesh(
-                            new THREE.CylinderGeometry(0.04, 0.06, 0.55, 6),
-                            new THREE.MeshStandardMaterial({ color: 0x9aa3ad, metalness: 0.85, roughness: 0.3 })
-                        );
-                        mesh.rotation.x = Math.PI / 2;
-                    }
-                    mesh.userData.trail = new THREE.Line(
-                        new THREE.BufferGeometry(),
-                        new THREE.LineBasicMaterial({ color: 0xffaa66, transparent: true, opacity: 0.55 })
-                    );
+                    mesh = buildFlyingRocketMesh();
                     scene.add(mesh);
-                    scene.add(mesh.userData.trail);
+                    if (mesh.userData.smoke) scene.add(mesh.userData.smoke);
                     Rocket._flightMeshes[trackId] = mesh;
                 }
                 mesh.position.copy(tr.pos);
                 if (tr.quat) mesh.quaternion.copy(tr.quat);
                 mesh.visible = true;
 
-                const trailPts = [];
-                const back = Math.max(0, step - 14);
-                for (let i = back; i <= step; i++) {
-                    const p = arr[i];
-                    if (p && p.pos) trailPts.push(p.pos);
+                const glow = mesh.userData.glow;
+                if (glow) {
+                    const pulseXY = 0.85 + Math.random() * 0.25;
+                    const pulseZ = 0.75 + Math.random() * 0.45;
+                    glow.scale.set(pulseXY, pulseXY, pulseZ);
+                    const halo = glow.children.find((c) => c.name === 'halo');
+                    if (halo && typeof camera !== 'undefined') {
+                        const invQ = mesh.quaternion.clone().invert();
+                        halo.quaternion.copy(invQ.multiply(camera.quaternion));
+                    }
                 }
-                if (mesh.userData.trail && trailPts.length >= 2) {
-                    mesh.userData.trail.geometry.dispose();
-                    mesh.userData.trail.geometry = new THREE.BufferGeometry().setFromPoints(trailPts);
-                    mesh.userData.trail.visible = true;
+                if (mesh.userData.smoke) {
+                    updateRocketSmokeRibbon(mesh.userData.smoke, arr, step, tr.quat, nozzleLocal);
                 }
             });
         });
+
+        syncPodMuzzleFlames(step, log, false);
     }
 
     function ensureAimVisuals(count) {
@@ -673,12 +898,26 @@
             .join('  ');
         hud.innerText = `RKT VT  ${ammo}/${max}  ·  ${salvo}彈著  ${ranges}  ·  ENT 齊射`;
         hud.style.display = 'block';
+
+        // Preview: idle glow in pod when rocket mode / queued salvo.
+        syncPodMuzzleFlames(0, null, true);
     }
 
     function hideRocketAimPreview() {
         if (Rocket._aimGroup) Rocket._aimGroup.visible = false;
         const hud = document.getElementById('rocket-aim-hud');
         if (hud) hud.style.display = 'none';
+        // Dim pod flames when leaving rocket aim.
+        if (typeof teams !== 'undefined') {
+            const ids = (typeof combatActiveIds === 'function') ? combatActiveIds() : Object.keys(teams);
+            ids.forEach((id) => {
+                const t = teams[id];
+                if (!t || !t.pylons) return;
+                teamRocketPylons(t).forEach((p) => {
+                    if (p.podFlame) setPodFlameIntensity(p.podFlame, 0);
+                });
+            });
+        }
     }
 
     Rocket.isRocketType = isRocketType;
@@ -696,6 +935,8 @@
     Rocket.applyRocketVisuals = applyRocketVisuals;
     Rocket.updateRocketAimPreview = updateRocketAimPreview;
     Rocket.hideRocketAimPreview = hideRocketAimPreview;
+    Rocket.syncPodMuzzleFlames = syncPodMuzzleFlames;
+    Rocket.buildFlyingRocketMesh = buildFlyingRocketMesh;
 
     global.AirArenaRocket = Rocket;
     if (typeof GameContext !== 'undefined' && GameContext.registerService) {
