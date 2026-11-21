@@ -1326,6 +1326,9 @@ function uiSetControlsVisible(visible) {
     const wrap = document.getElementById('ui-wrapper');
     if (!wrap) return;
     wrap.classList.toggle('is-controls-hidden', !visible);
+    if (!visible && window.AirArenaOpsRadial && typeof window.AirArenaOpsRadial.open === 'function') {
+        window.AirArenaOpsRadial.open(false);
+    }
 }
 function uiSyncSelectionChrome(teamId) {
     const id = teamId || uiCurrentTeamId();
@@ -3291,6 +3294,11 @@ function uiApplyFox1TacticalSms(teamObj, opts = {}) {
 function updateDashboardUI(teamObj) {
     let currentTeam = uiCurrentTeamId();
     if (!teamObj || teamObj.id !== currentTeam) return;
+    // Keep semi-transparent radial ops HUD in sync when open.
+    if (window.AirArenaOpsRadial && window.AirArenaOpsRadial.isOpen && window.AirArenaOpsRadial.isOpen()
+        && typeof window.AirArenaOpsRadial.refresh === 'function') {
+        try { window.AirArenaOpsRadial.refresh(teamObj); } catch (_) { /* ignore */ }
+    }
 
     // Stall flash is per chase-pane (or active single view), not “any team stalled → full screen”.
     if (window.AirArenaMultiView && typeof window.AirArenaMultiView.syncStallOverlays === 'function') {

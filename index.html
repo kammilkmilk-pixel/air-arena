@@ -310,10 +310,50 @@
     <div id="temp-score-log" class="temp-score-log"></div>
 </div>
 
+    <!-- Semi-transparent radial ops HUD (appears on aircraft / ghost pick) -->
+    <div id="ops-radial-root" hidden aria-hidden="true">
+        <div id="ops-radial-anchor">
+            <div id="ops-radial-ring" aria-label="ops radial">
+                <svg id="ops-radial-svg" viewBox="0 0 200 200" role="presentation">
+                    <g id="ops-radial-wedges"></g>
+                    <circle class="ops-radial-rim" cx="100" cy="100" r="92" fill="none"/>
+                    <circle class="ops-radial-rim-inner" cx="100" cy="100" r="38" fill="none"/>
+                </svg>
+                <button type="button" id="ops-radial-ok" class="ops-radial-ok" title="確認交戰">OK</button>
+                <button type="button" class="ops-wedge-hit" data-ops="flare" id="ops-hit-flare" style="--a0:-45deg;--span:45deg" title="FLARE">FL</button>
+                <button type="button" class="ops-wedge-hit" data-ops="chaff" id="ops-hit-chaff" style="--a0:0deg;--span:45deg" title="CHAFF">CH</button>
+                <button type="button" class="ops-wedge-hit" data-ops="pylon-1" id="ops-hit-p1" style="--a0:45deg;--span:67.5deg" title="PYLON 1">1</button>
+                <button type="button" class="ops-wedge-hit" data-ops="pylon-2" id="ops-hit-p2" style="--a0:112.5deg;--span:67.5deg" title="PYLON 2">2</button>
+                <button type="button" class="ops-wedge-hit" data-ops="pylon-3" id="ops-hit-p3" style="--a0:180deg;--span:67.5deg" title="PYLON 3">3</button>
+                <button type="button" class="ops-wedge-hit" data-ops="pylon-4" id="ops-hit-p4" style="--a0:247.5deg;--span:67.5deg" title="PYLON 4">4</button>
+                <div class="ops-label ops-label-flare" id="ops-label-flare">FLARE 3</div>
+                <div class="ops-label ops-label-chaff" id="ops-label-chaff">CHAFF 3</div>
+                <div class="ops-label ops-label-p1" id="ops-label-p1">P1</div>
+                <div class="ops-label ops-label-p2" id="ops-label-p2">P2</div>
+                <div class="ops-label ops-label-p3" id="ops-label-p3">P3</div>
+                <div class="ops-label ops-label-p4" id="ops-label-p4">P4</div>
+            </div>
+            <div id="ops-tactical-strip">
+                <div class="ops-tac-side" id="ops-tac-heat" title="引擎溫度">
+                    <span class="ops-tac-k">HEAT</span>
+                    <span class="ops-tac-v" id="ops-val-heat">150°</span>
+                </div>
+                <div class="ops-tac-screen" id="ops-tac-screen" title="戰術電腦">
+                    <div id="ops-sms-text">狀態 [就緒]</div>
+                </div>
+                <div class="ops-tac-side" id="ops-tac-ap" title="AP">
+                    <span class="ops-tac-k">AP</span>
+                    <span class="ops-tac-v" id="ops-val-ap">0</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- ========================================================================
          🎛️ 唯一純粹的玻璃座艙 MFD 控制面板
          ======================================================================== -->
     <div id="ui-wrapper">
+        <button type="button" id="btn-ops-panel-toggle" class="ops-panel-toggle" aria-expanded="true" aria-controls="combat-hud-mobile" title="收合／打開操作面板">▾</button>
         <div id="combat-hud-mobile">
             
             <!-- 💻 TACTICAL SYS 戰術電腦 -->
@@ -507,6 +547,7 @@
     <script src="js/view/radio-hud.js"></script>
     <script src="js/view/hud.js"></script>
     <script src="js/view/multi-view.js"></script>
+    <script src="js/view/ops-radial-ui.js"></script>
     <script src="js/view/ui.js"></script>
     <script src="js/core/batch-ai-run.js"></script>
     <script src="js/game.js"></script>

@@ -531,26 +531,46 @@ function initAircraftPickClick() {
             const t = teams[id];
             if (t && t.wrapper && t.wrapper.visible) roots.push(t.wrapper);
         });
+        // Ghost / phantom preview is also selectable for the new ops radial HUD.
+        let hitGhost = false;
+        if (window.ghostWrapper && window.ghostWrapper.visible) {
+            roots.push(window.ghostWrapper);
+        }
         const hits = raycaster.intersectObjects(roots, true);
         if (!hits.length) return;
 
         let obj = hits[0].object;
         let teamId = null;
-        while (obj) {
-            if (obj.userData && obj.userData.teamId) {
-                teamId = obj.userData.teamId;
-                break;
+        let walk = obj;
+        while (walk) {
+            if (walk === window.ghostWrapper) hitGhost = true;
+            walk = walk.parent;
+        }
+        if (hitGhost) {
+            // Ghost always maps to the active planning seat.
+            teamId = (typeof uiCurrentTeamId === 'function')
+                ? uiCurrentTeamId()
+                : (GameContext.state && GameContext.state.activeTeamId);
+        } else {
+            while (obj) {
+                if (obj.userData && obj.userData.teamId) {
+                    teamId = obj.userData.teamId;
+                    break;
+                }
+                obj = obj.parent;
             }
-            obj = obj.parent;
         }
         if (!teamId) return;
 
         // Hostile click: switch fire/HUD lock for a living human, keep piloting that human.
-        if (findHumanLockOwnerForHostile(teamId)) {
+        if (!hitGhost && findHumanLockOwnerForHostile(teamId)) {
             if (lockHostileTarget(teamId)) return;
         }
         GameContext.state.cameraFollowOverrideId = null;
         selectTeam(teamId);
+        if (window.AirArenaOpsRadial && typeof window.AirArenaOpsRadial.onPick === 'function') {
+            window.AirArenaOpsRadial.onPick(teamId, hitGhost ? 'ghost' : 'aircraft');
+        }
     });
 }
 

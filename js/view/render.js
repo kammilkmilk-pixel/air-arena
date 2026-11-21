@@ -1118,8 +1118,26 @@ function drawTrajectoryLine(teamObj) {
 
         window.ghostCtx.clearRect(0,0,128,64); 
         window.ghostCtx.shadowColor = 'rgba(0,0,0,0.9)'; window.ghostCtx.shadowOffsetX = 2; window.ghostCtx.shadowOffsetY = 2; window.ghostCtx.shadowBlur = 4; 
-        window.ghostCtx.fillStyle = '#ffeb3b'; window.ghostCtx.font = 'bold 30px Courier New'; window.ghostCtx.textAlign = 'center'; window.ghostCtx.textBaseline = 'middle'; 
-        window.ghostCtx.fillText(teamObj.flightLength.toFixed(1) + 'm', 64, 32); 
+        window.ghostCtx.textAlign = 'center'; window.ghostCtx.textBaseline = 'middle';
+        const opsOpen = !!(window.AirArenaOpsRadial && window.AirArenaOpsRadial.isOpen && window.AirArenaOpsRadial.isOpen());
+        if (opsOpen) {
+            const thr = Number(teamObj.throttle) || 4;
+            let band = 'MIL';
+            if (thr >= 4.5) band = 'AB';
+            else if (thr >= 3.5) band = 'MIL';
+            else if (thr >= 2.5) band = 'ECO';
+            else if (thr >= 1.5) band = 'IDL';
+            else band = 'BRK';
+            window.ghostCtx.fillStyle = '#ffffff';
+            window.ghostCtx.font = 'bold 22px Courier New';
+            window.ghostCtx.fillText(`THR ${thr.toFixed(1)} ${band}`, 64, 24);
+            window.ghostCtx.fillStyle = '#ffeb3b';
+            window.ghostCtx.font = 'bold 16px Courier New';
+            window.ghostCtx.fillText(teamObj.flightLength.toFixed(1) + 'm', 64, 48);
+        } else {
+            window.ghostCtx.fillStyle = '#ffeb3b'; window.ghostCtx.font = 'bold 30px Courier New';
+            window.ghostCtx.fillText(teamObj.flightLength.toFixed(1) + 'm', 64, 32);
+        }
         window.ghostTex.needsUpdate = true;
     } else if (teamObj.id === tAct) { 
         window.ghostWrapper.visible = false; 
