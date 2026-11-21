@@ -208,7 +208,7 @@ const CONFIG = {
             aiEnabled: false,
             dualRole: true,
             damage: 22,
-            range: 70,
+            range: 120,
             /** Ammo in one pod. */
             roundsPerPod: 9,
             /** Rockets released per ENT / turn. */

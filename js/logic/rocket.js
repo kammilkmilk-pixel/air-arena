@@ -577,7 +577,7 @@
             );
             // Release pip along aircraft path
             const pip = new THREE.Mesh(
-                new THREE.SphereGeometry(0.14, 8, 8), // half of prior 0.28 release marker
+                new THREE.SphereGeometry(0.04, 8, 8),
                 new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.85 })
             );
             Rocket._aimGroup.add(line, ring, cross, pip);
