@@ -245,11 +245,19 @@ const CONFIG = {
             damage: 80,
             /** Ballistic (game units ≈ m; step = 1/stepsPerTurn of a turn). */
             releaseSpeedScale: 1.0,
-            drag: 0.012,
-            gravityScale: 1.0,
+            /** Horizontal drag (vertical mostly gravity). Lower = longer glide. */
+            drag: 0.004,
+            gravityScale: 1.15,
+            /** Physics substeps per combat frame (smoother + reliable ground hit). */
+            substeps: 2,
             groundY: 0,
-            fuseDelaySteps: 2,
-            blastRadius: 8,
+            fuseDelaySteps: 1,
+            blastRadius: 10,
+            explosionScale: 2.6,
+            flashScale: 3.2,
+            puffScale: 2.0,
+            sparkCount: 90,
+            sparkPower: 0.95,
             /** CCIP preview sample count along fall. */
             previewSamples: 48,
             model: {
@@ -444,6 +452,78 @@ function getEngineHeatAbLock() {
         ? Number(CONFIG.rules.abLockHeatOffset)
         : 40;
     return getEngineHeatIdle() + offset;
+}
+
+/**
+ * Continuous throttle (1.0–5.0): lerp between discrete throttleStats bands.
+ * AI may still send integers; humans get stepless 無段變速.
+ */
+function clampThrottleLevel(level) {
+    const n = Number(level);
+    if (!Number.isFinite(n)) return 4;
+    return Math.max(1, Math.min(5, n));
+}
+
+function getThrottleStats(throttle, aircraftType) {
+    const type = aircraftType || 'mig21';
+    const table = (typeof CONFIG !== 'undefined'
+        && CONFIG.aircrafts
+        && CONFIG.aircrafts[type]
+        && CONFIG.aircrafts[type].throttleStats)
+        ? CONFIG.aircrafts[type].throttleStats
+        : null;
+    const fallback = {
+        thrust: 65, heat: -2, turnLimit: 0.7,
+        speedProfile: [1.5, 1.5, 1.5],
+        gunAngleMult: 1.0, gunRangeMult: 1.1
+    };
+    if (!table) return Object.assign({}, fallback);
+
+    const t = clampThrottleLevel(throttle);
+    const lo = Math.floor(t);
+    const hi = Math.ceil(t);
+    const a = table[lo] || table[Math.max(1, lo)] || fallback;
+    const b = table[hi] || a;
+    if (lo === hi || !b) {
+        return {
+            thrust: Number(a.thrust) || 0,
+            heat: Number(a.heat) || 0,
+            turnLimit: Number(a.turnLimit) || 1,
+            speedProfile: Array.isArray(a.speedProfile) ? a.speedProfile.slice() : [1, 1, 1],
+            gunAngleMult: Number(a.gunAngleMult) || 1,
+            gunRangeMult: Number(a.gunRangeMult) || 1,
+            level: t
+        };
+    }
+    const u = t - lo;
+    const lerp = (x, y) => (Number(x) || 0) + ((Number(y) || 0) - (Number(x) || 0)) * u;
+    const spa = Array.isArray(a.speedProfile) ? a.speedProfile : [1, 1, 1];
+    const spb = Array.isArray(b.speedProfile) ? b.speedProfile : spa;
+    return {
+        thrust: lerp(a.thrust, b.thrust),
+        heat: lerp(a.heat, b.heat),
+        turnLimit: lerp(a.turnLimit, b.turnLimit),
+        speedProfile: [
+            lerp(spa[0], spb[0]),
+            lerp(spa[1] != null ? spa[1] : spa[0], spb[1] != null ? spb[1] : spb[0]),
+            lerp(spa[2] != null ? spa[2] : spa[0], spb[2] != null ? spb[2] : spb[0])
+        ],
+        gunAngleMult: lerp(a.gunAngleMult, b.gunAngleMult),
+        gunRangeMult: lerp(a.gunRangeMult, b.gunRangeMult),
+        level: t
+    };
+}
+
+/** Map continuous throttle 1–5 → track handle top% (AB=0 … BRK=100). */
+function throttleToHandlePercent(throttle) {
+    const t = clampThrottleLevel(throttle);
+    return ((5 - t) / 4) * 100;
+}
+
+/** Map track percent (0 bottom BRK → 1 top AB) → continuous throttle. */
+function handlePercentToThrottle(percent) {
+    const p = Math.max(0, Math.min(1, Number(percent) || 0));
+    return clampThrottleLevel(1 + p * 4);
 }
 
 if (typeof module !== 'undefined' && module.exports) {

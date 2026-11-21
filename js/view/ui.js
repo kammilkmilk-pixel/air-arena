@@ -2947,10 +2947,11 @@ document.addEventListener("DOMContentLoaded", () => {
     window.addEventListener('resize', () => uiRefreshAIDebugPanel());
     uiRefreshAIDebugPanel();
 
-    // 🚀 全新節流閥：5 檔磁吸滑軌控制
+    // 🚀 節流閥：連續無段變速（1.0–5.0），標籤 AB/MIL/ECO/IDL/BRK 僅作參考刻度
     const thrTrack = document.getElementById('throttle-track');
     const thrHandle = document.getElementById('throttle-handle');
     let isDraggingThrottle = false;
+    let lastThrottleAlertMs = 0;
 
     if (thrTrack && thrHandle) {
         const updateThrottleLogic = (clientY) => {
@@ -2962,27 +2963,37 @@ document.addEventListener("DOMContentLoaded", () => {
             let percent = 1.0 - ((clientY - rect.top) / rect.height);
             percent = Math.max(0, Math.min(1, percent));
 
-            // 🟢 5 檔磁吸邊界計算
-            let newLevel = 4; // 預設 MIL (4檔)
-            if (percent > 0.9) newLevel = 5;      // AB
-            else if (percent > 0.7) newLevel = 4; // MIL
-            else if (percent > 0.45) newLevel = 3; // ECO
-            else if (percent > 0.2) newLevel = 2; // IDL
-            else newLevel = 1;                    // BRK (空氣減速板)
+            let newLevel = (typeof handlePercentToThrottle === 'function')
+                ? handlePercentToThrottle(percent)
+                : (1 + percent * 4);
 
-            // 後燃器過熱保險鎖定（絕對溫標：idle+40，預設 190°C）
+            // 後燃器過熱保險：熱態不可進入 AB 帶（>4.5）
             const abLockAbs = (typeof getEngineHeatAbLock === 'function') ? getEngineHeatAbLock() : 190;
             const heatLv = (typeof getEngineHeatLevel === 'function') ? getEngineHeatLevel(t.heat) : ((Number(t.heat) || 150) - 150);
-            if (newLevel === 5 && heatLv > 40) {
-                newLevel = 4; 
-                showSMSAlert(`🛑 溫度過高：必須低於 ${abLockAbs}°C 才能點火後燃器！`, "#ff0055");
+            if (newLevel > 4.5 && heatLv > 40) {
+                newLevel = 4.5;
+                const now = Date.now();
+                if (now - lastThrottleAlertMs > 900) {
+                    lastThrottleAlertMs = now;
+                    showSMSAlert(`🛑 溫度過高：必須低於 ${abLockAbs}°C 才能點火後燃器！`, "#ff0055");
+                }
             }
 
-            if (t.throttle !== newLevel) {
-                if (!GameContext.stateMachine.setThrottle(currentTeam, newLevel)) return;
-                updateDashboardUI(t); // 自動吸附定位
-                uiRefreshPreview(t);
+            // Quantize lightly for netplay stability (0.05 steps) while staying continuous.
+            newLevel = Math.round(newLevel * 20) / 20;
+            if (Math.abs((t.throttle || 0) - newLevel) < 0.049) {
+                // Still move handle visually while dragging.
+                if (thrHandle) {
+                    const topPct = (typeof throttleToHandlePercent === 'function')
+                        ? throttleToHandlePercent(newLevel)
+                        : ((5 - newLevel) / 4) * 100;
+                    thrHandle.style.top = `${topPct}%`;
+                }
+                return;
             }
+            if (!GameContext.stateMachine.setThrottle(currentTeam, newLevel)) return;
+            updateDashboardUI(t);
+            uiRefreshPreview(t);
         };
 
         thrHandle.addEventListener('mousedown', (e) => { isDraggingThrottle = true; });
@@ -3278,20 +3289,21 @@ function updateDashboardUI(teamObj) {
         }
     }
 
-    // 🚀 5 檔磁吸滑動位置
+    // 🚀 連續節流閥位置（無段）
     let handle = document.getElementById('throttle-handle');
     if (handle) {
-        if (teamObj.throttle === 5) handle.style.top = '0%';
-        else if (teamObj.throttle === 4) handle.style.top = '25%';
-        else if (teamObj.throttle === 3) handle.style.top = '50%';
-        else if (teamObj.throttle === 2) handle.style.top = '75%';
-        else handle.style.top = '100%';
+        const topPct = (typeof throttleToHandlePercent === 'function')
+            ? throttleToHandlePercent(teamObj.throttle)
+            : ((5 - (Number(teamObj.throttle) || 4)) / 4) * 100;
+        handle.style.top = `${topPct}%`;
+        handle.title = `THR ${(Number(teamObj.throttle) || 4).toFixed(2)}`;
     }
 
-    // 將各個文字檔亮燈
+    // 刻度亮燈：最近整檔（±0.35）
     document.querySelectorAll('#throttle-track .thr-mark').forEach((el, index) => {
         let level = 5 - index;
-        if (teamObj.throttle === level) {
+        const thr = Number(teamObj.throttle) || 4;
+        if (Math.abs(thr - level) <= 0.35) {
             el.classList.add('mark-active');
         } else {
             el.classList.remove('mark-active');

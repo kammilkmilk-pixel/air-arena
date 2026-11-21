@@ -1128,7 +1128,9 @@ function updateGunPreview(teamObj) {
     if (!teamObj.userData.gunPreview) { let pts = new Float32Array(32 * 3); let geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(pts, 3)); let g = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0xffaa00, transparent: true, opacity: 0.7, linewidth: 2 })); scene.add(g); teamObj.userData.gunPreview = g; }
     
     if (teamObj.wpnQueued && teamObj.weapon === 'gun' && !isAnimating && !window.replayMode && teamObj.pathPoints && teamObj.pathPoints.length >= 2) {
-        let stats = CONFIG.aircrafts[teamObj.type || 'mig21'].throttleStats[teamObj.throttle] || { gunRangeMult: 1.0 };
+        let stats = (typeof getThrottleStats === 'function')
+            ? getThrottleStats(teamObj.throttle, teamObj.type || 'mig21')
+            : (CONFIG.aircrafts[teamObj.type || 'mig21'].throttleStats[Math.round(teamObj.throttle)] || { gunRangeMult: 1.0 });
         let dRange = GUN_RANGE * stats.gunRangeMult; let posArr = teamObj.userData.gunPreview.geometry.attributes.position.array; let ptIdx = 0; let T_now = 1.0; 
         for (let i = 0; i <= 30; i++) {
             let t_spawn = (i / 30) * 1.0; 
@@ -1444,7 +1446,9 @@ function renderCombatFrame(currentLog, animProgress) {
             let logIdx = turnIdx - age; if (logIdx < 0) continue; let pastLog = battleLog[logIdx]; if (!pastLog || !pastLog[id]) continue;
             let logChain = pastLog[id].chain;
             if (logChain && logChain.length > 0 && logChain[0].fire === 'gun' && pastLog[id].pts && pastLog[id].pts.length >= 2) {
-                let stats = CONFIG.aircrafts[t.type || 'mig21'].throttleStats[logChain[0].throttle || 2] || { gunRangeMult: 1.0 }; 
+                let stats = (typeof getThrottleStats === 'function')
+                    ? getThrottleStats(logChain[0].throttle || 2, t.type || 'mig21')
+                    : (CONFIG.aircrafts[t.type || 'mig21'].throttleStats[Math.round(logChain[0].throttle || 2)] || { gunRangeMult: 1.0 }); 
                 let dRange = GUN_RANGE * stats.gunRangeMult;
                 
                 for (let b = 0; b < 24; b++) {

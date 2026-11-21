@@ -49,50 +49,87 @@
         });
     }
 
+    function ballisticKnobs(opts) {
+        const cfg = bombConfig();
+        const o = opts || {};
+        const stepsPerTurn = (typeof CONFIG !== 'undefined' && CONFIG.rules && CONFIG.rules.stepsPerTurn)
+            ? Number(CONFIG.rules.stepsPerTurn) : 100;
+        return {
+            stepsPerTurn,
+            g: ((typeof CONFIG !== 'undefined' && CONFIG.rules && CONFIG.rules.gravity != null)
+                ? Number(CONFIG.rules.gravity) : 9.8)
+                * (o.gravityScale != null ? Number(o.gravityScale)
+                    : (cfg.gravityScale != null ? Number(cfg.gravityScale) : 1)),
+            drag: o.drag != null ? Number(o.drag) : (cfg.drag != null ? Number(cfg.drag) : 0.004),
+            groundY: o.groundY != null ? Number(o.groundY) : (cfg.groundY != null ? Number(cfg.groundY) : 0),
+            substeps: Math.max(1, Math.floor(o.substeps != null ? Number(o.substeps)
+                : (cfg.substeps != null ? Number(cfg.substeps) : 2))),
+            dt: 1 / Math.max(1, stepsPerTurn)
+        };
+    }
+
+    /**
+     * One combat-frame of bomb flight (optional substeps).
+     * Horizontal drag only — vertical is gravity-dominated.
+     * @returns {{ hit: boolean, oldPos: THREE.Vector3 }}
+     */
+    function integrateBombFrame(pos, vel, quat, knobs) {
+        const oldPos = pos.clone();
+        const subDt = knobs.dt / knobs.substeps;
+        let hit = false;
+        for (let s = 0; s < knobs.substeps; s++) {
+            const before = pos.clone();
+            vel.y -= knobs.g * subDt;
+            // Drag on XZ only so fall time stays close to free-fall.
+            vel.x *= Math.max(0, 1 - knobs.drag * subDt * 60);
+            vel.z *= Math.max(0, 1 - knobs.drag * subDt * 60);
+            pos.addScaledVector(vel, subDt);
+            if (pos.y <= knobs.groundY && before.y > knobs.groundY) {
+                const tHit = (before.y - knobs.groundY) / Math.max(1e-6, (before.y - pos.y));
+                pos.copy(before).lerp(pos, Math.max(0, Math.min(1, tHit)));
+                pos.y = knobs.groundY;
+                hit = true;
+                break;
+            }
+        }
+        if (vel.lengthSq() > 1e-6 && quat) {
+            const look = vel.clone().normalize();
+            quat.setFromUnitVectors(new THREE.Vector3(0, 0, 1), look);
+        }
+        return { hit, oldPos };
+    }
+
     /**
      * Integrate unguided ballistic fall until ground (or max steps).
      * @returns {{ points: THREE.Vector3[], impact: THREE.Vector3|null, steps: number, hitGround: boolean }}
      */
     function computeBallisticPath(origin, velocity, opts) {
-        const cfg = bombConfig();
-        const o = opts || {};
-        const stepsPerTurn = (typeof CONFIG !== 'undefined' && CONFIG.rules && CONFIG.rules.stepsPerTurn)
-            ? Number(CONFIG.rules.stepsPerTurn) : 100;
-        const g = ((typeof CONFIG !== 'undefined' && CONFIG.rules && CONFIG.rules.gravity != null)
-            ? Number(CONFIG.rules.gravity) : 9.8)
-            * (o.gravityScale != null ? Number(o.gravityScale) : (cfg.gravityScale != null ? Number(cfg.gravityScale) : 1));
-        const drag = o.drag != null ? Number(o.drag) : (cfg.drag != null ? Number(cfg.drag) : 0.012);
-        const groundY = o.groundY != null ? Number(o.groundY) : (cfg.groundY != null ? Number(cfg.groundY) : 0);
-        const maxSteps = o.maxSteps != null ? Number(o.maxSteps) : Math.max(stepsPerTurn * 8, 400);
-        const dt = 1 / Math.max(1, stepsPerTurn);
+        const knobs = ballisticKnobs(opts);
+        const maxSteps = (opts && opts.maxSteps != null)
+            ? Number(opts.maxSteps)
+            : Math.max(knobs.stepsPerTurn * 10, 500);
 
         const pos = origin.clone();
         const vel = velocity.clone();
+        const quat = new THREE.Quaternion();
         const points = [pos.clone()];
         let hitGround = false;
         let impact = null;
         let steps = 0;
 
         for (let i = 0; i < maxSteps; i++) {
-            // Simple semi-implicit Euler: gravity + linear drag.
-            vel.y -= g * dt;
-            vel.multiplyScalar(Math.max(0, 1 - drag * dt * 60));
-            const next = pos.clone().addScaledVector(vel, dt);
+            const res = integrateBombFrame(pos, vel, quat, knobs);
             steps = i + 1;
-
-            if (next.y <= groundY && pos.y > groundY) {
-                const tHit = (pos.y - groundY) / Math.max(1e-6, (pos.y - next.y));
-                impact = pos.clone().lerp(next, Math.max(0, Math.min(1, tHit)));
-                impact.y = groundY;
+            if (res.hit) {
+                impact = pos.clone();
                 points.push(impact.clone());
                 hitGround = true;
                 break;
             }
-            pos.copy(next);
             points.push(pos.clone());
-            if (pos.y < groundY - 2) {
+            if (pos.y < knobs.groundY - 2) {
                 impact = pos.clone();
-                impact.y = groundY;
+                impact.y = knobs.groundY;
                 hitGround = true;
                 break;
             }
@@ -105,28 +142,30 @@
     function estimateReleaseState(team, pylon) {
         const cfg = bombConfig();
         const scale = cfg.releaseSpeedScale != null ? Number(cfg.releaseSpeedScale) : 1;
+        const stepsPerTurn = (typeof CONFIG !== 'undefined' && CONFIG.rules && CONFIG.rules.stepsPerTurn)
+            ? Number(CONFIG.rules.stepsPerTurn) : 100;
         let pos = null;
         let quat = null;
         let vel = new THREE.Vector3(0, 0, 12);
 
         if (team.pathPoints && team.pathPoints.length >= 2 && typeof getPosAt === 'function') {
-            // Drop at start of turn (immediate release after ENT).
+            // Velocity ≈ path derivative over one combat frame (turn duration = 1).
+            const eps = 1 / Math.max(8, stepsPerTurn);
             const p0 = getPosAt(0, team.pathPoints);
-            const p1 = getPosAt(Math.min(1, 2 / Math.max(2, team.pathPoints.length - 1)), team.pathPoints);
+            const p1 = getPosAt(Math.min(1, eps), team.pathPoints);
             pos = p0.clone();
             quat = (team.pathQuats && typeof getQuatAt === 'function')
                 ? getQuatAt(0, team.pathQuats)
-                : (team.wrapper.userData.logicalQuat || team.wrapper.quaternion).clone();
-            vel = new THREE.Vector3().subVectors(p1, p0).multiplyScalar(
-                ((typeof CONFIG !== 'undefined' && CONFIG.rules && CONFIG.rules.stepsPerTurn)
-                    ? Number(CONFIG.rules.stepsPerTurn) : 100) / 2
-            );
+                : ((team.wrapper && (team.wrapper.userData && team.wrapper.userData.logicalQuat || team.wrapper.quaternion))
+                    || new THREE.Quaternion()).clone();
+            vel = new THREE.Vector3().subVectors(p1, p0).multiplyScalar(1 / Math.max(1e-6, eps));
         } else if (team.wrapper) {
             pos = team.wrapper.position.clone();
             quat = (team.wrapper.userData.logicalQuat || team.wrapper.quaternion).clone();
             const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(quat);
             const ap = Number(team.ap) || 100;
-            vel = fwd.multiplyScalar((ap / 20) * scale);
+            // AP≈m/s game convention → world units per turn-second.
+            vel = fwd.multiplyScalar(Math.max(8, ap * 0.35) * scale);
         }
 
         if (pylon && pylon.localPosition && pos && quat) {
@@ -135,7 +174,7 @@
         }
         if (vel.lengthSq() < 1e-4) {
             const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(quat || new THREE.Quaternion());
-            vel.copy(fwd.multiplyScalar(8 * scale));
+            vel.copy(fwd.multiplyScalar(12 * scale));
         } else {
             vel.multiplyScalar(scale);
         }
@@ -283,7 +322,36 @@
         return team.activeBombs;
     }
 
-    /** Combat pipeline: queue armed bomb drop when SMS bomb mode + ENT. */
+    function pushBombExplosionVfx(ctx, step, pos, cfg) {
+        const exScale = cfg.explosionScale != null ? Number(cfg.explosionScale) : 2.6;
+        const flScale = cfg.flashScale != null ? Number(cfg.flashScale) : 3.2;
+        const pfScale = cfg.puffScale != null ? Number(cfg.puffScale) : 2.0;
+        const sparkN = cfg.sparkCount != null ? Number(cfg.sparkCount) : 90;
+        const sparkP = cfg.sparkPower != null ? Number(cfg.sparkPower) : 0.95;
+        ctx.log.vfxTriggers.push({
+            type: 'explosion', step, pos: pos.clone(),
+            rot: Math.random() * Math.PI * 2, scale: exScale
+        });
+        ctx.log.vfxTriggers.push({
+            type: 'flash', step, pos: pos.clone(),
+            rot: Math.random() * Math.PI * 2, scale: flScale
+        });
+        ctx.log.vfxTriggers.push({
+            type: 'puff', step, pos: pos.clone().add(new THREE.Vector3(0, 0.4, 0)),
+            rot: Math.random() * Math.PI * 2, scale: pfScale
+        });
+        if (typeof sparkBurstTrigger === 'function') {
+            ctx.log.vfxTriggers.push(sparkBurstTrigger(step, pos, sparkN, sparkP, {
+                fountain: true,
+                wind: new THREE.Vector3(0, 0.35, 0),
+                gravity: 0.012,
+                life: 22,
+                streak: 0.85
+            }));
+        }
+    }
+
+    /** Combat pipeline: queue new drops + keep multi-turn flying bombs tracked. */
     function processBombDrops(ctx) {
         if (!ctx || !ctx.log) return;
         const ids = (typeof combatActiveIds === 'function')
@@ -291,11 +359,24 @@
             : Object.keys(typeof teams !== 'undefined' ? teams : {});
         ids.forEach((id) => {
             const t = teams[id];
-            if (!t || t.isDestroyed || !t.pylons) return;
+            if (!t || t.isDestroyed) return;
             ensureTeamBombs(t);
             ctx.log[`${id}BombTracks`] = ctx.log[`${id}BombTracks`] || {};
             ctx.log[`${id}BombExplodedAt`] = ctx.log[`${id}BombExplodedAt`] || {};
 
+            // Continuing bombs from prior turns: open track lanes for this turn's resolve.
+            t.activeBombs.forEach((b) => {
+                if (!b || b.exploded) return;
+                if (!ctx.log[`${id}BombTracks`][b.pylonId]) {
+                    ctx.log[`${id}BombTracks`][b.pylonId] = [];
+                }
+                // Already in air: stay active, no re-launch.
+                if (b.active) b.launchStep = -1;
+            });
+            // Prune finished bombs so arrays stay small.
+            t.activeBombs = t.activeBombs.filter((b) => b && !b.exploded);
+
+            if (!t.pylons) return;
             if (!(t.wpnQueued && t.weapon === 'bomb' && (t.queuedAction === 'bomb' || t.queuedAction === 'missile'))) {
                 return;
             }
@@ -312,6 +393,7 @@
                     weaponType: 'bomb',
                     active: false,
                     launchStep: 0,
+                    ageSteps: 0,
                     pos: new THREE.Vector3(),
                     vel: new THREE.Vector3(),
                     quat: new THREE.Quaternion(),
@@ -338,10 +420,10 @@
     function resolveBombsForStep(step, ratio, ctx) {
         if (!ctx || !ctx.log) return;
         const cfg = bombConfig();
-        const fuseDelay = cfg.fuseDelaySteps != null ? Number(cfg.fuseDelaySteps) : 2;
-        const blastR = cfg.blastRadius != null ? Number(cfg.blastRadius) : 8;
+        const fuseDelay = cfg.fuseDelaySteps != null ? Number(cfg.fuseDelaySteps) : 1;
+        const blastR = cfg.blastRadius != null ? Number(cfg.blastRadius) : 10;
         const damage = cfg.damage != null ? Number(cfg.damage) : 80;
-        const groundY = cfg.groundY != null ? Number(cfg.groundY) : 0;
+        const knobs = ballisticKnobs({});
         const ids = (typeof combatActiveIds === 'function')
             ? combatActiveIds()
             : Object.keys(typeof teams !== 'undefined' ? teams : {});
@@ -371,12 +453,16 @@
                         const acQuat = (t.pathQuats && typeof getQuatAt === 'function')
                             ? getQuatAt(ratio, t.pathQuats)
                             : (t.wrapper.userData.logicalQuat || t.wrapper.quaternion).clone();
-                        const pylon = t.pylons.find((p) => p.id === b.pylonId);
+                        const pylon = (t.pylons || []).find((p) => p.id === b.pylonId);
                         const rel = estimateReleaseState(
-                            Object.assign({}, t, { pathPoints: t.pathPoints, pathQuats: t.pathQuats, wrapper: { position: acPos, quaternion: acQuat, userData: { logicalQuat: acQuat } }, ap: t.ap }),
+                            Object.assign({}, t, {
+                                pathPoints: t.pathPoints,
+                                pathQuats: t.pathQuats,
+                                wrapper: { position: acPos, quaternion: acQuat, userData: { logicalQuat: acQuat } },
+                                ap: t.ap
+                            }),
                             pylon
                         );
-                        // Prefer exact airframe pose at launch step.
                         b.pos.copy(acPos);
                         if (pylon && pylon.localPosition) {
                             b.pos.add(pylon.localPosition.clone().applyQuaternion(acQuat));
@@ -384,47 +470,24 @@
                         }
                         b.quat.copy(acQuat);
                         if (rel.vel) b.vel.copy(rel.vel);
-                        else {
-                            b.vel.copy(new THREE.Vector3(0, 0, 1).applyQuaternion(acQuat).multiplyScalar(10));
-                        }
+                        else b.vel.copy(new THREE.Vector3(0, 0, 1).applyQuaternion(acQuat).multiplyScalar(12));
+                        b.ageSteps = 0;
                         if (!tracks[b.pylonId]) tracks[b.pylonId] = [];
                         tracks[b.pylonId].push({ pos: b.pos.clone(), quat: b.quat.clone() });
                         return;
                     }
                 }
 
-                // One ballistic micro-step (matches computeBallisticPath dt).
-                const stepsPerTurn = (CONFIG.rules && CONFIG.rules.stepsPerTurn) || 100;
-                const dt = 1 / stepsPerTurn;
-                const g = (CONFIG.rules.gravity != null ? Number(CONFIG.rules.gravity) : 9.8)
-                    * (cfg.gravityScale != null ? Number(cfg.gravityScale) : 1);
-                const drag = cfg.drag != null ? Number(cfg.drag) : 0.012;
-                const oldPos = b.pos.clone();
-                b.vel.y -= g * dt;
-                b.vel.multiplyScalar(Math.max(0, 1 - drag * dt * 60));
-                b.pos.addScaledVector(b.vel, dt);
-                // Align nose with velocity.
-                if (b.vel.lengthSq() > 1e-6) {
-                    const look = b.vel.clone().normalize();
-                    const q = new THREE.Quaternion();
-                    q.setFromUnitVectors(new THREE.Vector3(0, 0, 1), look);
-                    b.quat.copy(q);
-                }
-
-                let hit = false;
-                if (b.pos.y <= groundY && oldPos.y > groundY) {
-                    const tHit = (oldPos.y - groundY) / Math.max(1e-6, (oldPos.y - b.pos.y));
-                    b.pos.copy(oldPos).lerp(b.pos, Math.max(0, Math.min(1, tHit)));
-                    b.pos.y = groundY;
-                    hit = true;
-                }
+                const integ = integrateBombFrame(b.pos, b.vel, b.quat, knobs);
+                b.ageSteps = (Number(b.ageSteps) || 0) + 1;
+                let hit = integ.hit;
 
                 // Building collision (same ray idea as missiles).
                 if (!hit && typeof obstacles !== 'undefined' && obstacles.length > 0) {
-                    const moveVec = new THREE.Vector3().subVectors(b.pos, oldPos);
+                    const moveVec = new THREE.Vector3().subVectors(b.pos, integ.oldPos);
                     const dist = moveVec.length();
                     if (dist > 1e-4) {
-                        const ray = new THREE.Raycaster(oldPos, moveVec.normalize());
+                        const ray = new THREE.Raycaster(integ.oldPos, moveVec.normalize());
                         const hits = ray.intersectObjects(obstacles, false);
                         if (hits.length && hits[0].distance <= dist) {
                             b.pos.copy(hits[0].point);
@@ -436,23 +499,19 @@
                 if (!tracks[b.pylonId]) tracks[b.pylonId] = [];
                 tracks[b.pylonId].push({ pos: b.pos.clone(), quat: b.quat.clone() });
 
-                if (hit && step >= (b.launchStep + fuseDelay)) {
+                const fuseOk = b.launchStep < 0
+                    ? true
+                    : (step >= (b.launchStep + fuseDelay));
+                if (hit && fuseOk) {
                     b.exploded = true;
                     b.hitGround = true;
                     explodedAt[b.pylonId] = step;
-                    ctx.log.vfxTriggers.push({
-                        type: 'explosion', step, pos: b.pos.clone(),
-                        rot: Math.random() * Math.PI * 2, scale: 1.8
-                    });
-                    ctx.log.vfxTriggers.push({
-                        type: 'flash', step, pos: b.pos.clone(),
-                        rot: Math.random() * Math.PI * 2, scale: 2.2
-                    });
+                    pushBombExplosionVfx(ctx, step, b.pos, cfg);
                     // Soft blast vs any aircraft in radius (ground targets deferred).
                     ids.forEach((vid) => {
-                        if (vid === id) return;
                         const vt = teams[vid];
                         if (!vt || vt.isDestroyed || !vt.pathPoints) return;
+                        // Friendly fire allowed for now (bomb is dumb).
                         const vPos = (typeof getPosAt === 'function')
                             ? getPosAt(ratio, vt.pathPoints)
                             : (vt.wrapper && vt.wrapper.position);
@@ -468,10 +527,12 @@
                     });
                 }
             });
+            // Drop finished bombs so multi-turn carry only keeps live rounds.
+            t.activeBombs = t.activeBombs.filter((b) => b && !b.exploded);
         });
     }
 
-    /** Replay / live combat visual for bombs in flight. */
+    /** Replay / live combat visual for bombs in flight (+ short trail). */
     function applyBombVisuals(step, log) {
         if (!log || typeof teams === 'undefined') return;
         const ids = (typeof combatActiveIds === 'function')
@@ -482,12 +543,8 @@
             if (!t || !t.pylons) return;
             const tracks = log[`${id}BombTracks`] || {};
             t.pylons.forEach((p) => {
-                const wt = (typeof pylonWeaponType === 'function') ? pylonWeaponType(p) : p.weaponType;
-                if (!isBombType(wt) && !(tracks[p.id] && tracks[p.id].length)) {
-                    if (p.bombFlyingMesh) p.bombFlyingMesh.visible = false;
-                    return;
-                }
-                const track = tracks[p.id] && tracks[p.id][step];
+                const trackArr = tracks[p.id];
+                const track = trackArr && trackArr[step];
                 const explodedAt = log[`${id}BombExplodedAt`] && log[`${id}BombExplodedAt`][p.id];
                 if (track && track.pos && (explodedAt == null || step < explodedAt)) {
                     if (!p.bombFlyingMesh && typeof bombMeshBase !== 'undefined' && bombMeshBase) {
@@ -499,8 +556,34 @@
                         if (track.quat) p.bombFlyingMesh.quaternion.copy(track.quat);
                         p.bombFlyingMesh.visible = true;
                     }
-                } else if (p.bombFlyingMesh) {
-                    p.bombFlyingMesh.visible = false;
+                    // Short dashed trail behind the falling bomb.
+                    if (trackArr && typeof scene !== 'undefined') {
+                        const trailPts = [];
+                        const back = Math.max(0, step - 18);
+                        for (let i = back; i <= step; i++) {
+                            const tr = trackArr[i];
+                            if (tr && tr.pos) trailPts.push(tr.pos);
+                        }
+                        if (trailPts.length >= 2) {
+                            if (!p.bombTrailLine) {
+                                p.bombTrailLine = new THREE.Line(
+                                    new THREE.BufferGeometry(),
+                                    new THREE.LineBasicMaterial({
+                                        color: 0xb8c878,
+                                        transparent: true,
+                                        opacity: 0.55
+                                    })
+                                );
+                                scene.add(p.bombTrailLine);
+                            }
+                            p.bombTrailLine.geometry.dispose();
+                            p.bombTrailLine.geometry = new THREE.BufferGeometry().setFromPoints(trailPts);
+                            p.bombTrailLine.visible = true;
+                        }
+                    }
+                } else {
+                    if (p.bombFlyingMesh) p.bombFlyingMesh.visible = false;
+                    if (p.bombTrailLine) p.bombTrailLine.visible = false;
                 }
             });
         });

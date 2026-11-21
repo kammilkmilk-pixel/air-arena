@@ -309,7 +309,9 @@ function finishTurnSimultaneously() {
             GameContext.stateMachine.setPostTurnPose(id, finalPos, finalQuat);
 
             let finalStepAP = (t.chain && t.chain.length > 0 && typeof t.chain[0].resultingAP === 'number' && !isNaN(t.chain[0].resultingAP)) ? t.chain[0].resultingAP : simulateFlight(t, t.chain && t.chain.length > 0 ? t.chain : [{yaw:0, pitch:0, roll:0, throttle:t.throttle}]).finalAP;
-            let stats = CONFIG.aircrafts[t.type || 'mig21'].throttleStats[t.throttle] || { thrust: 15, heat: 0 };
+            let stats = (typeof getThrottleStats === 'function')
+                ? getThrottleStats(t.throttle, t.type || 'mig21')
+                : (CONFIG.aircrafts[t.type || 'mig21'].throttleStats[Math.round(t.throttle)] || { thrust: 15, heat: 0 });
             let heatDelta = (t.chain && t.chain.length > 0 && typeof t.chain[0].heatDelta === 'number') ? t.chain[0].heatDelta : stats.heat;
             
             GameContext.stateMachine.updateHeat(id, heatDelta);

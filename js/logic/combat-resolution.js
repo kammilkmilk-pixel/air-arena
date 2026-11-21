@@ -28,7 +28,9 @@ function resolveGunsForStep(step, ratio, ctx) {
         if (!enemy || t.isDestroyed || enemy.isDestroyed || ctx.death[id] !== -1) return;
 
         if (t.chain && t.chain.length > 0 && t.chain[0].fire === 'gun') {
-            let stats = CONFIG.aircrafts[t.type || 'mig21'].throttleStats[t.throttle || 2] || { gunAngleMult: 1.0, gunRangeMult: 1.0 };
+            let stats = (typeof getThrottleStats === 'function')
+                ? getThrottleStats(t.throttle || 2, t.type || 'mig21')
+                : (CONFIG.aircrafts[t.type || 'mig21'].throttleStats[Math.round(t.throttle || 2)] || { gunAngleMult: 1.0, gunRangeMult: 1.0 });
             let dRange = (typeof GUN_RANGE !== 'undefined' ? GUN_RANGE : 35) * stats.gunRangeMult;
             let dAngle = (typeof GUN_ANGLE !== 'undefined' ? GUN_ANGLE : Math.PI/12) * stats.gunAngleMult;
 

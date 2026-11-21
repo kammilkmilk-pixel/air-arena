@@ -95,11 +95,12 @@ GameContext.stateMachine = {
         } else if (delta !== undefined) {
             t.heat = Math.max(minH, Math.min(maxH, (t.heat || minH) + delta));
         } else {
-            if (throttle === 5) t.heat = (t.heat || minH) + 22;
-            else if (throttle === 4) t.heat = Math.max(minH, (t.heat || minH) - 2);
-            else if (throttle === 3) t.heat = Math.max(minH, (t.heat || minH) - 6);
-            else if (throttle === 2) t.heat = Math.max(minH, (t.heat || minH) - 12);
-            else if (throttle === 1) t.heat = Math.max(minH, (t.heat || minH) - 18);
+            const stats = (typeof getThrottleStats === 'function')
+                ? getThrottleStats(throttle, t.type || 'mig21')
+                : { heat: throttle >= 4.5 ? 22 : (throttle >= 3.5 ? -2 : (throttle >= 2.5 ? -6 : (throttle >= 1.5 ? -12 : -18))) };
+            const heatDelta = Number(stats.heat) || 0;
+            if (heatDelta >= 0) t.heat = Math.min(maxH, (t.heat || minH) + heatDelta);
+            else t.heat = Math.max(minH, (t.heat || minH) + heatDelta);
 
             if (t.heat >= maxH) {
                 t.flameout = true;
@@ -167,8 +168,15 @@ GameContext.stateMachine = {
     setThrottle(teamId, level) {
         const t = this.getTeamOrNull(teamId);
         if (!t || t.isDestroyed || GameContext.isAnimating() || t.ready) return false;
-        const nextLevel = Math.max(1, Math.min(5, Math.round(level)));
-        if (nextLevel === 5 && (typeof getEngineHeatLevel === 'function' ? getEngineHeatLevel(t.heat) : ((t.heat || 0) - 150)) > 40) return false;
+        // Continuous 1.0–5.0 (無段變速); AI integers still work.
+        let nextLevel = (typeof clampThrottleLevel === 'function')
+            ? clampThrottleLevel(level)
+            : Math.max(1, Math.min(5, Number(level) || 4));
+        const heatLv = (typeof getEngineHeatLevel === 'function')
+            ? getEngineHeatLevel(t.heat)
+            : ((t.heat || 0) - 150);
+        // Soft AB lock: cannot push into the AB band (>4.5) when hot — clamp instead of reject.
+        if (nextLevel > 4.5 && heatLv > 40) nextLevel = 4.5;
         t.throttle = nextLevel;
         return true;
     },

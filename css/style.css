@@ -861,7 +861,7 @@ html.startup-lock body {
 .thr-mark.mark-active { color: #ff9800; text-shadow: 0 0 8px #ff9800; }
 .thr-mark { position: absolute !important; left: 18px !important; font-size: 9px !important; font-weight: bold !important; color: #777 !important; }
 .mark-top { top: 0% !important; color: #ff5500 !important; } .mark-mid { top: 45% !important; color: #4caf50 !important; } .mark-bot { bottom: 0% !important; color: #2196f3 !important; }
-#throttle-handle { position: absolute !important; left: -12px !important; width: 38px !important; height: 20px !important; background: #333 !important; border: 2px solid #aaa !important; border-radius: 4px !important; display: flex !important; align-items: center !important; justify-content: center !important; box-shadow: 0 4px 6px rgba(0,0,0,0.6) !important; cursor: grab !important; z-index: 50 !important; transform: translateY(-50%) !important; transition: top 0.15s ease-out !important; }
+#throttle-handle { position: absolute !important; left: -12px !important; width: 38px !important; height: 20px !important; background: #333 !important; border: 2px solid #aaa !important; border-radius: 4px !important; display: flex !important; align-items: center !important; justify-content: center !important; box-shadow: 0 4px 6px rgba(0,0,0,0.6) !important; cursor: grab !important; z-index: 50 !important; transform: translateY(-50%) !important; transition: none !important; }
 .handle-grip { width: 80% !important; height: 2px !important; background: #ffeb3b !important; box-shadow: 0 0 4px #ffeb3b !important; }
 
 /* ─── 右翼 HP 血條 ─── */

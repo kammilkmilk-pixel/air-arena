@@ -1,5 +1,5 @@
 // ============================================================================
-// physics.js - 物理與推演大腦 (5 檔暴力推重比與減速板物理優化版)
+// physics.js - 物理與推演大腦 (連續節流閥 1.0–5.0 無段變速 + 減速板)
 // ============================================================================
 
 function getQuatAt(t, quats) { 
@@ -12,7 +12,39 @@ function getQuatAt(t, quats) {
 }
 
 /**
- * 核心飛行物理模擬 (支援 5 檔節流閥與減速板)
+ * Resolve continuous throttle into sim knobs (thrust / turn / speed / brake).
+ * Prefer CONFIG lerp via getThrottleStats; keep local fallback if config missing.
+ */
+function resolveThrottleSimKnobs(thres, aircraftType) {
+    const t = (typeof clampThrottleLevel === 'function')
+        ? clampThrottleLevel(thres)
+        : Math.max(1, Math.min(5, Number(thres) || 4));
+    if (typeof getThrottleStats === 'function') {
+        const s = getThrottleStats(t, aircraftType);
+        const speedMult = Array.isArray(s.speedProfile)
+            ? (Number(s.speedProfile[0]) || 1)
+            : 1.5;
+        // BRK band: interpolate air-brake drag below throttle 2.
+        let brakeDrag = 0;
+        if (t < 2) brakeDrag = 140 * (2 - t);
+        return {
+            baseThrust: Number(s.thrust) || 0,
+            turnLimit: Number(s.turnLimit) || 1,
+            currentSpeedMult: speedMult,
+            brakeDrag,
+            heat: Number(s.heat) || 0
+        };
+    }
+    // Legacy discrete fallback
+    if (t >= 4.5) return { baseThrust: 180, turnLimit: 0.4, currentSpeedMult: 2.5, brakeDrag: 0 };
+    if (t >= 3.5) return { baseThrust: 65, turnLimit: 0.7, currentSpeedMult: 1.5, brakeDrag: 0 };
+    if (t >= 2.5) return { baseThrust: 30, turnLimit: 0.85, currentSpeedMult: 1.1, brakeDrag: 0 };
+    if (t >= 1.5) return { baseThrust: 5, turnLimit: 1.0, currentSpeedMult: 0.8, brakeDrag: 0 };
+    return { baseThrust: 0, turnLimit: 1.0, currentSpeedMult: 0.4, brakeDrag: 140 };
+}
+
+/**
+ * 核心飛行物理模擬 (連續節流閥 + 減速板)
  * @param {Object} teamObj - 戰機狀態實體
  * @param {Array} chain - 操控指令鏈
  */
@@ -28,37 +60,13 @@ function simulateFlight(teamObj, chain) {
     let quats = [simObj.quaternion.clone()];
     const FRAMES = 30; 
 
-    chain.forEach((cmd, idx) => {
-        let thres = cmd.throttle || teamObj.throttle || 4; // 預設為 4 檔 (MIL)
-        
-        // 🌟 5 檔動力與控制極限常數 (自適應防衝突設計，確保解耦 config.js)
-        let baseThrust = 65;
-        let turnLimit = 0.7;
-        let currentSpeedMult = 1.5;
-        let brakeDrag = 0;
-
-        if (thres === 5) {         // 5 檔 (AB 後燃器)
-            baseThrust = 180;
-            turnLimit = 0.4;
-            currentSpeedMult = 2.5;
-        } else if (thres === 4) {  // 4 檔 (MIL 最大軍規推力)
-            baseThrust = 65;
-            turnLimit = 0.7;
-            currentSpeedMult = 1.5;
-        } else if (thres === 3) {  // 3 檔 (ECO 經濟航巡模式)
-            baseThrust = 30;
-            turnLimit = 0.85;
-            currentSpeedMult = 1.1;
-        } else if (thres === 2) {  // 2 檔 (IDL 怠速冷卻模式)
-            baseThrust = 5;
-            turnLimit = 1.0;
-            currentSpeedMult = 0.8;
-        } else if (thres === 1) {  // 1 檔 (BRK 氣動減速板模式)
-            baseThrust = 0;
-            turnLimit = 1.0;
-            currentSpeedMult = 0.4;
-            brakeDrag = 140;       // 🔴 注入狂暴的空氣煞車阻力
-        }
+    chain.forEach((cmd) => {
+        let thres = (cmd.throttle != null ? cmd.throttle : teamObj.throttle) || 4;
+        const knobs = resolveThrottleSimKnobs(thres, teamObj.type || 'mig21');
+        const baseThrust = knobs.baseThrust;
+        const turnLimit = knobs.turnLimit;
+        const currentSpeedMult = knobs.currentSpeedMult;
+        const brakeDrag = knobs.brakeDrag;
 
         let dYaw = ((cmd.yaw || 0) * turnLimit) / FRAMES; 
         let dPitch = ((cmd.pitch || 0) * turnLimit) / FRAMES; 

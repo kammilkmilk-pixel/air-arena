@@ -88,7 +88,9 @@ function processFlightPaths(ctx) {
                 const ac = CONFIG.aircrafts[t.type || 'mig21'] || {};
                 const maxYaw = Number(ac.maxYaw) || Math.PI / 4;
                 const maxPitch = Number(ac.maxPitch) || Math.PI / 3;
-                const stats = (ac.throttleStats && ac.throttleStats[t.throttle]) || { heat: 0 };
+                const stats = (typeof getThrottleStats === 'function')
+                    ? getThrottleStats(t.throttle, t.type || 'mig21')
+                    : ((ac.throttleStats && ac.throttleStats[Math.round(t.throttle)]) || { heat: 0 });
                 let fireAct = t.queuedAction || 'none';
                 t.chain = [{
                     yaw: -(t.joyX * maxYaw),

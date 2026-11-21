@@ -654,7 +654,9 @@ window.updateTacticalPreview = function(teamObj) {
     }
     
     const acConfig = CONFIG.aircrafts[teamObj.type || 'mig21']; 
-    let stats = acConfig.throttleStats[teamObj.throttle] || { heat: 0 };
+    let stats = (typeof getThrottleStats === 'function')
+        ? getThrottleStats(teamObj.throttle, teamObj.type || 'mig21')
+        : (acConfig.throttleStats[Math.round(teamObj.throttle)] || { heat: 0 });
     
     // Stall warning: only on that aircraft’s chase view (multi-pane safe).
     if (window.AirArenaMultiView && typeof window.AirArenaMultiView.syncStallOverlays === 'function') {
@@ -705,7 +707,9 @@ window.updateTacticalPreview = function(teamObj) {
             currentRoll *= 0.4;
             currentPitch = Math.max(-acConfig.maxPitch, Math.min(-acConfig.maxPitch * 0.88, currentPitch));
             const recoveryThrottle = stallAlt < 18 ? Math.min(teamObj.throttle || 4, 3) : Math.min(teamObj.throttle || 4, 4);
-            const recoveryStats = acConfig.throttleStats[recoveryThrottle] || { heat: 0 };
+            const recoveryStats = (typeof getThrottleStats === 'function')
+                ? getThrottleStats(recoveryThrottle, teamObj.type || 'mig21')
+                : (acConfig.throttleStats[Math.round(recoveryThrottle)] || { heat: 0 });
             let fireAct = teamObj.queuedAction || 'none';
             if (fireAct === 'gun' && GameContext.stateMachine.isGunOverheated(teamObj.id)) fireAct = 'none';
             teamObj.chain = [{ yaw: currentYaw, pitch: currentPitch, roll: currentRoll, throttle: recoveryThrottle, heatDelta: recoveryStats.heat, fire: fireAct }];
@@ -827,7 +831,9 @@ function updateTargetingLock(teamObj) {
     
     let isLocked = false; 
     if (teamObj.weapon === 'gun') { 
-        let stats = CONFIG.aircrafts[teamObj.type || 'mig21'].throttleStats[teamObj.throttle] || { gunAngleMult: 1.0, gunRangeMult: 1.0 };
+        let stats = (typeof getThrottleStats === 'function')
+            ? getThrottleStats(teamObj.throttle, teamObj.type || 'mig21')
+            : (CONFIG.aircrafts[teamObj.type || 'mig21'].throttleStats[Math.round(teamObj.throttle)] || { gunAngleMult: 1.0, gunRangeMult: 1.0 });
         let dRange = GUN_RANGE * stats.gunRangeMult;
         let dAngle = GUN_ANGLE * stats.gunAngleMult;
         
