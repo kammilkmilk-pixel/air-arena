@@ -80,6 +80,11 @@ function executeTurnSimultaneously() {
             } else if (typeof GameContext !== 'undefined' && GameContext.callService) {
                 GameContext.callService('processBombDrops', ctx);
             }
+            if (typeof AirArenaRocket !== 'undefined' && typeof AirArenaRocket.processRocketSalvos === 'function') {
+                AirArenaRocket.processRocketSalvos(ctx);
+            } else if (typeof GameContext !== 'undefined' && GameContext.callService) {
+                GameContext.callService('processRocketSalvos', ctx);
+            }
             processFlares(ctx);
             if (typeof processChaff === 'function') processChaff(ctx);
             hitch.paths = nowMs() - hitch.t0;
@@ -93,6 +98,11 @@ function executeTurnSimultaneously() {
                     AirArenaBomb.resolveBombsForStep(step, ratio, ctx);
                 } else if (typeof GameContext !== 'undefined' && GameContext.callService) {
                     GameContext.callService('resolveBombsForStep', step, ratio, ctx);
+                }
+                if (typeof AirArenaRocket !== 'undefined' && typeof AirArenaRocket.resolveRocketsForStep === 'function') {
+                    AirArenaRocket.resolveRocketsForStep(step, ratio, ctx);
+                } else if (typeof GameContext !== 'undefined' && GameContext.callService) {
+                    GameContext.callService('resolveRocketsForStep', step, ratio, ctx);
                 }
                 resolveDamageAndDeathForStep(step, ratio, ctx);
             }

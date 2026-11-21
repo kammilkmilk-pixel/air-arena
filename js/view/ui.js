@@ -3030,6 +3030,8 @@ document.addEventListener("DOMContentLoaded", () => {
             );
         } else if (nextWeapon === 'bomb') {
             showSMSAlert('💣 炸彈模式｜CCIP 落地預示已開 — ENT 投放', '#c8e06a');
+        } else if (nextWeapon === 'rocket') {
+            showSMSAlert('🚀 火箭巢｜VT 齊射 3/回 · ~1s 間隔 — ENT 發射', '#ff9966');
         } else {
             showSMSAlert("⚠️ 主保險關閉：切換至機砲模式", "#ff0055");
         }
@@ -3049,12 +3051,12 @@ document.addEventListener("DOMContentLoaded", () => {
             let p = t.pylons.find(item => item.id === pylonId);
             if (!p || p.state === 'empty') { showSMSAlert("🛑 警告：該掛架彈藥耗盡", "#ff0055"); return; }
             const slotType = typeof pylonWeaponType === 'function' ? pylonWeaponType(p) : (p.weaponType || 'fox2');
-            // Bomb pylons: arm without seeker warm-up; FOX pylons auto-switch to missile mode.
-            if (slotType === 'bomb') {
-                if (t.weapon !== 'bomb') {
-                    if (!GameContext.stateMachine.setWeaponMode(currentTeam, 'bomb')) return;
+            // Bomb / rocket pylons: arm without seeker warm-up; FOX → missile mode.
+            if (slotType === 'bomb' || slotType === 'rocket') {
+                if (t.weapon !== slotType) {
+                    if (!GameContext.stateMachine.setWeaponMode(currentTeam, slotType)) return;
                 }
-            } else if (slotType !== 'rocket' && t.weapon !== 'missile') {
+            } else if (t.weapon !== 'missile') {
                 if (!GameContext.stateMachine.setWeaponMode(currentTeam, 'missile')) return;
             }
             const nextState = GameContext.stateMachine.togglePylonPower(currentTeam, pylonId);
@@ -3064,6 +3066,17 @@ document.addEventListener("DOMContentLoaded", () => {
                         ? `💣 PYLON ${pylonId} 炸彈就緒｜ENT 投放`
                         : `ℹ️ PYLON ${pylonId} 炸彈保險`,
                     nextState === 'armed' ? '#c8e06a' : '#aaa'
+                );
+            } else if (slotType === 'rocket') {
+                const ammo = (typeof AirArenaRocket !== 'undefined')
+                    ? AirArenaRocket.ensurePodAmmo(p)
+                    : (p.ammo || 0);
+                const max = p.ammoMax || 9;
+                showSMSAlert(
+                    nextState === 'armed'
+                        ? `🚀 PYLON ${pylonId} 火箭巢就緒 ${ammo}/${max}｜ENT 齊射`
+                        : `ℹ️ PYLON ${pylonId} 火箭保險 ${ammo}/${max}`,
+                    nextState === 'armed' ? '#ff9966' : '#aaa'
                 );
             } else if (nextState === 'powering') {
                 showSMSAlert(`⚡ PYLON ${pylonId} 開始開機通電`, "#ffbb00");
@@ -3396,6 +3409,22 @@ function updateDashboardUI(teamObj) {
                     : 0;
                 if (teamObj.wpnQueued && teamObj.queuedAction === 'bomb') statusText = '[已排程]';
                 else statusText = bombArmed > 0 ? '[就緒]' : '[未通電]';
+            } else if (teamObj.weapon === 'rocket') {
+                const pods = (typeof AirArenaRocket !== 'undefined')
+                    ? AirArenaRocket.teamRocketPylons(teamObj)
+                    : [];
+                const armedPod = pods.find((p) => p.state === 'armed') || pods[0];
+                const ammo = armedPod && typeof AirArenaRocket !== 'undefined'
+                    ? AirArenaRocket.ensurePodAmmo(armedPod)
+                    : 0;
+                const max = (armedPod && armedPod.ammoMax) || 9;
+                const salvo = Math.min(
+                    (typeof AirArenaRocket !== 'undefined' ? AirArenaRocket.salvoPerTurn() : 3),
+                    ammo
+                );
+                wpnName = `火箭 VT ${ammo}/${max}`;
+                if (teamObj.wpnQueued && teamObj.queuedAction === 'rocket') statusText = `[齊射×${salvo}]`;
+                else statusText = (armedPod && armedPod.state === 'armed' && ammo > 0) ? '[就緒]' : '[未通電]';
             } else if (teamObj.weapon === 'missile') {
                 wpnName = liveType === 'fox1' ? 'FOX-1' : 'FOX-2';
                 if (teamObj.wpnQueued) { statusText = '[已排程]'; }
@@ -3409,7 +3438,9 @@ function updateDashboardUI(teamObj) {
                 wpnName = '機砲 [INF]';
             }
             elSmsContent.innerText = `狀態 ${statusText} ${wpnName}`;
-            elSmsContent.style.color = teamObj.weapon === 'bomb' ? '#c8e06a' : '#ffeb3b';
+            elSmsContent.style.color = teamObj.weapon === 'bomb'
+                ? '#c8e06a'
+                : (teamObj.weapon === 'rocket' ? '#ff9966' : '#ffeb3b');
         }
     }
     uiUpdateSmsRadarLockWarn(teamObj);
@@ -3419,7 +3450,16 @@ function updateDashboardUI(teamObj) {
             let stick = document.getElementById(`pylon-stick-${p.id}`);
             let label = document.querySelector(`.pylon-switch-wrapper[data-pylon="${p.id}"] .pylon-label`);
             const wt = typeof pylonWeaponType === 'function' ? pylonWeaponType(p) : p.weaponType;
-            const wLabel = wt === 'fox1' ? 'F1' : (wt === 'bomb' ? 'BOMB' : (wt === 'rocket' ? 'RKT' : 'F2'));
+            let wLabel = 'F2';
+            if (wt === 'fox1') wLabel = 'F1';
+            else if (wt === 'bomb') wLabel = 'BOMB';
+            else if (wt === 'rocket') {
+                const ammo = (typeof AirArenaRocket !== 'undefined')
+                    ? AirArenaRocket.ensurePodAmmo(p)
+                    : (Number(p.ammo) || 0);
+                const max = Number(p.ammoMax) || 9;
+                wLabel = `RKT ${ammo}/${max}`;
+            }
             if (label) label.innerText = `PYLON ${p.id} ${wLabel}`;
             if (stick) {
                 stick.className = 'pylon-stick';
@@ -3676,6 +3716,26 @@ function uiToggleWeaponFireQueue(teamId = null) {
             showSMSAlert(
                 wasQueued ? '⚠️ 炸彈投放已取消' : '💣 炸彈投放已排程 — 執行回合後落下',
                 wasQueued ? '#aaa' : '#c8e06a'
+            );
+        }
+    } else if (t.weapon === 'rocket') {
+        const pods = (typeof AirArenaRocket !== 'undefined')
+            ? AirArenaRocket.teamRocketPylons(t).filter((p) => p.state === 'armed' && AirArenaRocket.ensurePodAmmo(p) > 0)
+            : [];
+        const wasQueued = t.wpnQueued && t.queuedAction === 'rocket';
+        const ok = GameContext.stateMachine.toggleRocketQueue
+            ? GameContext.stateMachine.toggleRocketQueue(currentTeam)
+            : false;
+        const ammo = pods[0] ? AirArenaRocket.ensurePodAmmo(pods[0]) : 0;
+        const salvo = Math.min((typeof AirArenaRocket !== 'undefined' ? AirArenaRocket.salvoPerTurn() : 3), ammo);
+        if (!ok && !wasQueued) {
+            showSMSAlert(pods.length ? '🛑 火箭無法排程' : '🛑 無火箭就緒／彈藥耗盡', '#ff0055');
+        } else {
+            showSMSAlert(
+                wasQueued
+                    ? '⚠️ 火箭齊射已取消'
+                    : `🚀 火箭齊射已排程 ×${salvo}（VT · ~1s 間隔）`,
+                wasQueued ? '#aaa' : '#ff9966'
             );
         }
     } else {

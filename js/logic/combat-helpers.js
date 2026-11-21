@@ -100,10 +100,17 @@ function tryAttachAllPylons() {
                 weaponType,
                 state: isEmpty ? 'empty' : 'standby'
             };
+            if (weaponType === 'rocket') {
+                const maxR = (typeof CONFIG !== 'undefined' && CONFIG.weapons && CONFIG.weapons.rocket
+                    && Number(CONFIG.weapons.rocket.roundsPerPod)) || 9;
+                pylonState.ammoMax = maxR;
+                pylonState.ammo = maxR;
+            }
             return GameContext.bindPylonView(id, pylonState, { mesh: pMesh, lineMesh: null });
         });
         t.activeMissiles = [];
         t.activeBombs = [];
+        t.activeRockets = [];
         t.pendingPylonLoadout = null;
     });
 }

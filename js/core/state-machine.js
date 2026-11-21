@@ -813,11 +813,16 @@ GameContext.stateMachine = {
         if (!t || t.isDestroyed || GameContext.isAnimating() || GameContext.isReplayMode() || t.ready) return false;
         if (weapon === 'missile') t.weapon = 'missile';
         else if (weapon === 'bomb') t.weapon = 'bomb';
+        else if (weapon === 'rocket') t.weapon = 'rocket';
         else t.weapon = 'gun';
         this.clearQueuedAction(teamId);
         if (typeof AirArenaBomb !== 'undefined') {
             if (t.weapon === 'bomb') AirArenaBomb.armBombPylons(t);
             else AirArenaBomb.standbyBombPylons(t);
+        }
+        if (typeof AirArenaRocket !== 'undefined') {
+            if (t.weapon === 'rocket') AirArenaRocket.armRocketPylons(t);
+            else AirArenaRocket.standbyRocketPylons(t);
         }
         return true;
     },
@@ -828,11 +833,16 @@ GameContext.stateMachine = {
         if (!t || t.isDestroyed) return false;
         if (weapon === 'missile') t.weapon = 'missile';
         else if (weapon === 'bomb') t.weapon = 'bomb';
+        else if (weapon === 'rocket') t.weapon = 'rocket';
         else t.weapon = 'gun';
         this.clearQueuedAction(teamId);
         if (typeof AirArenaBomb !== 'undefined') {
             if (t.weapon === 'bomb') AirArenaBomb.armBombPylons(t);
             else AirArenaBomb.standbyBombPylons(t);
+        }
+        if (typeof AirArenaRocket !== 'undefined') {
+            if (t.weapon === 'rocket') AirArenaRocket.armRocketPylons(t);
+            else AirArenaRocket.standbyRocketPylons(t);
         }
         return true;
     },
@@ -840,14 +850,16 @@ GameContext.stateMachine = {
     toggleWeaponMode(teamId) {
         const t = this.getTeamOrNull(teamId);
         if (!t) return null;
-        // gun → missile → bomb → gun (bomb only when a bomb store exists)
+        // gun → missile → bomb → rocket → gun (skip missing stores)
+        const hasBomb = typeof AirArenaBomb !== 'undefined'
+            && AirArenaBomb.teamBombPylons(t).length > 0;
+        const hasRocket = typeof AirArenaRocket !== 'undefined'
+            && AirArenaRocket.teamRocketPylons(t).length > 0;
         let nextWeapon = 'gun';
         if (t.weapon === 'gun') nextWeapon = 'missile';
-        else if (t.weapon === 'missile') {
-            const hasBomb = typeof AirArenaBomb !== 'undefined'
-                && AirArenaBomb.teamBombPylons(t).length > 0;
-            nextWeapon = hasBomb ? 'bomb' : 'gun';
-        } else nextWeapon = 'gun';
+        else if (t.weapon === 'missile') nextWeapon = hasBomb ? 'bomb' : (hasRocket ? 'rocket' : 'gun');
+        else if (t.weapon === 'bomb') nextWeapon = hasRocket ? 'rocket' : 'gun';
+        else nextWeapon = 'gun';
         return this.setWeaponMode(teamId, nextWeapon) ? nextWeapon : null;
     },
 
@@ -869,7 +881,7 @@ GameContext.stateMachine = {
             this.clearQueuedAction(teamId);
             return false;
         }
-        t.wpnQueued = action === 'gun' || action === 'missile' || action === 'bomb';
+        t.wpnQueued = action === 'gun' || action === 'missile' || action === 'bomb' || action === 'rocket';
         t.queuedAction = action;
         t.flaresArmed = action === 'flare';
         return true;
@@ -888,6 +900,24 @@ GameContext.stateMachine = {
         }
         if (t.wpnQueued && t.queuedAction === 'bomb') return this.clearQueuedAction(teamId);
         return this.queueAction(teamId, 'bomb');
+    },
+
+    /** Human SMS: queue rocket-pod salvo (3/turn, VT). */
+    toggleRocketQueue(teamId) {
+        const t = this.getTeamOrNull(teamId);
+        if (!t || t.weapon !== 'rocket' || !t.pylons) return false;
+        const armed = (typeof AirArenaRocket !== 'undefined')
+            ? AirArenaRocket.teamRocketPylons(t).filter((p) => {
+                const ammo = AirArenaRocket.ensurePodAmmo(p);
+                return p.state === 'armed' && ammo > 0;
+            })
+            : t.pylons.filter((p) => p.state === 'armed' && p.weaponType === 'rocket' && (p.ammo || 0) > 0);
+        if (armed.length <= 0) {
+            this.clearQueuedAction(teamId);
+            return false;
+        }
+        if (t.wpnQueued && t.queuedAction === 'rocket') return this.clearQueuedAction(teamId);
+        return this.queueAction(teamId, 'rocket');
     },
 
     toggleGunQueue(teamId) {
@@ -993,14 +1023,21 @@ GameContext.stateMachine = {
         const p = t.pylons.find(item => item.id === pylonId);
         if (!p || p.state === 'empty') return null;
         const wType = typeof pylonWeaponType === 'function' ? pylonWeaponType(p) : (p.weaponType || 'fox2');
-        // Bombs: standby ↔ armed (no seeker warm-up). Rockets stay visual-only for now.
-        if (wType === 'bomb') {
+        // Bombs / rockets: standby ↔ armed (no seeker warm-up).
+        if (wType === 'bomb' || wType === 'rocket') {
+            if (wType === 'rocket' && typeof AirArenaRocket !== 'undefined') {
+                AirArenaRocket.ensurePodAmmo(p);
+                if ((p.ammo || 0) <= 0) {
+                    p.state = 'empty';
+                    return 'empty';
+                }
+            }
             if (p.state === 'standby' || p.state === 'powering') {
                 p.state = 'armed';
-                if (t.weapon !== 'bomb') this.setWeaponMode(teamId, 'bomb');
+                if (t.weapon !== wType) this.setWeaponMode(teamId, wType);
             } else if (p.state === 'armed') {
                 p.state = 'standby';
-                if (t.queuedAction === 'bomb') this.clearQueuedAction(teamId);
+                if (t.queuedAction === wType) this.clearQueuedAction(teamId);
             }
             return p.state;
         }

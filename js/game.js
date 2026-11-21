@@ -802,6 +802,11 @@ window.updateTacticalPreview = function(teamObj) {
     } else if (typeof GameContext !== 'undefined' && GameContext.callService) {
         GameContext.callService('updateBombCcipPreview', teamObj);
     }
+    if (typeof AirArenaRocket !== 'undefined' && typeof AirArenaRocket.updateRocketAimPreview === 'function') {
+        AirArenaRocket.updateRocketAimPreview(teamObj);
+    } else if (typeof GameContext !== 'undefined' && GameContext.callService) {
+        GameContext.callService('updateRocketAimPreview', teamObj);
+    }
     if (typeof updateDashboardUI === 'function') updateDashboardUI(teamObj);
     if (typeof updateDynamicHUD === 'function') updateDynamicHUD(); 
 };

@@ -199,19 +199,44 @@ const CONFIG = {
             }
         },
         /**
-         * Rocket pod stub (A2A/A2G). Not wired to decide / SMS fire.
-         * Phase B must close before an AI weapon knife. Sanitize still maps unknown → fox2;
-         * keep this id out of live pylons until then.
-         * model.* is used by the ground-store visual preview only.
+         * Rocket pod — human SMS path (salvo + VT fuse). AI decide still off.
+         * 9 rounds/pod; 3 per turn; ~1s spacing (intervalSteps ≈ turn/3).
          */
         'rocket': {
             id: 'rocket',
-            name: '火箭巢（佔位）',
+            name: '火箭巢',
             aiEnabled: false,
             dualRole: true,
-            damage: 18,
-            range: 55,
-            count: 7,
+            damage: 22,
+            range: 70,
+            /** Ammo in one pod. */
+            roundsPerPod: 9,
+            /** Rockets released per ENT / turn. */
+            salvoPerTurn: 3,
+            /**
+             * Combat frames between rockets in a salvo.
+             * stepsPerTurn=100 ≈ one turn; 33 ≈ ~1s if a turn feels ~3s.
+             */
+            intervalSteps: 33,
+            /** Launch speed (world units / turn-second) along nose. */
+            launchSpeed: 55,
+            launchSpeedScale: 1.0,
+            drag: 0.002,
+            gravityScale: 0.55,
+            substeps: 2,
+            groundY: 0,
+            /** VT proximity fuse radius (m). */
+            vtRadius: 4.5,
+            /** Also VT-trigger when altitude below this (airburst near ground). */
+            vtGroundHeight: 3.5,
+            fuseDelaySteps: 4,
+            blastRadius: 6,
+            explosionScale: 1.6,
+            flashScale: 2.0,
+            puffScale: 1.4,
+            sparkCount: 48,
+            sparkPower: 0.7,
+            maxFlightSteps: 220,
             model: {
                 /**
                  * Pylon-local nudge (aircraft axes, no clamp):
@@ -246,7 +271,7 @@ const CONFIG = {
             /** Ballistic (game units ≈ m; step = 1/stepsPerTurn of a turn). */
             releaseSpeedScale: 1.0,
             /** Horizontal drag (vertical mostly gravity). Lower = longer glide. */
-            drag: 0.004,
+            drag: 0.001,
             gravityScale: 1.15,
             /** Physics substeps per combat frame (smoother + reliable ground hit). */
             substeps: 2,
