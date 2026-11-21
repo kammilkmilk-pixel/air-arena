@@ -778,42 +778,57 @@ html.startup-lock body {
     stroke: rgba(255,255,255,0.55);
     stroke-width: 1.5;
 }
-.ops-radial-rim-inner {
-    stroke: rgba(255,255,255,0.35);
-    stroke-width: 1;
+#ops-hp-ring {
+    transition: stroke 0.2s ease, stroke-dashoffset 0.25s ease;
+    pointer-events: none;
 }
+#ops-hp-track, #ops-center-disc { pointer-events: none; }
+.ops-ok-wedge {
+    fill: rgba(255, 235, 59, 0.22);
+    stroke: rgba(255, 235, 59, 0.75);
+    stroke-width: 1.25;
+    pointer-events: none;
+}
+#ops-radial-ring.is-ok-ready .ops-ok-wedge {
+    fill: rgba(0, 255, 136, 0.28);
+    stroke: rgba(0, 255, 136, 0.9);
+}
+#ops-radial-ring.is-ok-ai .ops-ok-wedge {
+    fill: rgba(74, 163, 255, 0.25);
+    stroke: rgba(74, 163, 255, 0.85);
+}
+/* Bottom ~1/5 of enlarged center circle = OK hit target */
 .ops-radial-ok {
     position: absolute;
     left: 50%;
     top: 50%;
+    width: 118px;
+    height: 118px;
+    margin: 0;
     transform: translate(-50%, -50%);
-    width: 64px;
-    height: 64px;
+    border: 0;
     border-radius: 50%;
-    border: 1.5px solid rgba(255,235,59,0.85);
-    background: rgba(12,12,12,0.72);
+    padding: 0;
+    /* Sector matches SVG ops-ok-wedge (bottom 72°) */
+    clip-path: path("M 59 59 L 24.9 105.9 A 58 58 0 0 0 93.1 105.9 Z");
+    background: transparent;
     color: #ffeb3b;
     font-family: 'Courier New', monospace;
-    font-size: 15px;
+    font-size: 12px;
     font-weight: bold;
     letter-spacing: 1px;
     cursor: pointer;
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
-    box-shadow: 0 0 16px rgba(255,235,59,0.22);
     pointer-events: auto;
     z-index: 3;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    padding-bottom: 10px;
+    box-sizing: border-box;
+    text-shadow: 0 1px 3px #000;
 }
-.ops-radial-ok.is-ready {
-    color: #fff;
-    border-color: #00ff88;
-    background: rgba(0, 120, 70, 0.75);
-    box-shadow: 0 0 16px rgba(0,255,136,0.28);
-}
-.ops-radial-ok.is-ai {
-    color: #9ad0ff;
-    border-color: #4aa3ff;
-}
+.ops-radial-ok.is-ready { color: #fff; }
+.ops-radial-ok.is-ai { color: #9ad0ff; }
 .ops-radial-ok:disabled { opacity: 0.45; cursor: default; }
 
 .ops-wedge-hit {

@@ -124,19 +124,8 @@
         if (window.ghostWrapper) window.ghostWrapper.add(gizmo);
         else scene.add(gizmo);
 
-        const hpRing = new THREE.Mesh(
-            new THREE.RingGeometry(0.85, 0.95, 64),
-            new THREE.MeshBasicMaterial({
-                color: 0x00ff88, transparent: true, opacity: 0.7,
-                depthWrite: false, side: THREE.DoubleSide
-            })
-        );
-        hpRing.name = 'opsHpRing';
-        hpRing.rotation.x = Math.PI / 2;
-        hpRing.visible = false;
-        scene.add(hpRing);
-
-        OpsRadial._3d = { gizmo, pts, stick, hpRing, outer, inner };
+        // HP lives on the 2D center rim (ops-hp-ring) — no 3D AABB ring (was jittering).
+        OpsRadial._3d = { gizmo, pts, stick, outer, inner };
         return OpsRadial._3d;
     }
 
@@ -145,7 +134,7 @@
         if (!o || !team) return;
         const show = !!OpsRadial.open && !GameContext.isReplayMode() && !GameContext.isAnimating();
 
-        // Ghost gizmo
+        // Ghost gizmo only (white rings / control points)
         if (o.gizmo) {
             const ghostOn = show && window.ghostWrapper && window.ghostWrapper.visible;
             o.gizmo.visible = !!ghostOn;
@@ -161,31 +150,24 @@
                 o.outer.rotation.z = -roll;
             }
         }
+    }
 
-        // HP ring on aircraft body
-        if (o.hpRing && team.wrapper) {
-            const onAc = show && team.wrapper.visible && !team.isDestroyed;
-            o.hpRing.visible = !!onAc;
-            if (onAc) {
-                const hp = Math.max(0, Math.min(100, Number(team.hp) || 0));
-                const col = hp > 60 ? 0x00ff88 : (hp > 30 ? 0xffaa00 : 0xff3355);
-                o.hpRing.material.color.setHex(col);
-                o.hpRing.material.opacity = 0.45 + 0.4 * (hp / 100);
-                team.wrapper.updateMatrixWorld(true);
-                const box = new THREE.Box3().setFromObject(team.wrapper);
-                const c = box.getCenter(new THREE.Vector3());
-                const size = box.getSize(new THREE.Vector3());
-                const r = Math.max(0.6, Math.max(size.x, size.z) * 0.55);
-                o.hpRing.geometry.dispose();
-                o.hpRing.geometry = new THREE.RingGeometry(r * 0.92, r, 64);
-                o.hpRing.position.copy(c);
-                o.hpRing.position.y = box.min.y + 0.05;
-                o.hpRing.quaternion.copy(team.wrapper.quaternion);
-                // Keep ring roughly body-horizontal: use world up tilt from aircraft
-                o.hpRing.rotation.x = Math.PI / 2;
-                o.hpRing.rotation.z = 0;
-            }
-        }
+    /** Center-disc rim = HP (stable SVG stroke; no per-frame mesh rebuild). */
+    const HP_R = 58;
+    const HP_CIRC = 2 * Math.PI * HP_R;
+
+    function syncHpRing(team) {
+        const el = $('ops-hp-ring');
+        if (!el) return;
+        const hp = Math.max(0, Math.min(100, Number(team && team.hp) || 0));
+        const filled = (hp / 100) * HP_CIRC;
+        el.setAttribute('stroke-dasharray', `${filled} ${HP_CIRC}`);
+        el.setAttribute('stroke-dashoffset', '0');
+        let col = '#00ff88';
+        if (hp <= 30) col = '#ff3355';
+        else if (hp <= 60) col = '#ffaa00';
+        el.setAttribute('stroke', col);
+        el.setAttribute('title', `HP ${Math.round(hp)}`);
     }
 
     function paintGhostThrottle(team) {
@@ -226,10 +208,7 @@
         } else {
             stopTrack();
             const o = OpsRadial._3d;
-            if (o) {
-                if (o.gizmo) o.gizmo.visible = false;
-                if (o.hpRing) o.hpRing.visible = false;
-            }
+            if (o && o.gizmo) o.gizmo.visible = false;
         }
     }
 
@@ -277,7 +256,7 @@
         while (g.firstChild) g.removeChild(g.firstChild);
         const mk = (a0, a1, fill, id) => {
             const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-            path.setAttribute('d', wedgePath(a0, a1, 40, 90));
+            path.setAttribute('d', wedgePath(a0, a1, WEDGE_R0, WEDGE_R1));
             path.setAttribute('fill', fill);
             path.setAttribute('stroke', 'rgba(255,255,255,0.45)');
             path.setAttribute('stroke-width', '1');
@@ -302,6 +281,10 @@
             mk(a0, a1, wedgeColor(p && p.state), `pylon-${idx + 1}`);
         });
     }
+
+    // Outer weapon ring sits outside the enlarged HP center disc (r≈58).
+    const WEDGE_R0 = 60;
+    const WEDGE_R1 = 92;
 
     function refresh(teamObj) {
         const id = OpsRadial.teamId || (typeof uiCurrentTeamId === 'function' ? uiCurrentTeamId() : null);
@@ -329,16 +312,25 @@
             }
         });
 
+        syncHpRing(team);
+
         const ok = $('ops-radial-ok');
+        const ring = $('ops-radial-ring');
+        const live = (typeof uiIsSeatLive === 'function') ? uiIsSeatLive(team.id) : true;
+        const ready = !!team.ready && !team.aiEnabled;
+        const isAi = !!team.aiEnabled;
         if (ok) {
-            const live = (typeof uiIsSeatLive === 'function') ? uiIsSeatLive(team.id) : true;
             ok.disabled = !live || !!team.isDestroyed || GameContext.isAnimating() || GameContext.isReplayMode();
-            ok.classList.toggle('is-ready', !!team.ready && !team.aiEnabled);
-            ok.classList.toggle('is-ai', !!team.aiEnabled);
+            ok.classList.toggle('is-ready', ready);
+            ok.classList.toggle('is-ai', isAi);
             if (!live || team.isDestroyed) ok.textContent = '—';
-            else if (team.aiEnabled) ok.textContent = 'AI';
-            else if (team.ready) ok.textContent = '待命';
+            else if (isAi) ok.textContent = 'AI';
+            else if (ready) ok.textContent = '待命';
             else ok.textContent = 'OK';
+        }
+        if (ring) {
+            ring.classList.toggle('is-ok-ready', ready);
+            ring.classList.toggle('is-ok-ai', isAi);
         }
 
         const heat = $('ops-val-heat');
