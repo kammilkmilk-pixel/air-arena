@@ -356,15 +356,17 @@
         const ap = document.querySelector('#ghost-handle-stats .ghost-handle-stat-ap');
         const leftPct = ((70 - r) / 140) * 100;
         const rightPct = ((70 + r) / 140) * 100;
+        // Clear the grip half-width (~11 SVG ≈ 9px) plus a readable gap.
+        const gapPx = 16;
         if (heat) {
             heat.style.left = `${leftPct}%`;
             heat.style.top = '50%';
-            heat.style.transform = 'translate(-110%, -50%)';
+            heat.style.transform = `translate(calc(-100% - ${gapPx}px), -50%)`;
         }
         if (ap) {
             ap.style.left = `${rightPct}%`;
             ap.style.top = '50%';
-            ap.style.transform = 'translate(10%, -50%)';
+            ap.style.transform = `translate(${gapPx}px, -50%)`;
         }
     }
 
