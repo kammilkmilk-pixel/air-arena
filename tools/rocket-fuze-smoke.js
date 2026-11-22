@@ -186,4 +186,45 @@ assert.strictEqual(shooter.activeRockets.length, 1, 'VT rocket should burst at 4
 assert.strictEqual(shooter.activeRockets[0].fuze, 'impact', 'Remaining rocket must be the impact-fuzed rocket');
 assert(stepCtx.hp.blue < 100, 'VT proximity burst should damage enemy within 6m');
 
+// 5. Obstacle broadphase: building hit still found, open-air segments skip the narrow-phase raycast.
+class Box3 {
+    constructor() { this.min = new Vector3(Infinity, Infinity, Infinity); this.max = new Vector3(-Infinity, -Infinity, -Infinity); }
+    setFromObject(obj) { this.min.copy(obj.userData.box.min); this.max.copy(obj.userData.box.max); return this; }
+    intersectsBox(b) {
+        return !(b.max.x < this.min.x || b.min.x > this.max.x || b.max.y < this.min.y || b.min.y > this.max.y || b.max.z < this.min.z || b.min.z > this.max.z);
+    }
+}
+let narrowCalls = 0;
+class Raycaster {
+    constructor() { this.origin = new Vector3(); this.dir = new Vector3(); this.near = 0; this.far = Infinity; }
+    set(o, d) { this.origin.copy(o); this.dir.copy(d); }
+    intersectObjects(objs) {
+        narrowCalls++;
+        const out = [];
+        objs.forEach((obj) => {
+            const b = obj.userData.box;
+            let t0 = this.near, t1 = this.far;
+            for (const ax of ['x', 'y', 'z']) {
+                const o = this.origin[ax], d = this.dir[ax];
+                if (Math.abs(d) < 1e-9) { if (o < b.min[ax] || o > b.max[ax]) return; continue; }
+                let ta = (b.min[ax] - o) / d, tb = (b.max[ax] - o) / d;
+                if (ta > tb) [ta, tb] = [tb, ta];
+                t0 = Math.max(t0, ta); t1 = Math.min(t1, tb);
+                if (t0 > t1) return;
+            }
+            out.push({ distance: t0, point: this.origin.clone().addScaledVector(this.dir, t0), object: obj, face: null });
+        });
+        return out.sort((a, b) => a.distance - b.distance);
+    }
+}
+THREE.Box3 = Box3;
+THREE.Raycaster = Raycaster;
+const wall = { userData: { box: { min: new Vector3(-20, 0, 30), max: new Vector3(20, 60, 34) } } };
+global.obstacles = [wall];
+const wallHit = R.predictRocketImpact(new Vector3(0, 20, 0), new Vector3(0, 0, 60), new Quaternion(), { fuze: 'impact' });
+assert.strictEqual(wallHit.hitKind, 'building', 'Impact rocket should stop on building face');
+assert(Math.abs(wallHit.impact.z - 30) < 0.01, 'Building impact should be on the wall face, got z=' + wallHit.impact.z);
+assert(narrowCalls <= 2, 'Broadphase should skip open-air segments, narrow calls=' + narrowCalls);
+global.obstacles = [];
+
 console.log('rocket-fuze-smoke: PASS');

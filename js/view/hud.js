@@ -1608,7 +1608,7 @@ window.updateDynamicHUD = function() {
         const myGhostForward = new THREE.Vector3(0, 0, 1).applyQuaternion(myGhostQuat).normalize();
         const noseAnchor = myGhostPos.clone().add(myGhostForward.clone().multiplyScalar(18));
         const sol = (typeof AirArenaRocket !== 'undefined' && typeof AirArenaRocket.computeRocketAimSolution === 'function')
-            ? AirArenaRocket.computeRocketAimSolution(t, isObscured ? null : enemy)
+            ? AirArenaRocket.computeRocketAimSolution(t, enemy)
             : null;
         const fuze = (sol && sol.fuze)
             || ((typeof AirArenaRocket !== 'undefined' && typeof AirArenaRocket.getTeamFuzeMode === 'function')

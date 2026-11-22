@@ -101,6 +101,11 @@
         return team.activeRockets;
     }
 
+    /** Integration steps per obstacle ray segment (~5m chord; rocket arc is near-straight at that scale). */
+    const OBS_SEG_STEPS = 6;
+    const AIM_CACHE_SLOTS = 4;
+    const AIM_LINE_MAX_PTS = 256;
+
     function ballisticKnobs() {
         const cfg = rocketConfig();
         const stepsPerTurn = (typeof CONFIG !== 'undefined' && CONFIG.rules && CONFIG.rules.stepsPerTurn)
@@ -117,28 +122,102 @@
         };
     }
 
-    function integrateRocketFrame(pos, vel, quat, knobs) {
-        const oldPos = pos.clone();
+    let _tmp = null;
+    function temps() {
+        if (!_tmp) {
+            _tmp = {
+                before: new THREE.Vector3(),
+                dir: new THREE.Vector3(),
+                fwd: new THREE.Vector3(0, 0, 1)
+            };
+        }
+        return _tmp;
+    }
+
+    /** @param {boolean} [skipOldPos] solver loops that never read oldPos skip the clone */
+    function integrateRocketFrame(pos, vel, quat, knobs, skipOldPos) {
+        const tmp = temps();
+        const oldPos = skipOldPos ? null : pos.clone();
         const subDt = knobs.dt / knobs.substeps;
+        const dragK = Math.max(0, 1 - knobs.drag * subDt * 60);
         let hitGround = false;
         for (let s = 0; s < knobs.substeps; s++) {
-            const before = pos.clone();
+            const bx = pos.x, by = pos.y, bz = pos.z;
             vel.y -= knobs.g * subDt;
-            vel.x *= Math.max(0, 1 - knobs.drag * subDt * 60);
-            vel.z *= Math.max(0, 1 - knobs.drag * subDt * 60);
+            vel.x *= dragK;
+            vel.z *= dragK;
             pos.addScaledVector(vel, subDt);
-            if (pos.y <= knobs.groundY && before.y > knobs.groundY) {
-                const tHit = (before.y - knobs.groundY) / Math.max(1e-6, (before.y - pos.y));
-                pos.copy(before).lerp(pos, Math.max(0, Math.min(1, tHit)));
-                pos.y = knobs.groundY;
+            if (pos.y <= knobs.groundY && by > knobs.groundY) {
+                const tHit = Math.max(0, Math.min(1, (by - knobs.groundY) / Math.max(1e-6, (by - pos.y))));
+                pos.set(bx + (pos.x - bx) * tHit, knobs.groundY, bz + (pos.z - bz) * tHit);
                 hitGround = true;
                 break;
             }
         }
-        if (vel.lengthSq() > 1e-6 && quat) {
-            quat.setFromUnitVectors(new THREE.Vector3(0, 0, 1), vel.clone().normalize());
+        if (quat) {
+            const L2 = vel.lengthSq();
+            if (L2 > 1e-6) {
+                const inv = 1 / Math.sqrt(L2);
+                tmp.dir.set(vel.x * inv, vel.y * inv, vel.z * inv);
+                quat.setFromUnitVectors(tmp.fwd, tmp.dir);
+            }
         }
         return { hitGround, oldPos };
+    }
+
+    // Obstacle broadphase: per-building world AABBs, rebuilt only when the obstacle list changes.
+    const _obs = { len: -1, first: null, last: null, entries: [], raycaster: null, segBox: null };
+    function obstacleEntries() {
+        if (typeof obstacles === 'undefined' || !Array.isArray(obstacles) || obstacles.length === 0) return null;
+        if (typeof THREE.Box3 !== 'function') return null;
+        const first = obstacles[0];
+        const last = obstacles[obstacles.length - 1];
+        if (_obs.len !== obstacles.length || _obs.first !== first || _obs.last !== last) {
+            _obs.entries = [];
+            obstacles.forEach((obj) => {
+                if (!obj) return;
+                if (obj.updateMatrixWorld) obj.updateMatrixWorld(true);
+                const box = new THREE.Box3().setFromObject(obj);
+                if (!Number.isFinite(box.min.x) || !Number.isFinite(box.max.x)) return;
+                _obs.entries.push({ obj, box });
+            });
+            _obs.len = obstacles.length;
+            _obs.first = first;
+            _obs.last = last;
+        }
+        return _obs.entries.length ? _obs.entries : null;
+    }
+
+    /**
+     * First obstacle hit on segment a→b, or null. Raycasts only buildings whose AABB
+     * overlaps the segment AABB — open-air segments cost a handful of box tests.
+     */
+    function segmentObstacleHit(a, b) {
+        const entries = obstacleEntries();
+        if (!entries) return null;
+        if (!_obs.segBox) _obs.segBox = new THREE.Box3();
+        const sb = _obs.segBox;
+        sb.min.set(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.min(a.z, b.z));
+        sb.max.set(Math.max(a.x, b.x), Math.max(a.y, b.y), Math.max(a.z, b.z));
+        let candidates = null;
+        for (let i = 0; i < entries.length; i++) {
+            if (entries[i].box.intersectsBox(sb)) {
+                if (!candidates) candidates = [];
+                candidates.push(entries[i].obj);
+            }
+        }
+        if (!candidates) return null;
+        const dir = temps().dir.subVectors(b, a);
+        const len = dir.length();
+        if (len < 1e-4) return null;
+        dir.multiplyScalar(1 / len);
+        if (!_obs.raycaster) _obs.raycaster = new THREE.Raycaster();
+        const ray = _obs.raycaster;
+        ray.set(a, dir);
+        ray.near = 0;
+        ray.far = len;
+        const hits = ray.intersectObjects(candidates, false);
+        return hits.length ? hits[0] : null;
     }
 
     /**
@@ -239,31 +318,25 @@
         let hitKind = 'air';
         let grounded = false;
         const maxSteps = cfg.maxFlightSteps != null ? Math.min(Number(cfg.maxFlightSteps), 220) : 180;
-        const hasObs = typeof obstacles !== 'undefined' && Array.isArray(obstacles) && obstacles.length > 0;
+        const hasObs = !!obstacleEntries();
         let segStart = pos.clone();
 
         for (let i = 1; i <= maxSteps; i++) {
-            const res = integrateRocketFrame(pos, vel, quat, knobs);
+            const res = integrateRocketFrame(pos, vel, quat, knobs, true);
 
-            // Check obstacle collision every 4 steps (or on ground touch) over contiguous segment.
-            if (hasObs && (i % 4 === 0 || res.hitGround)) {
-                const segVec = new THREE.Vector3().subVectors(pos, segStart);
-                const segLen = segVec.length();
-                if (segLen > 1e-4) {
-                    const ray = new THREE.Raycaster(segStart, segVec.divideScalar(segLen), 0, segLen);
-                    const hits = ray.intersectObjects(obstacles, false);
-                    if (hits.length > 0) {
-                        impact = hits[0].point.clone();
-                        if (hits[0].face && hits[0].object) {
-                            impactNormal.copy(hits[0].face.normal)
-                                .transformDirection(hits[0].object.matrixWorld)
-                                .normalize();
-                        }
-                        points.push(impact.clone());
-                        hitKind = 'building';
-                        grounded = true;
-                        break;
+            if (hasObs && (i % OBS_SEG_STEPS === 0 || res.hitGround || i === maxSteps)) {
+                const hit = segmentObstacleHit(segStart, pos);
+                if (hit) {
+                    impact = hit.point.clone();
+                    if (hit.face && hit.object) {
+                        impactNormal.copy(hit.face.normal)
+                            .transformDirection(hit.object.matrixWorld)
+                            .normalize();
                     }
+                    points.push(impact.clone());
+                    hitKind = 'building';
+                    grounded = true;
+                    break;
                 }
                 segStart.copy(pos);
             }
@@ -348,15 +421,31 @@
             Number(team.pendingRoll || team.roll || 0).toFixed(3), Number(team.throttle || 4).toFixed(2),
             ep ? `${ep.x.toFixed(2)},${ep.y.toFixed(2)},${ep.z.toFixed(2)},${(liveEnemy.flightLength || 0).toFixed(2)}` : 'noE'
         ].join('|');
-        if (Rocket._aimCache && Rocket._aimCache.sig === sig) {
-            return Rocket._aimCache.sol;
+        // Multi-slot: HUD lock check, LCOS pipper and 3D preview may solve against different
+        // enemy inputs in one frame; a single slot made them evict each other every frame.
+        const cache = Rocket._aimCache || (Rocket._aimCache = []);
+        for (let c = 0; c < cache.length; c++) {
+            if (cache[c].sig === sig) return cache[c].sol;
         }
+        const remember = (sol) => {
+            cache.unshift({ sig, sol });
+            if (cache.length > AIM_CACHE_SLOTS) cache.length = AIM_CACHE_SLOTS;
+            return sol;
+        };
 
         const shots = [];
         let anyVtHit = false;
 
+        const enemyMemo = [];
+        const enemyAt = (totalStep) => {
+            if (!liveEnemy) return null;
+            const k = Math.max(0, Math.round(totalStep));
+            if (enemyMemo[k] === undefined) enemyMemo[k] = estimateEnemyAtStep(liveEnemy, k, stepsPerTurn);
+            return enemyMemo[k];
+        };
+
         if (fuze === 'vt') {
-            const hasObs = typeof obstacles !== 'undefined' && Array.isArray(obstacles) && obstacles.length > 0;
+            const hasObs = !!obstacleEntries();
             const vtGround = cfg.vtGroundHeight != null ? Number(cfg.vtGroundHeight) : 3.5;
             const maxAirDist = airRange * 1.15;
             const maxSteps = cfg.maxFlightSteps != null ? Math.min(Number(cfg.maxFlightSteps), 180) : 150;
@@ -376,13 +465,11 @@
                 let segStart = pos.clone();
 
                 // Estimate slant distance from release point to enemy around intercept time.
-                const eAtLaunch = liveEnemy ? estimateEnemyAtStep(liveEnemy, launchStep, stepsPerTurn) : null;
+                const eAtLaunch = enemyAt(launchStep);
                 const estFlightSteps = eAtLaunch
                     ? Math.min(90, Math.round(rel.pos.distanceTo(eAtLaunch) / Math.max(0.25, vel.length() * knobs.dt)))
                     : 45;
-                const eGuess = liveEnemy
-                    ? estimateEnemyAtStep(liveEnemy, launchStep + estFlightSteps, stepsPerTurn)
-                    : null;
+                const eGuess = enemyAt(launchStep + estFlightSteps);
                 const targetSlant = eGuess ? Math.max(12, Math.min(maxAirDist, rel.pos.distanceTo(eGuess))) : 68;
 
                 let cpaDist = Infinity;
@@ -394,22 +481,18 @@
                 let gateEnemyPos = null;
                 let vtHit = false;
 
+                const prev = temps().before;
                 for (let f = 1; f <= maxSteps; f++) {
-                    const before = pos.clone();
-                    const res = integrateRocketFrame(pos, vel, quat, knobs);
-                    flown += pos.distanceTo(before);
+                    prev.copy(pos);
+                    const res = integrateRocketFrame(pos, vel, quat, knobs, true);
+                    flown += pos.distanceTo(prev);
 
-                    if (hasObs && (f % 4 === 0 || res.hitGround)) {
-                        const segVec = new THREE.Vector3().subVectors(pos, segStart);
-                        const segLen = segVec.length();
-                        if (segLen > 1e-4) {
-                            const ray = new THREE.Raycaster(segStart, segVec.divideScalar(segLen), 0, segLen);
-                            const hits = ray.intersectObjects(obstacles, false);
-                            if (hits.length > 0) {
-                                pos.copy(hits[0].point);
-                                pts.push(pos.clone());
-                                break;
-                            }
+                    if (hasObs && (f % OBS_SEG_STEPS === 0 || res.hitGround || f === maxSteps)) {
+                        const hit = segmentObstacleHit(segStart, pos);
+                        if (hit) {
+                            pos.copy(hit.point);
+                            pts.push(pos.clone());
+                            break;
                         }
                         segStart.copy(pos);
                     }
@@ -420,11 +503,11 @@
                     if (!gatePos && flown >= targetSlant) {
                         gatePos = pos.clone();
                         gateQuat = quat.clone();
-                        gateEnemyPos = liveEnemy ? estimateEnemyAtStep(liveEnemy, totalStep, stepsPerTurn) : null;
+                        gateEnemyPos = enemyAt(totalStep);
                     }
 
                     if (liveEnemy && f >= fuseDelay) {
-                        const ePos = estimateEnemyAtStep(liveEnemy, totalStep, stepsPerTurn);
+                        const ePos = enemyAt(totalStep);
                         if (ePos) {
                             const d = pos.distanceTo(ePos);
                             if (d < cpaDist) {
@@ -492,8 +575,7 @@
                 grounded: true,
                 shots
             };
-            Rocket._aimCache = { sig, sol };
-            return sol;
+            return remember(sol);
         }
 
         // IMPACT fuze: true ground / building collision + salvo impact centroid.
@@ -553,8 +635,7 @@
             hitBuilding,
             shots
         };
-        Rocket._aimCache = { sig, sol };
-        return sol;
+        return remember(sol);
     }
 
     function pushRocketExplosionVfx(ctx, step, pos, cfg) {
@@ -760,16 +841,11 @@
                 r.ageSteps = (Number(r.ageSteps) || 0) + 1;
 
                 let hitSolid = integ.hitGround;
-                if (!hitSolid && typeof obstacles !== 'undefined' && obstacles.length > 0) {
-                    const moveVec = new THREE.Vector3().subVectors(r.pos, integ.oldPos);
-                    const dist = moveVec.length();
-                    if (dist > 1e-4) {
-                        const ray = new THREE.Raycaster(integ.oldPos, moveVec.normalize());
-                        const hits = ray.intersectObjects(obstacles, false);
-                        if (hits.length && hits[0].distance <= dist) {
-                            r.pos.copy(hits[0].point);
-                            hitSolid = true;
-                        }
+                if (!hitSolid) {
+                    const hit = segmentObstacleHit(integ.oldPos, r.pos);
+                    if (hit) {
+                        r.pos.copy(hit.point);
+                        hitSolid = true;
                     }
                 }
 
@@ -1159,6 +1235,30 @@
         syncPodMuzzleFlames(step, log, false);
     }
 
+    /** Every other trajectory point into the slot's preallocated buffer (no per-frame geometry churn). */
+    function writeAimLine(line, shot) {
+        const attr = line.geometry.getAttribute('position');
+        const arr = attr.array;
+        const pts = shot.points || [];
+        const last = pts.length - 1;
+        let n = 0;
+        const put = (p) => {
+            if (n >= AIM_LINE_MAX_PTS || !p) return;
+            arr[n * 3] = p.x; arr[n * 3 + 1] = p.y; arr[n * 3 + 2] = p.z;
+            n++;
+        };
+        const stride = Math.max(2, Math.ceil(pts.length / (AIM_LINE_MAX_PTS - 1)));
+        for (let k = 0; k < last; k += stride) put(pts[k]);
+        if (last >= 0) put(pts[last]);
+        if (n < 2 && shot.ringPos) {
+            n = 0;
+            put(shot.launchPos);
+            put(shot.ringPos);
+        }
+        attr.needsUpdate = true;
+        line.geometry.setDrawRange(0, n);
+    }
+
     function ensureAimVisuals(count) {
         if (typeof scene === 'undefined' || !scene) return null;
         if (!Rocket._aimGroup) {
@@ -1167,20 +1267,27 @@
             Rocket._aimSlots = [];
             scene.add(Rocket._aimGroup);
         }
+        if (!Rocket._aimDiscGeo) Rocket._aimDiscGeo = new THREE.CircleGeometry(1, 40);
         while (Rocket._aimSlots.length < count) {
             const color = 0xff9966;
+            const lineGeo = new THREE.BufferGeometry();
+            lineGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(AIM_LINE_MAX_PTS * 3), 3));
+            lineGeo.setDrawRange(0, 0);
             const line = new THREE.Line(
-                new THREE.BufferGeometry(),
+                lineGeo,
                 new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.78 })
             );
-            // Unit-radius ring in XY plane (+Z normal) — scaled to vtRadius (6m) or blastRadius (8m).
+            line.frustumCulled = false;
+            // Unit-radius translucent disc in XY plane (+Z normal) — scaled to vtRadius (6m) or blastRadius (8m).
             const ring = new THREE.Mesh(
-                new THREE.RingGeometry(0.92, 1.0, 28),
+                Rocket._aimDiscGeo,
                 new THREE.MeshBasicMaterial({
-                    color, transparent: true, opacity: 0.85,
-                    side: THREE.DoubleSide, depthWrite: false
+                    color, transparent: true, opacity: 0.3,
+                    side: THREE.DoubleSide, depthWrite: false,
+                    polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2
                 })
             );
+            ring.renderOrder = 2;
             // Surface impact cross (XY plane, aligned with ring normal)
             const cross = new THREE.LineSegments(
                 new THREE.BufferGeometry().setFromPoints([
@@ -1231,6 +1338,11 @@
 
         const grp = ensureAimVisuals(Math.max(sol.shots.length, 3));
         if (!grp) return;
+        if (Rocket._previewSol === sol && grp.visible) {
+            syncPodMuzzleFlames(0, null, true);
+            return;
+        }
+        Rocket._previewSol = sol;
 
         const isVt = sol.fuze === 'vt';
         const vtColors = [0x4dd0e1, 0x80deea, 0x26c6da];
@@ -1246,12 +1358,7 @@
             slot.pip.visible = show;
             if (!show) continue;
 
-            const sample = shot.points.filter((_, idx) => idx % 2 === 0 || idx === shot.points.length - 1);
-            if (sample.length < 2 && shot.ringPos) {
-                sample.push(shot.launchPos.clone(), shot.ringPos.clone());
-            }
-            slot.line.geometry.dispose();
-            slot.line.geometry = new THREE.BufferGeometry().setFromPoints(sample);
+            writeAimLine(slot.line, shot);
             slot.pip.position.copy(shot.launchPos);
 
             if (isVt) {
@@ -1260,7 +1367,7 @@
                 slot.line.material.opacity = shot.vtHit ? 0.95 : 0.68;
                 slot.pip.material.color.setHex(col);
                 slot.ring.material.color.setHex(col);
-                slot.ring.material.opacity = shot.vtHit ? 0.92 : 0.42;
+                slot.ring.material.opacity = shot.vtHit ? 0.38 : 0.16;
                 slot.ring.scale.setScalar(sol.vtRadius);
                 if (shot.ringPos) slot.ring.position.copy(shot.ringPos);
                 if (shot.ringQuat) slot.ring.quaternion.copy(shot.ringQuat);
@@ -1278,7 +1385,7 @@
                     slot.ring.quaternion.copy(shot.ringQuat);
                     slot.ring.scale.setScalar(sol.blastRadius);
                     slot.ring.material.color.setHex(col);
-                    slot.ring.material.opacity = 0.65;
+                    slot.ring.material.opacity = 0.26;
                     slot.cross.position.copy(shot.ringPos).add(lift);
                     slot.cross.quaternion.copy(shot.ringQuat);
                     slot.cross.material.color.setHex(col);
@@ -1292,6 +1399,7 @@
     }
 
     function hideRocketAimPreview() {
+        Rocket._previewSol = null;
         if (Rocket._aimGroup) Rocket._aimGroup.visible = false;
         // Dim pod flames when leaving rocket aim.
         if (typeof teams !== 'undefined') {
