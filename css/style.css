@@ -653,6 +653,41 @@ html.startup-lock body {
     user-select: none;
     -webkit-touch-callout: none;
 }
+/* Weapon type + status to the left of the aiming ring */
+.lcos-wpn-tag {
+    position: absolute;
+    right: calc(100% + 10px);
+    top: 50%;
+    transform: translateY(-50%);
+    display: none;
+    flex-direction: column;
+    align-items: flex-end;
+    justify-content: center;
+    gap: 2px;
+    pointer-events: none;
+    white-space: nowrap;
+    font-family: 'Courier New', monospace;
+    font-weight: bold;
+    line-height: 1.1;
+    text-shadow: 0 1px 3px #000, 0 0 6px rgba(0,0,0,0.8);
+}
+.lcos-wpn-name {
+    font-size: 12px;
+    letter-spacing: 0.6px;
+    color: #ffeb3b;
+}
+.lcos-wpn-status {
+    font-size: 11px;
+    letter-spacing: 0.3px;
+    color: #fff;
+}
+.lcos-wpn-tag[data-tone="hot"] .lcos-wpn-status { color: #ff3355; }
+.lcos-wpn-tag[data-tone="guide"] .lcos-wpn-status { color: #ffcc66; }
+.lcos-wpn-tag[data-tone="queued"] .lcos-wpn-status { color: #00e5ff; }
+.lcos-wpn-tag[data-tone="warn"] .lcos-wpn-status { color: #ff9800; }
+.lcos-wpn-tag[data-tone="bad"] .lcos-wpn-status { color: #ff3355; }
+.lcos-wpn-tag[data-tone="idle"] .lcos-wpn-status { color: rgba(255,255,255,0.75); }
+.lcos-wpn-tag[data-tone="ready"] .lcos-wpn-status { color: #00ff88; }
 #lcos-pipper svg,
 #lcos-grab-ring {
     touch-action: none;

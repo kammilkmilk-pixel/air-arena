@@ -43,9 +43,142 @@
                 <circle id="lcos-center-dot" cx="50" cy="52" r="1.4" fill="#e6c200"/>
             </g>
         </svg>
+        <div id="lcos-wpn-tag" class="lcos-wpn-tag" aria-hidden="true">
+            <div class="lcos-wpn-name" id="lcos-wpn-name">—</div>
+            <div class="lcos-wpn-status" id="lcos-wpn-status">—</div>
+        </div>
     `;
     pipper.title = '拖曳調機頭｜雙擊開火／發射';
 })();
+
+/** Weapon type + status to the left of the LCOS aiming ring. */
+function updateLcosWeaponTag(team, opts = {}) {
+    let root = document.getElementById('lcos-wpn-tag');
+    const pipper = document.getElementById('lcos-pipper');
+    if (!root && pipper) {
+        root = document.createElement('div');
+        root.id = 'lcos-wpn-tag';
+        root.className = 'lcos-wpn-tag';
+        root.innerHTML = '<div class="lcos-wpn-name" id="lcos-wpn-name">—</div><div class="lcos-wpn-status" id="lcos-wpn-status">—</div>';
+        pipper.appendChild(root);
+    }
+    if (!root) return;
+    const nameEl = document.getElementById('lcos-wpn-name');
+    const stEl = document.getElementById('lcos-wpn-status');
+    if (!team || opts.hide) {
+        root.style.display = 'none';
+        root.setAttribute('aria-hidden', 'true');
+        return;
+    }
+    const wpn = team.weapon || 'gun';
+    const live = (typeof teamLiveMissileType === 'function') ? teamLiveMissileType(team) : null;
+    let name = 'GUN';
+    let status = '就緒';
+    let tone = 'ready';
+
+    if (wpn === 'missile') {
+        name = live === 'fox1' ? 'FOX-1' : 'FOX-2';
+        const armed = team.pylons
+            ? team.pylons.filter((p) => p && p.state === 'armed' && p.weaponType !== 'bomb' && p.weaponType !== 'rocket').length
+            : 0;
+        const powering = team.pylons
+            ? team.pylons.filter((p) => p && p.state === 'powering').length
+            : 0;
+        const dist = Number(opts.distance);
+        const gate = (typeof describeMissileLaunchRange === 'function')
+            ? describeMissileLaunchRange({ missileType: live || 'fox2', distance: dist })
+            : { ok: false, reason: 'noTarget' };
+        const guiding = !!(live === 'fox1' && typeof uiTeamHasFox1Flight === 'function' && uiTeamHasFox1Flight(team));
+        const queued = !!(team.wpnQueued && team.queuedAction === 'missile');
+
+        if (guiding) {
+            status = '導引中';
+            tone = 'guide';
+        } else if (!armed && powering > 0) {
+            status = '開機中';
+            tone = 'warn';
+        } else if (!armed) {
+            status = '未通電';
+            tone = 'bad';
+        } else if (queued && (opts.inRange || gate.ok)) {
+            status = '已排程·射程內';
+            tone = 'hot';
+        } else if (queued) {
+            status = '已排程';
+            tone = 'queued';
+        } else if (opts.inRange || gate.ok) {
+            status = '進入射程';
+            tone = 'hot';
+        } else if (gate.reason === 'tooClose') {
+            status = '過近';
+            tone = 'warn';
+        } else if (gate.reason === 'tooFar') {
+            status = '未進入射程';
+            tone = 'idle';
+        } else {
+            status = '就緒';
+            tone = 'ready';
+        }
+    } else if (wpn === 'bomb') {
+        name = 'BOMB';
+        const armed = (typeof AirArenaBomb !== 'undefined')
+            ? AirArenaBomb.teamBombPylons(team).filter((p) => p.state === 'armed').length
+            : 0;
+        if (team.wpnQueued && team.queuedAction === 'bomb') {
+            status = '已排程';
+            tone = 'queued';
+        } else if (armed > 0) {
+            status = '就緒';
+            tone = 'ready';
+        } else {
+            status = '未通電';
+            tone = 'bad';
+        }
+    } else if (wpn === 'rocket') {
+        name = 'RKT';
+        const pods = (typeof AirArenaRocket !== 'undefined') ? AirArenaRocket.teamRocketPylons(team) : [];
+        const armedPod = pods.find((p) => p.state === 'armed') || null;
+        const ammo = armedPod && typeof AirArenaRocket !== 'undefined'
+            ? AirArenaRocket.ensurePodAmmo(armedPod) : 0;
+        if (team.wpnQueued && team.queuedAction === 'rocket') {
+            status = '齊射排程';
+            tone = 'queued';
+        } else if (armedPod && ammo > 0) {
+            status = '就緒';
+            tone = 'ready';
+        } else {
+            status = '未通電';
+            tone = 'bad';
+        }
+    } else {
+        name = 'GUN';
+        const hot = !!(GameContext.stateMachine
+            && typeof GameContext.stateMachine.isGunOverheated === 'function'
+            && GameContext.stateMachine.isGunOverheated(team.id));
+        if (hot) {
+            status = '過熱';
+            tone = 'bad';
+        } else if (team.wpnQueued && team.queuedAction === 'gun') {
+            status = opts.inRange ? '已排程·鎖定' : '已排程';
+            tone = opts.inRange ? 'hot' : 'queued';
+        } else if (opts.inRange) {
+            status = '進入射程';
+            tone = 'hot';
+        } else if (opts.obscured) {
+            status = '遮擋';
+            tone = 'warn';
+        } else {
+            status = '就緒';
+            tone = 'ready';
+        }
+    }
+
+    if (nameEl) nameEl.textContent = name;
+    if (stEl) stEl.textContent = status;
+    root.dataset.tone = tone;
+    root.style.display = 'flex';
+    root.setAttribute('aria-hidden', 'false');
+}
 
 /** iOS Safari：封鎖 pinch／雙擊頁面縮放（會造成 3D 與控制面板「分離」） */
 (function installViewportZoomGuard() {
@@ -877,6 +1010,7 @@ window.updateDynamicHUD = function() {
         if(lcosPipper && !ringDragging) lcosPipper.style.display = 'none';
         updateLcosGunHeatRing(null, 50, 50, 37.4, false);
         updateMissileSeekerBrackets({ visible: false });
+        updateLcosWeaponTag(null, { hide: true });
         if (typeof updateFox1SupportHud === 'function') updateFox1SupportHud(null, null, null, null, true);
         return;
     }
@@ -887,6 +1021,7 @@ window.updateDynamicHUD = function() {
         if(lcosPipper && !ringDragging) lcosPipper.style.display = 'none';
         updateLcosGunHeatRing(null, 50, 50, 37.4, false);
         updateMissileSeekerBrackets({ visible: false });
+        updateLcosWeaponTag(null, { hide: true });
         if (typeof updateFox1SupportHud === 'function') updateFox1SupportHud(null, null, null, null, true);
         return;
     }
@@ -908,6 +1043,7 @@ window.updateDynamicHUD = function() {
         window.isDraggingLcosRing = false;
         updateLcosGunHeatRing(null, 50, 50, 37.4, false);
         updateMissileSeekerBrackets({ visible: false });
+        updateLcosWeaponTag(null, { hide: true });
         if (typeof updateFox1SupportHud === 'function') updateFox1SupportHud(null, null, null, null, true);
         if (typeof uiUpdateSmsRadarLockWarn === 'function') uiUpdateSmsRadarLockWarn(t);
         return;
@@ -1037,6 +1173,7 @@ window.updateDynamicHUD = function() {
         if (ghostHud) ghostHud.style.display = 'none';
         updateLcosGunHeatRing(t, 50, 50, 37.4, false);
         updateMissileSeekerBrackets({ visible: false });
+        updateLcosWeaponTag(null, { hide: true });
     };
 
     const paintPipperColor = (inRange) => {
@@ -1095,6 +1232,7 @@ window.updateDynamicHUD = function() {
                 const aimGroup = document.getElementById('lcos-aim-group');
                 if (aimGroup) aimGroup.style.display = 'none';
                 if (ghostHud) ghostHud.style.display = 'none';
+                updateLcosWeaponTag(t, { obscured: true, inRange: false });
             }
         } else {
             let ghostProj = enemyGhostPos.clone();
@@ -1197,7 +1335,13 @@ window.updateDynamicHUD = function() {
                     innerT.setAttribute('transform', `rotate(${rollDeg.toFixed(2)} 50 52)`);
                 }
 
-                paintPipperColor(dist < gunFireRange);
+                const gunInRange = dist < gunFireRange;
+                paintPipperColor(gunInRange);
+                updateLcosWeaponTag(t, {
+                    distance: dist,
+                    inRange: gunInRange,
+                    obscured: false
+                });
             }
         }
     } else if (t.weapon === 'missile') {
@@ -1246,6 +1390,7 @@ window.updateDynamicHUD = function() {
                     ringR: 35.2,
                     color: '#ffffff'
                 });
+                updateLcosWeaponTag(t, { obscured: true, inRange: false });
             }
         } else {
             const myGhostForward = new THREE.Vector3(0, 0, 1).applyQuaternion(myGhostQuat).normalize();
@@ -1317,6 +1462,11 @@ window.updateDynamicHUD = function() {
                     pipperSize: pipperSizePx,
                     ringR: funnelR,
                     color: inRange ? '#ff0055' : '#ffffff'
+                });
+                updateLcosWeaponTag(t, {
+                    distance: dist,
+                    inRange,
+                    obscured: false
                 });
             }
         }
