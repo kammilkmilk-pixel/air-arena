@@ -571,6 +571,21 @@
             const thr = Number(t.throttle) || 4;
             thrEl.textContent = `THR ${thr.toFixed(1)} ${thrBandLabel(thr)}`;
         }
+        // HEAT / AP sit beside L/R roll grips (moved off tactical strip).
+        const heat = $('ops-val-heat');
+        const ap = $('ops-val-ap');
+        if (heat) {
+            heat.textContent = t ? `${Math.round(Number(t.heat) || 150)}°` : '—';
+        }
+        if (ap) {
+            if (!t) {
+                ap.textContent = '—';
+            } else {
+                const baseAp = (typeof t.ap === 'number') ? t.ap : 0;
+                const cost = (typeof t.previewCostAp === 'number') ? t.previewCostAp : 0;
+                ap.textContent = `${Math.round(Math.max(0, baseAp - cost))}`;
+            }
+        }
     }
 
     function syncGhostSteerHud(team) {

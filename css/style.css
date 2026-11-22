@@ -787,6 +787,23 @@ html.startup-lock body {
 #ghost-steer-hud #ghost-handle-layer .ghost-side-handle {
     pointer-events: auto;
 }
+#ghost-steer-hud .ghost-handle-stat-k {
+    fill: rgba(255, 255, 255, 0.55);
+    font-family: 'Courier New', monospace;
+    font-size: 7px;
+    letter-spacing: 0.6px;
+}
+#ghost-steer-hud .ghost-handle-stat-v {
+    font-family: 'Courier New', monospace;
+    font-size: 11px;
+    font-weight: bold;
+}
+#ghost-steer-hud .ghost-handle-stat-heat .ghost-handle-stat-v {
+    fill: #ff9800;
+}
+#ghost-steer-hud .ghost-handle-stat-ap .ghost-handle-stat-v {
+    fill: #00bcd4;
+}
 #ghost-steer-hud #ghost-roll-hit {
     pointer-events: stroke;
 }
@@ -1127,55 +1144,30 @@ html.startup-lock body {
 .ops-label-p3 { transform: rotate(213.75deg) translateY(-188px) rotate(-213.75deg); }
 .ops-label-p4 { transform: rotate(281.25deg) translateY(-188px) rotate(-281.25deg); }
 
-/* On OK chord top edge (SVG y=412 → ~70.6% of 640 viewBox → ~494px on 700px ring) */
+/* On OK chord top edge — SMS only (HEAT/AP moved to roll grips) */
 #ops-tactical-strip {
     position: absolute;
     left: 50%;
     top: 70.6%;
     transform: translate(-50%, -50%);
     z-index: 4;
-    width: min(320px, 72%);
-    display: grid;
-    grid-template-columns: 52px 1fr 52px;
-    gap: 3px;
+    width: min(220px, 56%);
+    display: block;
     pointer-events: auto;
     background: rgba(0,0,0,0.82);
     border: 1px solid rgba(255,255,255,0.22);
     border-radius: 5px;
-    padding: 4px 6px;
+    padding: 6px 10px;
     box-shadow: 0 4px 14px rgba(0,0,0,0.45);
     backdrop-filter: blur(8px);
     -webkit-backdrop-filter: blur(8px);
 }
-.ops-tac-side {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 2px;
-    min-height: 36px;
-}
-.ops-tac-k {
-    font-family: 'Courier New', monospace;
-    font-size: 8px;
-    letter-spacing: 1px;
-    color: #888;
-}
-.ops-tac-v {
-    font-family: 'Courier New', monospace;
-    font-size: 12px;
-    font-weight: bold;
-    color: #fff;
-}
-#ops-tac-heat .ops-tac-v { color: #ff9800; }
-#ops-tac-ap .ops-tac-v { color: #00bcd4; }
 .ops-tac-screen {
     min-width: 0;
     display: flex;
     align-items: center;
-    padding: 0 4px;
-    border-left: 1px solid #222;
-    border-right: 1px solid #222;
+    justify-content: center;
+    padding: 0;
 }
 #ops-sms-text {
     font-family: 'Courier New', monospace;
@@ -1193,9 +1185,8 @@ html.startup-lock body {
     #ops-radial-anchor { width: min(92vw, 520px); }
     #ops-radial-ring { width: min(92vw, 520px); height: min(92vw, 520px); }
     #ops-tactical-strip {
-        width: min(260px, 78%);
+        width: min(200px, 62%);
         top: 70.6%;
-        grid-template-columns: 44px 1fr 44px;
     }
     .ops-radial-ok {
         width: 357px;

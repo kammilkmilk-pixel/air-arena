@@ -351,6 +351,15 @@
                 <g id="ghost-handle-right" class="ghost-side-handle" style="cursor:grab">
                     <rect x="118" y="46" width="22" height="48" rx="4" fill="rgba(0,0,0,0.01)"/>
                 </g>
+                <!-- HEAT / AP ride with the grips (ex-tactical strip) -->
+                <g class="ghost-handle-stat ghost-handle-stat-heat" pointer-events="none">
+                    <text class="ghost-handle-stat-k" x="-2" y="58" text-anchor="end">HEAT</text>
+                    <text class="ghost-handle-stat-v" id="ops-val-heat" x="-2" y="72" text-anchor="end">150°</text>
+                </g>
+                <g class="ghost-handle-stat ghost-handle-stat-ap" pointer-events="none">
+                    <text class="ghost-handle-stat-k" x="142" y="58" text-anchor="start">AP</text>
+                    <text class="ghost-handle-stat-v" id="ops-val-ap" x="142" y="72" text-anchor="start">0</text>
+                </g>
             </g>
         </svg>
         <div id="ghost-steer-meta" class="ghost-steer-meta">
@@ -442,18 +451,10 @@
                         fill="rgba(0,0,0,0.01)" style="cursor:pointer"/>
                 </svg>
                 <button type="button" id="ops-radial-ok" class="ops-radial-ok" title="確認交戰">OK</button>
-                <!-- Tactical computer sits on the OK chord top edge (center) -->
+                <!-- Tactical computer sits on the OK chord top edge (center); HEAT/AP live by roll grips -->
                 <div id="ops-tactical-strip">
-                    <div class="ops-tac-side" id="ops-tac-heat" title="引擎溫度">
-                        <span class="ops-tac-k">HEAT</span>
-                        <span class="ops-tac-v" id="ops-val-heat">150°</span>
-                    </div>
                     <div class="ops-tac-screen" id="ops-tac-screen" title="戰術電腦">
                         <div id="ops-sms-text">狀態 [就緒]</div>
-                    </div>
-                    <div class="ops-tac-side" id="ops-tac-ap" title="AP">
-                        <span class="ops-tac-k">AP</span>
-                        <span class="ops-tac-v" id="ops-val-ap">0</span>
                     </div>
                 </div>
                 <button type="button" class="ops-wedge-hit" data-ops="flare" id="ops-hit-flare" style="--a0:-45deg;--span:30deg" title="FLARE">FL</button>
