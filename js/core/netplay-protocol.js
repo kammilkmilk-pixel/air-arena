@@ -72,11 +72,16 @@
     function buildTurnIntent(teamId, team, turn) {
         const t = team || {};
         const pylons = Array.isArray(t.pylons)
-            ? t.pylons.map((p) => ({
-                id: p.id,
-                weaponType: p.weaponType,
-                state: p.state
-            }))
+            ? t.pylons.map((p) => {
+                const slot = {
+                    id: p.id,
+                    weaponType: p.weaponType,
+                    state: p.state
+                };
+                if (p.ammo != null) slot.ammo = Number(p.ammo);
+                if (p.ammoMax != null) slot.ammoMax = Number(p.ammoMax);
+                return slot;
+            })
             : [];
         return {
             seatId: teamId,
@@ -128,6 +133,8 @@
                     p.state = src.state;
                 }
                 if (src.weaponType) p.weaponType = src.weaponType;
+                if (src.ammo != null && Number.isFinite(Number(src.ammo))) p.ammo = Number(src.ammo);
+                if (src.ammoMax != null && Number.isFinite(Number(src.ammoMax))) p.ammoMax = Number(src.ammoMax);
             });
         }
 
@@ -141,8 +148,21 @@
         const qa = intent.queuedAction || 'none';
         if (qa === 'gun') GC.stateMachine.queueAction(teamId, 'gun');
         else if (qa === 'missile') {
-            if (t.pylons && t.pylons.some((p) => p.state === 'armed')) GC.stateMachine.toggleMissileQueue(teamId);
-            else GC.stateMachine.clearQueuedAction(teamId);
+            const isFox = (p) => {
+                const wt = typeof pylonWeaponType === 'function' ? pylonWeaponType(p) : p.weaponType;
+                return wt !== 'bomb' && wt !== 'rocket';
+            };
+            if (t.pylons && t.pylons.some((p) => p && p.state === 'armed' && isFox(p))) {
+                GC.stateMachine.toggleMissileQueue(teamId);
+            } else {
+                GC.stateMachine.clearQueuedAction(teamId);
+            }
+        } else if (qa === 'bomb') {
+            if (typeof GC.stateMachine.toggleBombQueue === 'function') GC.stateMachine.toggleBombQueue(teamId);
+            else GC.stateMachine.queueAction(teamId, 'bomb');
+        } else if (qa === 'rocket') {
+            if (typeof GC.stateMachine.toggleRocketQueue === 'function') GC.stateMachine.toggleRocketQueue(teamId);
+            else GC.stateMachine.queueAction(teamId, 'rocket');
         } else if (qa === 'flare') GC.stateMachine.queueAction(teamId, 'flare');
         else if (qa === 'chaff') {
             if (!t.chaffArmed && (t.chaffAmmo || 0) > 0) GC.stateMachine.toggleChaff(teamId);

@@ -598,6 +598,38 @@
         });
     }
 
+    /** Hide or dispose in-flight bomb meshes/trails (replay exit or match reset). */
+    function clearBombVisuals(opts) {
+        const dispose = !!(opts && opts.dispose);
+        hideCcipPreview();
+        if (typeof teams === 'undefined') return;
+        Object.keys(teams).forEach((id) => {
+            const t = teams[id];
+            if (!t || !t.pylons) return;
+            t.pylons.forEach((p) => {
+                if (!p) return;
+                if (p.bombFlyingMesh) {
+                    if (dispose) {
+                        if (p.bombFlyingMesh.parent) p.bombFlyingMesh.parent.remove(p.bombFlyingMesh);
+                        p.bombFlyingMesh = null;
+                    } else {
+                        p.bombFlyingMesh.visible = false;
+                    }
+                }
+                if (p.bombTrailLine) {
+                    if (dispose) {
+                        if (p.bombTrailLine.parent) p.bombTrailLine.parent.remove(p.bombTrailLine);
+                        if (p.bombTrailLine.geometry) p.bombTrailLine.geometry.dispose();
+                        if (p.bombTrailLine.material) p.bombTrailLine.material.dispose();
+                        p.bombTrailLine = null;
+                    } else {
+                        p.bombTrailLine.visible = false;
+                    }
+                }
+            });
+        });
+    }
+
     Bomb.isBombType = isBombType;
     Bomb.isA2GStoreType = isA2GStoreType;
     Bomb.teamBombPylons = teamBombPylons;
@@ -607,6 +639,7 @@
     Bomb.estimateReleaseState = estimateReleaseState;
     Bomb.updateCcipPreview = updateCcipPreview;
     Bomb.hideCcipPreview = hideCcipPreview;
+    Bomb.clearBombVisuals = clearBombVisuals;
     Bomb.getCcipStatusLine = getCcipStatusLine;
     Bomb.getCcipStatusColor = getCcipStatusColor;
     Bomb.processBombDrops = processBombDrops;

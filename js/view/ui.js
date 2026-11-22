@@ -3445,8 +3445,13 @@ function updateDashboardUI(teamObj) {
                 wpnName = liveType === 'fox1' ? 'FOX-1' : 'FOX-2';
                 if (teamObj.wpnQueued) { statusText = '[已排程]'; }
                 else {
-                    let armedCount = teamObj.pylons ? teamObj.pylons.filter(p => p.state === 'armed').length : 0;
-                    let poweringCount = teamObj.pylons ? teamObj.pylons.filter(p => p.state === 'powering').length : 0;
+                    const isFox = (p) => {
+                        if (!p) return false;
+                        const wt = typeof pylonWeaponType === 'function' ? pylonWeaponType(p) : p.weaponType;
+                        return wt !== 'bomb' && wt !== 'rocket';
+                    };
+                    let armedCount = teamObj.pylons ? teamObj.pylons.filter(p => p.state === 'armed' && isFox(p)).length : 0;
+                    let poweringCount = teamObj.pylons ? teamObj.pylons.filter(p => p.state === 'powering' && isFox(p)).length : 0;
                     statusText = armedCount > 0 ? (isLocked ? '[已鎖定]' : '[就緒]') : (poweringCount > 0 ? '[開機中]' : '[未通電]');
                 }
             } else {

@@ -932,7 +932,12 @@ GameContext.stateMachine = {
     toggleMissileQueue(teamId) {
         const t = this.getTeamOrNull(teamId);
         if (!t || t.weapon !== 'missile' || !t.pylons) return false;
-        const armed = t.pylons.filter(item => item.state === 'armed');
+        const isFox = (item) => {
+            if (!item) return false;
+            const wt = typeof pylonWeaponType === 'function' ? pylonWeaponType(item) : item.weaponType;
+            return wt !== 'bomb' && wt !== 'rocket';
+        };
+        const armed = t.pylons.filter(item => item && item.state === 'armed' && isFox(item));
         if (armed.length <= 0) {
             this.clearQueuedAction(teamId);
             return false;
@@ -967,7 +972,12 @@ GameContext.stateMachine = {
         if (t.weapon !== 'missile') {
             if (!this.setWeaponMode(teamId, 'missile')) return false;
         }
-        const armed = t.pylons.filter((item) => item && item.state === 'armed');
+        const isFox = (item) => {
+            if (!item) return false;
+            const wt = typeof pylonWeaponType === 'function' ? pylonWeaponType(item) : item.weaponType;
+            return wt !== 'bomb' && wt !== 'rocket';
+        };
+        const armed = t.pylons.filter((item) => item && item.state === 'armed' && isFox(item));
         if (!armed.length) return false;
         const want = action.missileType
             ? (typeof sanitizePylonWeapon === 'function' ? sanitizePylonWeapon(action.missileType) : action.missileType)

@@ -78,11 +78,16 @@ function updateLcosWeaponTag(team, opts = {}) {
 
     if (wpn === 'missile') {
         name = live === 'fox1' ? 'FOX-1' : 'FOX-2';
+        const isFox = (p) => {
+            if (!p) return false;
+            const wt = typeof pylonWeaponType === 'function' ? pylonWeaponType(p) : p.weaponType;
+            return wt !== 'bomb' && wt !== 'rocket';
+        };
         const armed = team.pylons
-            ? team.pylons.filter((p) => p && p.state === 'armed' && p.weaponType !== 'bomb' && p.weaponType !== 'rocket').length
+            ? team.pylons.filter((p) => p && p.state === 'armed' && isFox(p)).length
             : 0;
         const powering = team.pylons
-            ? team.pylons.filter((p) => p && p.state === 'powering').length
+            ? team.pylons.filter((p) => p && p.state === 'powering' && isFox(p)).length
             : 0;
         const dist = Number(opts.distance);
         const gate = (typeof describeMissileLaunchRange === 'function')
@@ -90,6 +95,7 @@ function updateLcosWeaponTag(team, opts = {}) {
             : { ok: false, reason: 'noTarget' };
         const guiding = !!(live === 'fox1' && typeof uiTeamHasFox1Flight === 'function' && uiTeamHasFox1Flight(team));
         const queued = !!(team.wpnQueued && team.queuedAction === 'missile');
+        const inConeRange = !!opts.inRange;
 
         if (guiding) {
             status = '導引中';
@@ -100,13 +106,19 @@ function updateLcosWeaponTag(team, opts = {}) {
         } else if (!armed) {
             status = '未通電';
             tone = 'bad';
-        } else if (queued && (opts.inRange || gate.ok)) {
-            status = '已排程·射程內';
+        } else if (opts.obscured) {
+            status = queued ? '已排程·遮擋' : '遮擋';
+            tone = 'warn';
+        } else if (queued && inConeRange) {
+            status = '已排程·鎖定';
             tone = 'hot';
+        } else if (queued && gate.ok) {
+            status = '已排程·射程內';
+            tone = 'queued';
         } else if (queued) {
             status = '已排程';
             tone = 'queued';
-        } else if (opts.inRange || gate.ok) {
+        } else if (inConeRange) {
             status = '進入射程';
             tone = 'hot';
         } else if (gate.reason === 'tooClose') {
@@ -121,15 +133,18 @@ function updateLcosWeaponTag(team, opts = {}) {
         }
     } else if (wpn === 'bomb') {
         name = 'BOMB';
-        const armed = (typeof AirArenaBomb !== 'undefined')
-            ? AirArenaBomb.teamBombPylons(team).filter((p) => p.state === 'armed').length
-            : 0;
+        const bombs = (typeof AirArenaBomb !== 'undefined') ? AirArenaBomb.teamBombPylons(team) : [];
+        const armed = bombs.filter((p) => p.state === 'armed').length;
+        const anyLeft = bombs.some((p) => p.state !== 'empty');
         if (team.wpnQueued && team.queuedAction === 'bomb') {
             status = '已排程';
             tone = 'queued';
         } else if (armed > 0) {
-            status = '就緒';
+            status = 'CCIP 就緒';
             tone = 'ready';
+        } else if (!anyLeft) {
+            status = '彈盡';
+            tone = 'bad';
         } else {
             status = '未通電';
             tone = 'bad';
@@ -140,12 +155,16 @@ function updateLcosWeaponTag(team, opts = {}) {
         const armedPod = pods.find((p) => p.state === 'armed') || null;
         const ammo = armedPod && typeof AirArenaRocket !== 'undefined'
             ? AirArenaRocket.ensurePodAmmo(armedPod) : 0;
+        const anyAmmo = pods.some((p) => (typeof AirArenaRocket !== 'undefined' ? AirArenaRocket.ensurePodAmmo(p) : (p.ammo || 0)) > 0);
         if (team.wpnQueued && team.queuedAction === 'rocket') {
-            status = '齊射排程';
-            tone = 'queued';
+            status = opts.inRange ? '齊射·射程內' : '齊射排程';
+            tone = opts.inRange ? 'hot' : 'queued';
         } else if (armedPod && ammo > 0) {
-            status = '就緒';
-            tone = 'ready';
+            status = opts.inRange ? '進入射程' : `就緒 ${ammo}發`;
+            tone = opts.inRange ? 'hot' : 'ready';
+        } else if (!anyAmmo) {
+            status = '彈盡';
+            tone = 'bad';
         } else {
             status = '未通電';
             tone = 'bad';
@@ -1108,9 +1127,19 @@ window.updateDynamicHUD = function() {
             const missileLockAng = liveMsl === 'fox1'
                 ? (Number(fox1Cfg.seekerAngle) || Math.PI / 14)
                 : Math.PI / 12;
-            let isLocked = t.weapon === 'gun'
-                ? (distance <= gunFireRange && angle <= Math.PI / 8)
-                : (distance <= missileLockRange && distance >= missileLockMin && angle <= missileLockAng);
+            const rktCfg = (typeof CONFIG !== 'undefined' && CONFIG.weapons && CONFIG.weapons.rocket)
+                ? CONFIG.weapons.rocket
+                : {};
+            const rktMax = Number(rktCfg.range) || 75;
+            const rktVt = Number(rktCfg.vtRadius) || 6;
+            let isLocked = false;
+            if (t.weapon === 'gun') {
+                isLocked = distance <= gunFireRange && angle <= Math.PI / 8;
+            } else if (t.weapon === 'missile') {
+                isLocked = distance <= missileLockRange && distance >= missileLockMin && angle <= missileLockAng;
+            } else if (t.weapon === 'rocket') {
+                isLocked = distance <= rktMax && angle <= Math.PI / 14 && distance * Math.sin(angle) <= rktVt * 1.5;
+            }
 
             const fox1Active = liveMsl === 'fox1' && t.weapon === 'missile' && (
                 !!(t.wpnQueued && t.queuedAction === 'missile') ||
@@ -1469,6 +1498,81 @@ window.updateDynamicHUD = function() {
                     obscured: false
                 });
             }
+        }
+    } else if (t.weapon === 'bomb' || t.weapon === 'rocket') {
+        updateLcosGunHeatRing(t, 50, 50, 37.4, false);
+        updateMissileSeekerBrackets({ visible: false });
+        if (typeof trajectoryMeshes !== 'undefined' && trajectoryMeshes[enemy.id]) {
+            trajectoryMeshes[enemy.id].visible = false;
+        }
+        if (typeof threatEnvGroup !== 'undefined' && threatEnvGroup) {
+            threatEnvGroup.visible = false;
+        }
+        if (t.userData && t.userData.gunPreview) t.userData.gunPreview.visible = false;
+        if (ghostHud) ghostHud.style.display = 'none';
+
+        const myGhostForward = new THREE.Vector3(0, 0, 1).applyQuaternion(myGhostQuat).normalize();
+        const aimWorld = myGhostPos.clone().add(myGhostForward.clone().multiplyScalar(42));
+        const aimPoint = aimWorld.clone();
+        aimPoint.project(camera);
+        const noseAnchor = myGhostPos.clone().add(myGhostForward.clone().multiplyScalar(18));
+        const screenPos = resolveLcosScreenPos(aimPoint, noseAnchor);
+
+        if (!screenPos) {
+            hidePipper();
+        } else {
+            lcosPipper.style.display = 'block';
+            const px = screenPos.px;
+            const py = screenPos.py;
+            if (!window.lcosLastPos) {
+                window.lcosLastPos = new THREE.Vector2(px, py);
+            } else {
+                const screenDist = window.lcosLastPos.distanceTo(new THREE.Vector2(px, py));
+                if (screenDist > 400) window.lcosLastPos.set(px, py);
+                else window.lcosLastPos.lerp(new THREE.Vector2(px, py), 0.4);
+            }
+            lcosPipper.style.left = `${window.lcosLastPos.x}px`;
+            lcosPipper.style.top = `${window.lcosLastPos.y}px`;
+            lcosPipper.style.width = '52px';
+            lcosPipper.style.height = '52px';
+
+            const joyX = Number(t.joyX || 0);
+            const joyY = Number(t.joyY || 0);
+            const turnMag = Math.min(1, Math.hypot(joyX, joyY));
+            const funnelR = (32 + turnMag * 3) * 1.1;
+            if (lcosConeCircle) {
+                lcosConeCircle.setAttribute('cx', '50');
+                lcosConeCircle.setAttribute('cy', '50');
+                lcosConeCircle.setAttribute('r', String(funnelR));
+                syncLcosGrabGeometry(50, 50, funnelR);
+            }
+            const aimGroup = document.getElementById('lcos-aim-group');
+            if (aimGroup) {
+                aimGroup.style.display = 'none';
+                aimGroup.setAttribute('transform', 'translate(0 0)');
+            }
+
+            const toEnemy = enemyGhostPos.clone().sub(myGhostPos);
+            const dist = toEnemy.length();
+            let a2gInRange = false;
+            if (t.weapon === 'rocket' && !isObscured && dist > 0.001) {
+                const rktCfg = (typeof CONFIG !== 'undefined' && CONFIG.weapons && CONFIG.weapons.rocket)
+                    ? CONFIG.weapons.rocket
+                    : {};
+                const rktMax = Number(rktCfg.range) || 75;
+                const rktVt = Number(rktCfg.vtRadius) || 6;
+                const toEnemyNorm = toEnemy.clone().normalize();
+                const ang = myGhostForward.angleTo(toEnemyNorm);
+                a2gInRange = dist <= rktMax
+                    && myGhostForward.dot(toEnemyNorm) > 0.85
+                    && dist * Math.sin(ang) <= rktVt * 1.5;
+            }
+            paintPipperColor(a2gInRange);
+            updateLcosWeaponTag(t, {
+                distance: dist,
+                inRange: a2gInRange,
+                obscured: isObscured
+            });
         }
     } else {
         hidePipper();

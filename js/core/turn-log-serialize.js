@@ -121,7 +121,7 @@
                 out[key] = log[key];
                 return;
             }
-            if (/MslTracks$/.test(key) && log[key] && typeof log[key] === 'object') {
+            if (/(?:Msl|Bomb|Rkt)Tracks$/.test(key) && log[key] && typeof log[key] === 'object') {
                 const tracks = {};
                 Object.keys(log[key]).forEach((pid) => {
                     tracks[pid] = serializeMslTrack(log[key][pid]);
@@ -163,7 +163,7 @@
             if (block && Array.isArray(block.quats)) {
                 block.quats = block.quats.map((q) => reviveVec(q, T));
             }
-            if (/MslTracks$/.test(key) && block && typeof block === 'object') {
+            if (/(?:Msl|Bomb|Rkt)Tracks$/.test(key) && block && typeof block === 'object') {
                 Object.keys(block).forEach((pid) => {
                     if (!Array.isArray(block[pid])) return;
                     block[pid] = block[pid].map((pt) => {

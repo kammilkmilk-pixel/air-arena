@@ -1146,6 +1146,12 @@ function enterReplayMode() {
         });
         if (window.ghostWrapper) window.ghostWrapper.visible = false;
         if (typeof threatEnvGroup !== 'undefined' && threatEnvGroup) threatEnvGroup.visible = false;
+        if (typeof AirArenaBomb !== 'undefined' && typeof AirArenaBomb.hideCcipPreview === 'function') {
+            AirArenaBomb.hideCcipPreview();
+        }
+        if (typeof AirArenaRocket !== 'undefined' && typeof AirArenaRocket.hideRocketAimPreview === 'function') {
+            AirArenaRocket.hideRocketAimPreview();
+        }
         const labels = document.getElementById('multi-view-labels');
         if (labels) {
             labels.innerHTML = '';
@@ -1195,6 +1201,12 @@ function exitReplayMode() {
     if (typeof window.hideVisualFlares === 'function') window.hideVisualFlares();
     else GameContext.callService('hideVisualFlares');
     GameContext.callService('drawStaticFlares');
+    if (typeof AirArenaBomb !== 'undefined' && typeof AirArenaBomb.clearBombVisuals === 'function') {
+        AirArenaBomb.clearBombVisuals({ dispose: false });
+    }
+    if (typeof AirArenaRocket !== 'undefined' && typeof AirArenaRocket.clearRocketVisuals === 'function') {
+        AirArenaRocket.clearRocketVisuals({ dispose: false });
+    }
     
     const currentTeam = GameContext.getActiveTeamId();
     if (GameContext.getTeam(currentTeam)) GameContext.callService('updateTacticalPreview', GameContext.getTeam(currentTeam));

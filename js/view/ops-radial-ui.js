@@ -661,13 +661,16 @@
         // Persistent while the forward ghost is on screen (not only when ops radial is open).
         const show = ghostSteerShouldShow(t);
         if (!show) {
+            if (GhostSteer.mode) endGhostSteer();
             hud.hidden = true;
             hud.classList.remove('is-visible');
             hud.setAttribute('aria-hidden', 'true');
             return;
         }
+        const ringDrag = GhostSteer.mode === 'roll' || GhostSteer.mode === 'throttle';
         const scr = projectGhostScreen();
-        if (!scr) {
+        if (!scr && !ringDrag) {
+            if (GhostSteer.mode) endGhostSteer();
             hud.hidden = true;
             hud.classList.remove('is-visible');
             return;
@@ -676,8 +679,7 @@
         hud.classList.add('is-visible');
         hud.setAttribute('aria-hidden', 'false');
         // Freeze screen position while ring/handle dragging — a moving pivot = 跳舵.
-        const ringDrag = GhostSteer.mode === 'roll' || GhostSteer.mode === 'throttle';
-        if (!ringDrag) {
+        if (!ringDrag && scr) {
             hud.style.left = `${scr.x}px`;
             hud.style.top = `${scr.y}px`;
         }
@@ -737,6 +739,7 @@
             const needGhost = ghostSteerShouldShow(team);
             if (!OpsRadial.open && !needGhost) {
                 OpsRadial._raf = 0;
+                if (GhostSteer.mode) endGhostSteer();
                 const hud = $('ghost-steer-hud');
                 if (hud) {
                     hud.hidden = true;
@@ -993,9 +996,16 @@
             const p = pylons[idx];
             const st = p && p.state;
             const empty = !p || st === 'empty';
-            const selected = !empty && (st === 'armed' || st === 'powering');
+            const wt = p && (typeof pylonWeaponType === 'function' ? pylonWeaponType(p) : p.weaponType);
+            const modeMatch = (wt === 'bomb' && team && team.weapon === 'bomb')
+                || (wt === 'rocket' && team && team.weapon === 'rocket')
+                || (wt !== 'bomb' && wt !== 'rocket' && team && team.weapon === 'missile');
+            const selected = !empty && modeMatch && (st === 'armed' || st === 'powering');
+            const colorState = empty
+                ? 'empty'
+                : (modeMatch ? st : ((st === 'armed' || st === 'powering') ? 'idle' : st));
             const kind = weaponIconKind(`pylon-${idx + 1}`, team, p);
-            mk(a0, a1, wedgeColor(empty ? 'empty' : st), `pylon-${idx + 1}`, selected, kind, pylonWedgeLines(p), empty);
+            mk(a0, a1, wedgeColor(colorState), `pylon-${idx + 1}`, selected, kind, pylonWedgeLines(p), empty);
         });
     }
 
@@ -1088,7 +1098,11 @@
         const t = team || (teams && teams[OpsRadial.teamId]);
         const world = (t && t.wrapper) ? t.wrapper.position : null;
         const scr = projectWorldToScreen(world);
-        const half = 350; // ~half of 700px ring
+        const ringEl = $('ops-radial-ring');
+        const ringRect = ringEl ? ringEl.getBoundingClientRect() : null;
+        const half = (ringRect && ringRect.width > 0)
+            ? ringRect.width * 0.5
+            : Math.min(350, window.innerWidth * 0.46);
         if (!scr) {
             anchor.style.left = '50%';
             anchor.style.top = '55%';
@@ -1097,8 +1111,12 @@
             layoutWeaponDetailPanel();
             return;
         }
-        const x = Math.max(half + 8, Math.min(window.innerWidth - half - 8, scr.x));
-        const y = Math.max(half + 8, Math.min(window.innerHeight - half - 24, scr.y));
+        const minX = half + 8;
+        const maxX = window.innerWidth - half - 8;
+        const minY = half + 8;
+        const maxY = window.innerHeight - half - 24;
+        const x = minX > maxX ? window.innerWidth * 0.5 : Math.max(minX, Math.min(maxX, scr.x));
+        const y = minY > maxY ? window.innerHeight * 0.5 : Math.max(minY, Math.min(maxY, scr.y));
         anchor.style.left = `${x}px`;
         anchor.style.top = `${y}px`;
         anchor.style.bottom = 'auto';
@@ -1159,7 +1177,6 @@
             if (cfg.vtRadius != null) rows.push(['VT 引信', `${cfg.vtRadius} m`]);
             if (cfg.blastRadius != null) rows.push(['爆震半徑', `${cfg.blastRadius} m`]);
         } else if (wt === 'bomb') {
-            if (cfg.damage != null) rows.push(['傷害', String(cfg.damage)]);
             if (cfg.blastRadius != null) rows.push(['爆震半徑', `${cfg.blastRadius} m`]);
             rows.push(['模式', 'CCIP']);
         }

@@ -38,4 +38,53 @@ assert(cfg.mode === '1v1', 'default 1v1');
 assert(cfg.seats['red-1'].control === 'human', 'red human');
 assert(cfg.seats['blue-1'].control === 'human', 'blue human');
 
+// Bomb / rocket intent roundtrip (ammo + queuedAction preserved on host)
+const rktSeat = {
+    throttle: 4.5,
+    weapon: 'rocket',
+    queuedAction: 'rocket',
+    wpnQueued: true,
+    pylons: [
+        { id: 1, weaponType: 'bomb', state: 'standby' },
+        { id: 4, weaponType: 'rocket', state: 'armed', ammo: 6, ammoMax: 9 }
+    ]
+};
+const rktIntent = Proto.buildTurnIntent('blue', rktSeat, 5);
+assert(rktIntent.pylons[1].ammo === 6 && rktIntent.pylons[1].ammoMax === 9, 'rocket ammo in intent');
+const hostSeat = {
+    isDestroyed: false,
+    matchActive: true,
+    pylons: [
+        { id: 1, weaponType: 'bomb', state: 'standby' },
+        { id: 4, weaponType: 'rocket', state: 'standby', ammo: 9, ammoMax: 9 }
+    ]
+};
+let toggledRkt = 0;
+let toggledBomb = 0;
+const mockGC = {
+    getTeam: () => hostSeat,
+    setLockedTarget: () => {},
+    stateMachine: {
+        setThrottle: (_id, v) => { hostSeat.throttle = v; },
+        setJoystickInput: () => {},
+        setRollInput: () => {},
+        setWeaponMode: (_id, w) => { hostSeat.weapon = w; },
+        setWingmanOrder: () => {},
+        toggleRocketQueue: () => { toggledRkt++; hostSeat.queuedAction = 'rocket'; hostSeat.wpnQueued = true; },
+        toggleBombQueue: () => { toggledBomb++; hostSeat.queuedAction = 'bomb'; hostSeat.wpnQueued = true; },
+        clearQueuedAction: () => { hostSeat.queuedAction = 'none'; hostSeat.wpnQueued = false; },
+        setReady: (_id, r) => { hostSeat.ready = r; }
+    }
+};
+assert(Proto.applyTurnIntent('blue', rktIntent, { GameContext: mockGC }), 'apply rocket intent');
+assert(toggledRkt === 1 && hostSeat.queuedAction === 'rocket' && hostSeat.pylons[1].ammo === 6, 'rocket queued + ammo synced');
+const bombIntent = Proto.buildTurnIntent('blue', {
+    weapon: 'bomb',
+    queuedAction: 'bomb',
+    wpnQueued: true,
+    pylons: [{ id: 1, weaponType: 'bomb', state: 'armed' }]
+}, 6);
+assert(Proto.applyTurnIntent('blue', bombIntent, { GameContext: mockGC }), 'apply bomb intent');
+assert(toggledBomb === 1 && hostSeat.queuedAction === 'bomb', 'bomb queued on host');
+
 console.log('netplay-protocol-smoke: ok', Proto.PROTOCOL, code, seed);

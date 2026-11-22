@@ -933,6 +933,30 @@
         }
     }
 
+    /** Hide or dispose in-flight rocket meshes/ribbons (replay exit or match reset). */
+    function clearRocketVisuals(opts) {
+        const dispose = !!(opts && opts.dispose);
+        hideRocketAimPreview();
+        if (!Rocket._flightMeshes) return;
+        Object.keys(Rocket._flightMeshes).forEach((key) => {
+            const m = Rocket._flightMeshes[key];
+            if (!m) return;
+            const smoke = m.userData && m.userData.smoke;
+            if (dispose) {
+                if (m.parent) m.parent.remove(m);
+                if (smoke) {
+                    if (smoke.parent) smoke.parent.remove(smoke);
+                    if (smoke.geometry) smoke.geometry.dispose();
+                    if (smoke.material) smoke.material.dispose();
+                }
+                delete Rocket._flightMeshes[key];
+            } else {
+                m.visible = false;
+                if (smoke) smoke.visible = false;
+            }
+        });
+    }
+
     Rocket.isRocketType = isRocketType;
     Rocket.teamRocketPylons = teamRocketPylons;
     Rocket.ensurePodAmmo = ensurePodAmmo;
@@ -948,6 +972,7 @@
     Rocket.applyRocketVisuals = applyRocketVisuals;
     Rocket.updateRocketAimPreview = updateRocketAimPreview;
     Rocket.hideRocketAimPreview = hideRocketAimPreview;
+    Rocket.clearRocketVisuals = clearRocketVisuals;
     Rocket.syncPodMuzzleFlames = syncPodMuzzleFlames;
     Rocket.buildFlyingRocketMesh = buildFlyingRocketMesh;
 

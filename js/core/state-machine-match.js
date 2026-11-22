@@ -129,6 +129,12 @@ window.StateMachineMatchApi = {
         if (typeof window.clearAircraftDebris === 'function') {
             try { window.clearAircraftDebris(); } catch (_) { /* ignore */ }
         }
+        if (typeof AirArenaBomb !== 'undefined' && typeof AirArenaBomb.clearBombVisuals === 'function') {
+            try { AirArenaBomb.clearBombVisuals({ dispose: true }); } catch (_) { /* ignore */ }
+        }
+        if (typeof AirArenaRocket !== 'undefined' && typeof AirArenaRocket.clearRocketVisuals === 'function') {
+            try { AirArenaRocket.clearRocketVisuals({ dispose: true }); } catch (_) { /* ignore */ }
+        }
         if (typeof AirArenaAI !== 'undefined' && AirArenaAI.mergeDivergeMemory) {
             AirArenaAI.mergeDivergeMemory = {};
         }
