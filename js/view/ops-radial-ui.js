@@ -219,11 +219,14 @@
             const rollRing = $('roll-ring');
             if (rollRing) rollRing.style.transform = `translate(-50%, -50%) rotate(${angle}rad)`;
         }
-        // SVG only — CSS rotate on <g> uses wrong origin and drifts off-axis.
-        // L/R handles live inside this group so they bank with the ghost.
+        // SVG transform attribute only — CSS rotate on <g> drifts off-axis.
+        // Never set style.transform = 'none': inline CSS transform:none overrides
+        // the SVG transform="..." attribute in SVG2/Chromium and locks rotation at 0.
         const ghostRoll = $('ghost-roll-ring');
         if (ghostRoll) {
-            if (ghostRoll.style) ghostRoll.style.transform = 'none';
+            if (ghostRoll.style && ghostRoll.style.transform) {
+                ghostRoll.style.removeProperty('transform');
+            }
             ghostRoll.setAttribute('transform', `rotate(${(angle * 180) / Math.PI} 70 70)`);
         }
     }
