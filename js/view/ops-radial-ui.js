@@ -21,7 +21,8 @@
         teamId: null,
         _raf: 0,
         _outsideBound: false,
-        _outsideArmAt: 0 // ignore outside closes until after the opening pick settles
+        _outsideArmAt: 0, // ignore outside closes until after the opening pick settles
+        _suppressPickOpenUntil: 0 // hollow/outside close must not be reopened by the same 3D pick
     };
 
     function $(id) { return document.getElementById(id); }
@@ -117,8 +118,10 @@
     };
     /** Nominal roll-ring radius in HUD CSS px (matches SVG r≈62 on 120px box). */
     const ROLL_RING_BASE_PX = 53;
-    /** Radial drag (px) that maps to ±1.0 throttle. */
+    /** Outward radial drag (px) that maps +1.0 throttle above start. */
     const ROLL_THR_SOFT_PX = 36;
+    const ROLL_THR_MIN = 1;
+    const ROLL_THR_MAX = 5;
     /** Below this radius, bank is frozen and lastAngle re-baselines (no atan2 spike). */
     const ROLL_BANK_MIN_PX = 42;
     /** Never shrink the ring into the nose grab — only expand outward for accel feedback. */
@@ -335,11 +338,16 @@
             }
         }
 
-        // Radial: pull outward = accelerate, inward = decelerate (vs start radius).
+        // Radial throttle: center → min; start ring radius → startThrottle; outward → max.
         const baseR = GhostSteer.startRadius > 8 ? GhostSteer.startRadius : ROLL_RING_BASE_PX;
-        const dr = radius - baseR;
-        const thrDelta = (dr / ROLL_THR_SOFT_PX);
-        const nextThr = Math.max(1, Math.min(5, GhostSteer.startThrottle + thrDelta));
+        const startThr = Math.max(ROLL_THR_MIN, Math.min(ROLL_THR_MAX, GhostSteer.startThrottle));
+        let nextThr;
+        if (radius <= baseR) {
+            const tNorm = baseR > 1 ? Math.max(0, Math.min(1, radius / baseR)) : 0;
+            nextThr = ROLL_THR_MIN + tNorm * (startThr - ROLL_THR_MIN);
+        } else {
+            nextThr = Math.min(ROLL_THR_MAX, startThr + (radius - baseR) / ROLL_THR_SOFT_PX);
+        }
         if (GameContext.stateMachine && GameContext.stateMachine.setThrottle) {
             GameContext.stateMachine.setThrottle(t.id, nextThr);
         } else {
@@ -652,15 +660,22 @@
         return false;
     }
 
-    /** True when the pointer is inside the circular footprint of the weapon ring. */
-    function isInsideOpsRingFootprint(clientX, clientY) {
+    /**
+     * True only on the weapon wedge annulus (not the hollow HP disc).
+     * Hollow-center clicks pass through and should close the ring.
+     */
+    function isInsideOpsWedgeAnnulus(clientX, clientY) {
         const ring = $('ops-radial-ring');
         if (!ring) return false;
         const rect = ring.getBoundingClientRect();
         const cx = rect.left + rect.width / 2;
         const cy = rect.top + rect.height / 2;
-        const r = Math.min(rect.width, rect.height) * 0.5;
-        return Math.hypot(clientX - cx, clientY - cy) <= r;
+        // SVG viewBox width 640 maps onto the ring box.
+        const unit = Math.min(rect.width, rect.height) / 640;
+        const r = Math.hypot(clientX - cx, clientY - cy);
+        const rInner = WEDGE_R0 * unit;
+        const rOuter = Math.max(WEDGE_R1 * unit, Math.min(rect.width, rect.height) * 0.5);
+        return r >= rInner && r <= rOuter;
     }
 
     function onOpsOutsidePointerDown(e) {
@@ -669,9 +684,12 @@
         // Only primary button / touch; ignore while ghost-steer / LCOS drag is active.
         if (e.button != null && e.button !== 0) return;
         if (window.isDraggingGhostSteer || window.isDraggingLcosRing) return;
+        // OK / wedges / detail / hollow-hit are real targets — keep open here
+        // (hollow-hit closes itself via its own handler).
         if (isOpsRingChrome(e.target)) return;
-        // Hollow center / gaps have pointer-events:none — still treat as "inside the ring".
-        if (isInsideOpsRingFootprint(e.clientX, e.clientY)) return;
+        // Wedge-annulus gaps (pointer-events none) keep open; hollow / outside close.
+        if (isInsideOpsWedgeAnnulus(e.clientX, e.clientY)) return;
+        OpsRadial._suppressPickOpenUntil = Date.now() + 360;
         setOpen(false);
     }
 
@@ -1301,6 +1319,20 @@
             });
         }
 
+        const hollow = $('ops-hollow-hit');
+        if (hollow) {
+            const dismissHollow = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                OpsRadial._suppressPickOpenUntil = Date.now() + 360;
+                setOpen(false);
+            };
+            hollow.addEventListener('click', dismissHollow);
+            hollow.addEventListener('pointerup', (e) => {
+                if (e.pointerType === 'touch' || e.pointerType === 'pen') dismissHollow(e);
+            });
+        }
+
         const wpnClose = $('ops-wpn-close');
         if (wpnClose) wpnClose.addEventListener('click', (e) => {
             e.preventDefault(); e.stopPropagation();
@@ -1398,6 +1430,8 @@
     }
 
     function onAircraftOrGhostPicked(teamId, focus) {
+        // Same gesture that dismissed via hollow/outside must not reopen via 3D pick.
+        if (Date.now() < OpsRadial._suppressPickOpenUntil && !OpsRadial.open) return;
         toggleForTeam(teamId, focus || 'aircraft');
     }
 

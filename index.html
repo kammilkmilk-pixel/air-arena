@@ -416,7 +416,7 @@
                     </defs>
                     <g id="ops-radial-wedges"></g>
                     <circle class="ops-radial-rim" cx="280" cy="280" r="316" fill="none"/>
-                    <!-- Center transparent hollow (no hit) — rim = HP; r=220 = 2× prior 110 -->
+                    <!-- Center disc — rim = HP; r=220 = 2× prior 110 -->
                     <circle id="ops-center-disc" cx="280" cy="280" r="220" fill="none"/>
                     <circle id="ops-hp-track" cx="280" cy="280" r="220" fill="none"
                         stroke="rgba(255,255,255,0.16)" stroke-width="6"/>
@@ -427,6 +427,9 @@
                     <!-- OK = horizontal chord cut across bottom of center disc -->
                     <path id="ops-ok-wedge" class="ops-ok-wedge"
                         d="M 104 412 L 456 412 A 220 220 0 0 1 104 412 Z"/>
+                    <!-- Hollow hit: tap empty center to dismiss (inside wedges' inner edge) -->
+                    <circle id="ops-hollow-hit" cx="280" cy="280" r="216"
+                        fill="rgba(0,0,0,0.01)" style="cursor:pointer"/>
                 </svg>
                 <button type="button" id="ops-radial-ok" class="ops-radial-ok" title="確認交戰">OK</button>
                 <!-- Tactical computer sits on the OK chord top edge (center) -->

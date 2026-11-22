@@ -907,6 +907,10 @@ html.startup-lock body {
     pointer-events: none;
 }
 #ops-hp-track, #ops-center-disc { pointer-events: none; }
+#ops-hollow-hit {
+    pointer-events: fill;
+    cursor: pointer;
+}
 .ops-ok-wedge {
     fill: rgba(255, 235, 59, 0.28);
     stroke: rgba(255, 235, 59, 0.8);
