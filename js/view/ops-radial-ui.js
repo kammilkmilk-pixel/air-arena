@@ -13,7 +13,7 @@
     const WEDGE_MID_R = (WEDGE_R0 + WEDGE_R1) * 0.5;
     /** Screen-Y stack inside a wedge cell: logo above text (SVG +y is down). */
     const WEDGE_STACK_DY = 16;
-    const OpsDetail = { pylonId: null, a0: null, a1: null };
+    const OpsDetail = { kind: null, pylonId: null, a0: null, a1: null }; // kind: 'gun' | 'pylon'
 
     const OpsRadial = {
         open: false,
@@ -654,6 +654,7 @@
     function weaponIconKind(opsId, team, pylon) {
         if (opsId === 'flare') return 'flare';
         if (opsId === 'chaff') return 'chaff';
+        if (opsId === 'gun') return 'gun';
         if (!pylon) return 'fox2';
         const wt = (typeof pylonWeaponType === 'function')
             ? pylonWeaponType(pylon)
@@ -738,14 +739,23 @@
             appendWeaponIcon(g, iconKind || 'fox2', a0, a1, empty);
             appendWedgeText(g, textLines || [], a0, a1, empty);
         };
-        // Top 90° (−45…+45): flare then chaff.
+        // Top 90° (−45…+45): flare | gun (center) | chaff.
         const flareArmed = !!(team && team.flaresArmed);
         const chaffArmed = !!(team && team.chaffArmed);
         const flareN = Number(team && team.flareAmmo) || 0;
         const chaffN = Number(team && team.chaffAmmo) || 0;
-        mk(-45, 0, wedgeColor(flareN <= 0 ? 'empty' : (flareArmed ? 'active' : 'idle')), 'flare', flareArmed, 'flare',
+        const gunSelected = !!(team && team.weapon === 'gun');
+        const gunHot = !!(team && GameContext.stateMachine
+            && typeof GameContext.stateMachine.isGunOverheated === 'function'
+            && GameContext.stateMachine.isGunOverheated(team.id));
+        const gunQueued = !!(team && team.wpnQueued && team.queuedAction === 'gun');
+        mk(-45, -15, wedgeColor(flareN <= 0 ? 'empty' : (flareArmed ? 'active' : 'idle')), 'flare', flareArmed, 'flare',
             ['FLARE', String(flareN)], flareN <= 0);
-        mk(0, 45, wedgeColor(chaffN <= 0 ? 'empty' : (chaffArmed ? 'active' : 'idle')), 'chaff', chaffArmed, 'chaff',
+        mk(-15, 15, wedgeColor(gunHot ? 'empty' : (gunSelected || gunQueued ? 'active' : 'idle')), 'gun',
+            gunSelected || gunQueued, 'gun',
+            ['GUN', gunHot ? 'HOT' : (gunQueued ? 'QUE' : (gunSelected ? 'RDY' : 'OFF'))],
+            false);
+        mk(15, 45, wedgeColor(chaffN <= 0 ? 'empty' : (chaffArmed ? 'active' : 'idle')), 'chaff', chaffArmed, 'chaff',
             ['CHAFF', String(chaffN)], chaffN <= 0);
         // Bottom 270°: four pylons (45 → 315)
         const pylons = (team && Array.isArray(team.pylons)) ? team.pylons : [];
@@ -826,7 +836,7 @@
             sms.classList.remove('is-ccip');
         }
 
-        if (OpsDetail.pylonId != null) syncWeaponDetail(team);
+        if (OpsDetail.kind) syncWeaponDetail(team);
         sync3dOverlays(team);
         paintGhostThrottle(team);
         layoutAnchor(team);
@@ -940,6 +950,7 @@
     }
 
     function hideWeaponDetail() {
+        OpsDetail.kind = null;
         OpsDetail.pylonId = null;
         OpsDetail.a0 = null;
         OpsDetail.a1 = null;
@@ -957,7 +968,7 @@
      */
     function layoutWeaponDetailPanel() {
         const panel = $('ops-weapon-detail');
-        if (!panel || panel.hidden || OpsDetail.pylonId == null) return;
+        if (!panel || panel.hidden || !OpsDetail.kind) return;
         const svg = $('ops-radial-svg');
         const ring = $('ops-radial-ring');
         if (!svg || !ring) return;
@@ -999,10 +1010,69 @@
         panel.classList.toggle('is-right', !preferLeft);
     }
 
+    function buildGunStatRows(team) {
+        const cfg = (typeof CONFIG !== 'undefined' && CONFIG.weapons && CONFIG.weapons.gun)
+            ? CONFIG.weapons.gun
+            : {};
+        const rows = [];
+        rows.push(['武器', cfg.name || '機砲']);
+        if (cfg.damage != null) rows.push(['傷害', String(cfg.damage)]);
+        if (cfg.range != null) rows.push(['射程', `${cfg.range} m`]);
+        if (cfg.angle != null) rows.push(['錐角', `${((cfg.angle * 180) / Math.PI).toFixed(1)}°`]);
+        const heat = Number(team && team.gunHeat);
+        if (Number.isFinite(heat)) rows.push(['炮管熱', `${Math.round(heat * 100)}%`]);
+        const hot = !!(team && GameContext.stateMachine
+            && typeof GameContext.stateMachine.isGunOverheated === 'function'
+            && GameContext.stateMachine.isGunOverheated(team.id));
+        rows.push(['狀態', hot ? '過熱' : (team && team.weapon === 'gun' ? '就緒' : '未選')]);
+        return rows;
+    }
+
     function syncWeaponDetail(team) {
         const panel = $('ops-weapon-detail');
-        if (!panel || OpsDetail.pylonId == null) return;
+        if (!panel || !OpsDetail.kind) return;
         const t = team || (teams && teams[OpsRadial.teamId]);
+        if (!t) {
+            hideWeaponDetail();
+            return;
+        }
+
+        if (OpsDetail.kind === 'gun') {
+            const cfg = (typeof CONFIG !== 'undefined' && CONFIG.weapons && CONFIG.weapons.gun)
+                ? CONFIG.weapons.gun
+                : {};
+            const title = $('ops-wpn-title');
+            if (title) title.textContent = cfg.name || '機關炮';
+            const list = $('ops-wpn-stats');
+            if (list) {
+                list.innerHTML = '';
+                buildGunStatRows(t).forEach(([k, v]) => {
+                    const li = document.createElement('li');
+                    li.innerHTML = `<span class="ops-wpn-k">${k}</span><span class="ops-wpn-v">${v}</span>`;
+                    list.appendChild(li);
+                });
+            }
+            const fire = $('ops-wpn-fire');
+            if (fire) {
+                const hot = !!(GameContext.stateMachine
+                    && typeof GameContext.stateMachine.isGunOverheated === 'function'
+                    && GameContext.stateMachine.isGunOverheated(t.id));
+                const canFire = t.weapon === 'gun' && !hot;
+                const queued = !!(t.wpnQueued && t.queuedAction === 'gun');
+                fire.disabled = !canFire;
+                fire.classList.toggle('is-armed-ready', canFire && !queued);
+                fire.classList.toggle('is-queued', canFire && queued);
+                fire.textContent = '射擊 ENT';
+                fire.title = hot
+                    ? '機砲過熱'
+                    : (queued ? '已排程 — 再按可取消' : '按 ENT 排程射擊');
+            }
+            panel.hidden = false;
+            panel.setAttribute('aria-hidden', 'false');
+            layoutWeaponDetailPanel();
+            return;
+        }
+
         const p = t && Array.isArray(t.pylons)
             ? t.pylons.find((x) => x && x.id === OpsDetail.pylonId)
             : null;
@@ -1040,8 +1110,31 @@
         layoutWeaponDetailPanel();
     }
 
+    function openGunDetail() {
+        OpsDetail.kind = 'gun';
+        OpsDetail.pylonId = null;
+        OpsDetail.a0 = -15;
+        OpsDetail.a1 = 15;
+        const teamId = OpsRadial.teamId;
+        if (teamId && typeof selectTeam === 'function') {
+            try { selectTeam(teamId); } catch (_) { /* ignore */ }
+        }
+        if (teamId && GameContext.stateMachine && typeof GameContext.stateMachine.setWeaponMode === 'function') {
+            GameContext.stateMachine.setWeaponMode(teamId, 'gun');
+            if (typeof showSMSAlert === 'function') {
+                showSMSAlert('⚠️ 主武裝：機關炮', '#ffaa00');
+            }
+        }
+        const t = teams && teams[teamId];
+        if (typeof updateDashboardUI === 'function' && t) updateDashboardUI(t);
+        if (typeof uiRefreshPreview === 'function' && t) uiRefreshPreview(t);
+        syncWeaponDetail(t);
+        refresh(t);
+    }
+
     function openWeaponDetail(pylonId) {
         const span = pylonSpanForId(pylonId);
+        OpsDetail.kind = 'pylon';
         OpsDetail.pylonId = pylonId;
         OpsDetail.a0 = span ? span[0] : null;
         OpsDetail.a1 = span ? span[1] : null;
@@ -1073,6 +1166,9 @@
         } else if (opsId === 'chaff') {
             hideWeaponDetail();
             const b = $('btn-chaff'); if (b) b.click();
+        } else if (opsId === 'gun') {
+            openGunDetail();
+            return;
         } else if (opsId.indexOf('pylon-') === 0) {
             const n = parseInt(opsId.slice(6), 10);
             if (n >= 1 && n <= 4) openWeaponDetail(n);
@@ -1147,6 +1243,11 @@
         if (flare) flare.addEventListener('click', (e) => {
             e.preventDefault(); e.stopPropagation();
             handleOpsAction('flare');
+        });
+        const gun = $('ops-hit-gun');
+        if (gun) gun.addEventListener('click', (e) => {
+            e.preventDefault(); e.stopPropagation();
+            handleOpsAction('gun');
         });
         const chaff = $('ops-hit-chaff');
         if (chaff) chaff.addEventListener('click', (e) => {
