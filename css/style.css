@@ -951,8 +951,12 @@ html.startup-lock body {
     cursor: default;
 }
 
-/* Pylon weapon performance detail box */
+/* Pylon weapon performance detail — fixed beside wedge (screen left/right) */
 .ops-weapon-detail {
+    position: fixed;
+    left: 0;
+    top: 0;
+    z-index: 8850;
     width: 280px;
     max-width: 90vw;
     pointer-events: auto;
@@ -967,6 +971,12 @@ html.startup-lock body {
     font-family: 'Courier New', monospace;
 }
 .ops-weapon-detail[hidden] { display: none !important; }
+.ops-weapon-detail.is-left {
+    border-color: rgba(255, 235, 59, 0.35);
+}
+.ops-weapon-detail.is-right {
+    border-color: rgba(0, 255, 136, 0.35);
+}
 .ops-wpn-head {
     display: flex;
     align-items: center;

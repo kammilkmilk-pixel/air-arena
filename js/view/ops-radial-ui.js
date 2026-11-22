@@ -7,12 +7,13 @@
     const SVG_CX = 280;
     const HP_R = 220;
     const HP_CIRC = 2 * Math.PI * HP_R;
-    // Outer pylon/CM ring outside the larger center disc (logo-above-text stack needs height).
+    // Outer pylon/CM ring outside the larger center disc.
     const WEDGE_R0 = 228;
     const WEDGE_R1 = 310;
-    const WEDGE_ICON_R = WEDGE_R0 + (WEDGE_R1 - WEDGE_R0) * 0.72; // outer = logo
-    const WEDGE_TEXT_R = WEDGE_R0 + (WEDGE_R1 - WEDGE_R0) * 0.32; // inner = text
-    const OpsDetail = { pylonId: null };
+    const WEDGE_MID_R = (WEDGE_R0 + WEDGE_R1) * 0.5;
+    /** Screen-Y stack inside a wedge cell: logo above text (SVG +y is down). */
+    const WEDGE_STACK_DY = 16;
+    const OpsDetail = { pylonId: null, a0: null, a1: null };
 
     const OpsRadial = {
         open: false,
@@ -593,21 +594,21 @@
     }
 
     /**
-     * Grid cell inside a wedge: logo (outer / above) + text (inner / below),
-     * both on the wedge mid-angle. No divider.
+     * Screen-space grid cell at wedge mid-angle / mid-radius:
+     * logo above text on the screen (SVG +y = down), not ring-inner/outer.
      */
-    function wedgeStackPoint(a0, a1, radius) {
+    function wedgeCellAnchor(a0, a1) {
         const ang = a0 + (a1 - a0) * 0.5;
-        return { ang, pt: polar(SVG_CX, SVG_CX, radius, ang) };
+        return { ang, pt: polar(SVG_CX, SVG_CX, WEDGE_MID_R, ang) };
     }
 
-    /** White silhouette logo — outer row of the wedge cell. */
+    /** White silhouette logo — screen-above the text. */
     function appendWeaponIcon(parent, kind, a0, a1, empty) {
         const NS = 'http://www.w3.org/2000/svg';
-        const { pt } = wedgeStackPoint(a0, a1, WEDGE_ICON_R);
+        const { pt } = wedgeCellAnchor(a0, a1);
         const ig = document.createElementNS(NS, 'g');
         ig.setAttribute('class', empty ? 'ops-wedge-icon is-empty' : 'ops-wedge-icon');
-        ig.setAttribute('transform', `translate(${pt.x.toFixed(2)} ${pt.y.toFixed(2)})`);
+        ig.setAttribute('transform', `translate(${pt.x.toFixed(2)} ${(pt.y - WEDGE_STACK_DY).toFixed(2)})`);
         ig.style.pointerEvents = 'none';
         const use = document.createElementNS(NS, 'use');
         use.setAttribute('href', `#ops-icon-${kind}`);
@@ -620,13 +621,13 @@
         parent.appendChild(ig);
     }
 
-    /** Multi-line text — inner row of the wedge cell (under the logo). */
+    /** Multi-line text — screen-below the logo. */
     function appendWedgeText(parent, lines, a0, a1, empty) {
         const NS = 'http://www.w3.org/2000/svg';
-        const { pt } = wedgeStackPoint(a0, a1, WEDGE_TEXT_R);
+        const { pt } = wedgeCellAnchor(a0, a1);
         const tg = document.createElementNS(NS, 'g');
         tg.setAttribute('class', empty ? 'ops-wedge-text is-empty' : 'ops-wedge-text');
-        tg.setAttribute('transform', `translate(${pt.x.toFixed(2)} ${pt.y.toFixed(2)})`);
+        tg.setAttribute('transform', `translate(${pt.x.toFixed(2)} ${(pt.y + WEDGE_STACK_DY).toFixed(2)})`);
         tg.style.pointerEvents = 'none';
         const rows = (lines || []).filter((s) => s != null && String(s).length);
         rows.forEach((line, i) => {
@@ -800,6 +801,7 @@
             anchor.style.top = '55%';
             anchor.style.bottom = 'auto';
             anchor.style.transform = 'translate(-50%, -50%)';
+            layoutWeaponDetailPanel();
             return;
         }
         const x = Math.max(half + 8, Math.min(window.innerWidth - half - 8, scr.x));
@@ -808,6 +810,7 @@
         anchor.style.top = `${y}px`;
         anchor.style.bottom = 'auto';
         anchor.style.transform = 'translate(-50%, -50%)';
+        layoutWeaponDetailPanel();
     }
 
     function startTrack() {
@@ -881,13 +884,74 @@
         return rows;
     }
 
+    function pylonSpanForId(pylonId) {
+        const spans = [
+            [45, 112.5, 1],
+            [112.5, 180, 2],
+            [180, 247.5, 3],
+            [247.5, 315, 4]
+        ];
+        return spans.find((s) => s[2] === pylonId) || null;
+    }
+
     function hideWeaponDetail() {
         OpsDetail.pylonId = null;
+        OpsDetail.a0 = null;
+        OpsDetail.a1 = null;
         const panel = $('ops-weapon-detail');
         if (panel) {
             panel.hidden = true;
             panel.setAttribute('aria-hidden', 'true');
+            panel.classList.remove('is-left', 'is-right');
         }
+    }
+
+    /**
+     * Dock the detail box beside the pressed wedge: screen-left of left-side
+     * buttons, screen-right of right-side buttons.
+     */
+    function layoutWeaponDetailPanel() {
+        const panel = $('ops-weapon-detail');
+        if (!panel || panel.hidden || OpsDetail.pylonId == null) return;
+        const svg = $('ops-radial-svg');
+        const ring = $('ops-radial-ring');
+        if (!svg || !ring) return;
+
+        const a0 = OpsDetail.a0;
+        const a1 = OpsDetail.a1;
+        if (a0 == null || a1 == null) return;
+        const { pt } = wedgeCellAnchor(a0, a1);
+
+        // Map SVG user point → screen via the rendered SVG rect / viewBox.
+        const vb = svg.viewBox && svg.viewBox.baseVal
+            ? svg.viewBox.baseVal
+            : { x: -40, y: -40, width: 640, height: 640 };
+        const rect = svg.getBoundingClientRect();
+        const sx = rect.left + ((pt.x - vb.x) / vb.width) * rect.width;
+        const sy = rect.top + ((pt.y - vb.y) / vb.height) * rect.height;
+
+        const gap = 14;
+        const panelW = Math.min(280, window.innerWidth * 0.9);
+        const panelH = Math.min(panel.offsetHeight || 220, window.innerHeight - 16);
+        // Prefer outward toward the nearer screen edge (left wedges → left, right → right).
+        const preferLeft = sx < window.innerWidth * 0.5;
+        let left;
+        if (preferLeft) {
+            left = sx - gap - panelW;
+            if (left < 8) left = Math.min(window.innerWidth - panelW - 8, sx + gap);
+        } else {
+            left = sx + gap;
+            if (left + panelW > window.innerWidth - 8) {
+                left = Math.max(8, sx - gap - panelW);
+            }
+        }
+        let top = sy - panelH * 0.35;
+        top = Math.max(8, Math.min(window.innerHeight - panelH - 8, top));
+
+        panel.style.left = `${Math.round(left)}px`;
+        panel.style.top = `${Math.round(top)}px`;
+        panel.classList.toggle('is-left', preferLeft);
+        panel.classList.toggle('is-right', !preferLeft);
     }
 
     function syncWeaponDetail(team) {
@@ -922,10 +986,14 @@
         }
         panel.hidden = false;
         panel.setAttribute('aria-hidden', 'false');
+        layoutWeaponDetailPanel();
     }
 
     function openWeaponDetail(pylonId) {
+        const span = pylonSpanForId(pylonId);
         OpsDetail.pylonId = pylonId;
+        OpsDetail.a0 = span ? span[0] : null;
+        OpsDetail.a1 = span ? span[1] : null;
         const teamId = OpsRadial.teamId;
         if (teamId && typeof selectTeam === 'function') {
             try { selectTeam(teamId); } catch (_) { /* ignore */ }
