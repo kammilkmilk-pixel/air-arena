@@ -344,7 +344,7 @@
         if (rocket.launchStep >= 0 && step < rocket.launchStep + fuseDelay) return null;
         if (rocket.launchStep < 0 && (Number(rocket.ageSteps) || 0) < fuseDelay) return null;
 
-        const vtR = cfg.vtRadius != null ? Number(cfg.vtRadius) : 4.5;
+        const vtR = cfg.vtRadius != null ? Number(cfg.vtRadius) : 6;
         const vtGround = cfg.vtGroundHeight != null ? Number(cfg.vtGroundHeight) : 3.5;
 
         // Airburst near ground.
@@ -377,8 +377,8 @@
     function resolveRocketsForStep(step, ratio, ctx) {
         if (!ctx || !ctx.log) return;
         const cfg = rocketConfig();
-        const blastR = cfg.blastRadius != null ? Number(cfg.blastRadius) : 6;
-        const damage = cfg.damage != null ? Number(cfg.damage) : 22;
+        const blastR = cfg.blastRadius != null ? Number(cfg.blastRadius) : 8;
+        const damage = cfg.damage != null ? Number(cfg.damage) : 45;
         const maxFlight = cfg.maxFlightSteps != null ? Number(cfg.maxFlightSteps) : 220;
         const knobs = ballisticKnobs();
         const ids = (typeof combatActiveIds === 'function')

@@ -207,7 +207,7 @@ const CONFIG = {
             name: '火箭巢',
             aiEnabled: false,
             dualRole: true,
-            damage: 22,
+            damage: 45,
             range: 120,
             /** Ammo in one pod. */
             roundsPerPod: 9,
@@ -234,11 +234,11 @@ const CONFIG = {
             substeps: 2,
             groundY: 0,
             /** VT proximity fuse radius (m). */
-            vtRadius: 4.5,
+            vtRadius: 6,
             /** Also VT-trigger when altitude below this (airburst near ground). */
             vtGroundHeight: 3.5,
             fuseDelaySteps: 4,
-            blastRadius: 6,
+            blastRadius: 8,
             explosionScale: 1.6,
             flashScale: 2.0,
             puffScale: 1.4,
