@@ -313,26 +313,22 @@
     <!-- Ghost steer HUD: LCOS-style grab (nose) + roll ring + L/R handles -->
     <div id="ghost-steer-hud" hidden aria-hidden="true">
         <svg viewBox="0 0 140 140" aria-label="ghost steer">
-            <!-- Outer roll track (tangential = bank, radial = throttle) -->
+            <!-- Outer roll track (radius grows for throttle; stroke/handle size stay fixed) -->
             <circle id="ghost-roll-track" cx="70" cy="70" r="62" fill="none"
                 stroke="rgba(255,255,255,0.35)" stroke-width="3" stroke-dasharray="5 6"/>
-            <!-- Scale group = radial throttle pull; rotate group = bank -->
-            <g id="ghost-roll-scale">
-                <g id="ghost-roll-ring">
-                    <circle cx="70" cy="70" r="62" fill="none" stroke="rgba(255,255,255,0.9)" stroke-width="5.5"/>
-                    <circle class="ghost-roll-port" cx="12" cy="70" r="5.5" fill="#ff3355"/>
-                    <circle class="ghost-roll-stbd" cx="128" cy="70" r="5.5" fill="#00ff88"/>
-                    <!-- Visual-only grips (rotate/scale with ring); hits live above roll-hit -->
-                    <g class="ghost-handle-visual" aria-hidden="true">
-                        <rect x="3" y="50" width="16" height="40" rx="4" fill="rgba(0,0,0,0.45)" stroke="#fff" stroke-width="1.5"/>
-                        <line x1="8" y1="56" x2="8" y2="84" stroke="#fff" stroke-width="1.2" opacity="0.7"/>
-                        <line x1="14" y1="56" x2="14" y2="84" stroke="#fff" stroke-width="1.2" opacity="0.7"/>
-                    </g>
-                    <g class="ghost-handle-visual" aria-hidden="true">
-                        <rect x="121" y="50" width="16" height="40" rx="4" fill="rgba(0,0,0,0.45)" stroke="#fff" stroke-width="1.5"/>
-                        <line x1="126" y1="56" x2="126" y2="84" stroke="#fff" stroke-width="1.2" opacity="0.7"/>
-                        <line x1="132" y1="56" x2="132" y2="84" stroke="#fff" stroke-width="1.2" opacity="0.7"/>
-                    </g>
+            <g id="ghost-roll-ring">
+                <circle id="ghost-roll-stroke" cx="70" cy="70" r="62" fill="none" stroke="rgba(255,255,255,0.9)" stroke-width="5.5"/>
+                <circle id="ghost-roll-port" class="ghost-roll-port" cx="12" cy="70" r="5.5" fill="#ff3355"/>
+                <circle id="ghost-roll-stbd" class="ghost-roll-stbd" cx="128" cy="70" r="5.5" fill="#00ff88"/>
+                <g id="ghost-handle-visual-left" class="ghost-handle-visual" aria-hidden="true">
+                    <rect x="-8" y="-20" width="16" height="40" rx="4" fill="rgba(0,0,0,0.45)" stroke="#fff" stroke-width="1.5"/>
+                    <line x1="-3" y1="-14" x2="-3" y2="14" stroke="#fff" stroke-width="1.2" opacity="0.7"/>
+                    <line x1="3" y1="-14" x2="3" y2="14" stroke="#fff" stroke-width="1.2" opacity="0.7"/>
+                </g>
+                <g id="ghost-handle-visual-right" class="ghost-handle-visual" aria-hidden="true">
+                    <rect x="-8" y="-20" width="16" height="40" rx="4" fill="rgba(0,0,0,0.45)" stroke="#fff" stroke-width="1.5"/>
+                    <line x1="-3" y1="-14" x2="-3" y2="14" stroke="#fff" stroke-width="1.2" opacity="0.7"/>
+                    <line x1="3" y1="-14" x2="3" y2="14" stroke="#fff" stroke-width="1.2" opacity="0.7"/>
                 </g>
             </g>
             <!-- Nose grab (kept inside visual ring so it cannot steal outer-ring hits) -->
@@ -346,10 +342,10 @@
             <!-- L/R bank hits on top of roll stroke so grips are not stolen -->
             <g id="ghost-handle-layer">
                 <g id="ghost-handle-left" class="ghost-side-handle" style="cursor:grab">
-                    <rect x="0" y="46" width="22" height="48" rx="4" fill="rgba(0,0,0,0.01)"/>
+                    <rect x="-11" y="-24" width="22" height="48" rx="4" fill="rgba(0,0,0,0.01)"/>
                 </g>
                 <g id="ghost-handle-right" class="ghost-side-handle" style="cursor:grab">
-                    <rect x="118" y="46" width="22" height="48" rx="4" fill="rgba(0,0,0,0.01)"/>
+                    <rect x="-11" y="-24" width="22" height="48" rx="4" fill="rgba(0,0,0,0.01)"/>
                 </g>
             </g>
         </svg>

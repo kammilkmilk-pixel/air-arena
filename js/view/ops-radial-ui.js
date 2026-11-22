@@ -113,11 +113,14 @@
         freezeLeft: '',
         freezeTop: '',
         bankEnabled: false, // true only when dragging L/R handles
+        ringFactor: 1,
         bound: false,
         winBound: false
     };
     /** Nominal roll-ring radius in HUD CSS px (matches SVG r≈62 on 120px box). */
     const ROLL_RING_BASE_PX = 53;
+    /** Resting ring radius in SVG user units (viewBox 140). */
+    const ROLL_RING_R0_SVG = 62;
     /** Inner white nose ring (SVG r=32) in CSS px on the 120×140 HUD mapping. */
     const ROLL_INNER_STOP_PX = 32 * (120 / 140);
     /** Outward radial drag (px) that maps +1.0 throttle above start. */
@@ -126,7 +129,7 @@
     const ROLL_THR_MAX = 5;
     /** Below this radius, bank is frozen and lastAngle re-baselines (no atan2 spike). */
     const ROLL_BANK_MIN_PX = ROLL_INNER_STOP_PX;
-    /** Expand-only visual: 1 at rest, up to 2× when pulled outward. */
+    /** Expand factor: 1 at rest, up to 2× radius (stroke/handle size unchanged). */
     const ROLL_SCALE_MIN = 1.0;
     const ROLL_SCALE_MAX = 2.0;
 
@@ -318,11 +321,66 @@
         else if (typeof updateDashboardUI === 'function') updateDashboardUI(t);
     }
 
+    /** Grow ring radius only — stroke width and handle size stay constant. */
     function setRollRingScale(scale) {
-        const g = $('ghost-roll-scale');
-        if (!g) return;
         const s = Math.max(ROLL_SCALE_MIN, Math.min(ROLL_SCALE_MAX, Number(scale) || 1));
-        g.setAttribute('transform', `translate(70 70) scale(${s.toFixed(3)}) translate(-70 -70)`);
+        GhostSteer.ringFactor = s;
+        const r = ROLL_RING_R0_SVG * s;
+        const setR = (id) => {
+            const el = $(id);
+            if (el) el.setAttribute('r', String(r));
+        };
+        setR('ghost-roll-track');
+        setR('ghost-roll-stroke');
+        setR('ghost-roll-hit');
+        const port = $('ghost-roll-port');
+        const stbd = $('ghost-roll-stbd');
+        if (port) {
+            port.setAttribute('cx', String(70 - r));
+            port.setAttribute('cy', '70');
+        }
+        if (stbd) {
+            stbd.setAttribute('cx', String(70 + r));
+            stbd.setAttribute('cy', '70');
+        }
+        const vLeft = $('ghost-handle-visual-left');
+        const vRight = $('ghost-handle-visual-right');
+        if (vLeft) vLeft.setAttribute('transform', `translate(${70 - r} 70)`);
+        if (vRight) vRight.setAttribute('transform', `translate(${70 + r} 70)`);
+        const hLeft = $('ghost-handle-left');
+        const hRight = $('ghost-handle-right');
+        if (hLeft) hLeft.setAttribute('transform', `translate(${70 - r} 70)`);
+        if (hRight) hRight.setAttribute('transform', `translate(${70 + r} 70)`);
+        // HEAT/AP ride the grips in HUD % space (viewBox 140 → 100%).
+        const heat = document.querySelector('#ghost-handle-stats .ghost-handle-stat-heat');
+        const ap = document.querySelector('#ghost-handle-stats .ghost-handle-stat-ap');
+        const leftPct = ((70 - r) / 140) * 100;
+        const rightPct = ((70 + r) / 140) * 100;
+        if (heat) {
+            heat.style.left = `${leftPct}%`;
+            heat.style.top = '50%';
+            heat.style.transform = 'translate(-110%, -50%)';
+        }
+        if (ap) {
+            ap.style.left = `${rightPct}%`;
+            ap.style.top = '50%';
+            ap.style.transform = 'translate(10%, -50%)';
+        }
+    }
+
+    function previewHeatForTeam(t) {
+        if (!t) return null;
+        const idle = (typeof getEngineHeatIdle === 'function') ? getEngineHeatIdle() : 150;
+        const maxH = (typeof getEngineHeatMax === 'function') ? getEngineHeatMax() : 250;
+        const base = Number.isFinite(Number(t.heat)) ? Number(t.heat) : idle;
+        let delta = 0;
+        if (typeof getThrottleStats === 'function') {
+            const st = getThrottleStats(Number(t.throttle) || 4, t.type);
+            delta = Number(st && st.heat) || 0;
+        } else if (Number.isFinite(Number(t.previewAccumHeat))) {
+            delta = Number(t.previewAccumHeat);
+        }
+        return Math.min(maxH, Math.max(idle, base + delta));
     }
 
     function applyRingDrag(clientX, clientY) {
@@ -538,6 +596,7 @@
             el.addEventListener('pointerdown', beginRollHandle, { passive: false });
         });
         rollHit.addEventListener('pointerdown', beginThrottleRing, { passive: false });
+        setRollRingScale(1);
     }
 
     function projectGhostScreen() {
@@ -574,11 +633,12 @@
             const thr = Number(t.throttle) || 4;
             thrEl.textContent = `THR ${thr.toFixed(1)} ${thrBandLabel(thr)}`;
         }
-        // HEAT / AP sit beside L/R roll grips (moved off tactical strip).
+        // HEAT / AP sit beside L/R roll grips — HEAT tracks throttle preview delta.
         const heat = $('ops-val-heat');
         const ap = $('ops-val-ap');
         if (heat) {
-            heat.textContent = t ? `${Math.round(Number(t.heat) || 150)}°` : '—';
+            const ph = previewHeatForTeam(t);
+            heat.textContent = ph != null ? `${Math.round(ph)}°` : '—';
         }
         if (ap) {
             if (!t) {
@@ -984,7 +1044,10 @@
         const heat = $('ops-val-heat');
         const ap = $('ops-val-ap');
         const sms = $('ops-sms-text');
-        if (heat) heat.textContent = `${Math.round(Number(team.heat) || 150)}°`;
+        if (heat) {
+            const ph = previewHeatForTeam(team);
+            heat.textContent = ph != null ? `${Math.round(ph)}°` : '—';
+        }
         if (ap) {
             const baseAp = (typeof team.ap === 'number') ? team.ap : 0;
             const cost = (typeof team.previewCostAp === 'number') ? team.previewCostAp : 0;

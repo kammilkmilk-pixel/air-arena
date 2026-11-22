@@ -805,20 +805,18 @@ html.startup-lock body {
     justify-content: center;
     gap: 1px;
     line-height: 1.05;
-    transform: translateY(-50%);
     font-family: 'Courier New', monospace;
     font-weight: bold;
     white-space: nowrap;
     /* Same recipe as .ghost-steer-alt */
     text-shadow: 0 1px 3px #000, 0 0 6px rgba(0,0,0,0.8);
+    /* left/transform set in JS so stats ride the grips as the ring expands */
 }
 .ghost-handle-stat-heat {
-    right: calc(100% + 2px);
     align-items: flex-end;
     text-align: right;
 }
 .ghost-handle-stat-ap {
-    left: calc(100% + 2px);
     align-items: flex-start;
     text-align: left;
 }
@@ -840,10 +838,10 @@ html.startup-lock body {
     stroke: #ffeb3b;
     stroke-width: 3.2;
 }
-#ghost-steer-hud.is-roll-dragging #ghost-roll-ring circle:first-child {
+#ghost-steer-hud.is-roll-dragging #ghost-roll-stroke {
     stroke: #00e5ff;
 }
-#ghost-steer-hud.is-throttle-dragging #ghost-roll-ring circle:first-child {
+#ghost-steer-hud.is-throttle-dragging #ghost-roll-stroke {
     stroke: #ffb74d;
 }
 /* While pulling the outer ring, ignore nose grab so inward throttle cannot jump into stick. */
