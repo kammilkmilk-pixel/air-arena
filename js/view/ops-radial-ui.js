@@ -97,8 +97,21 @@
         startJoyY: 0,
         startRoll: 0,
         startAngle: 0,
-        bound: false
+        bound: false,
+        winBound: false
     };
+
+    /** Commanded bank for HUD: during roll-drag pendingRoll is authoritative (incl. 0). */
+    function commandRollRad(t) {
+        if (!t) return 0;
+        if (GhostSteer.mode === 'roll') {
+            return (t.pendingRoll != null && !Number.isNaN(Number(t.pendingRoll)))
+                ? Number(t.pendingRoll)
+                : (GhostSteer.startRoll || 0);
+        }
+        if (t.pendingRoll !== 0 && t.pendingRoll != null) return Number(t.pendingRoll);
+        return Number(t.roll) || 0;
+    }
 
     const NOSE_DRAG = {
         softJoy: 0.40,
@@ -274,8 +287,8 @@
         if (delta < -Math.PI) delta += Math.PI * 2;
         const angle = GhostSteer.startRoll + delta;
         if (!GameContext.stateMachine.setRollInput(t.id, angle)) return;
-        const applied = t.pendingRoll || 0;
-        syncCockpitRoll(applied);
+        // Always sync L/R handles to the applied command (pendingRoll may be 0).
+        syncCockpitRoll(commandRollRad(t));
         if (typeof uiRefreshPreview === 'function') uiRefreshPreview(t);
     }
 
@@ -287,6 +300,23 @@
         pip.setAttribute('cy', String(70 - (Number(joyY) || 0) * 22));
     }
 
+    function unbindGhostSteerWindow() {
+        if (!GhostSteer.winBound) return;
+        window.removeEventListener('pointermove', onGhostSteerMove, true);
+        window.removeEventListener('pointerup', endGhostSteer, true);
+        window.removeEventListener('pointercancel', endGhostSteer, true);
+        GhostSteer.winBound = false;
+    }
+
+    function bindGhostSteerWindow() {
+        if (GhostSteer.winBound) return;
+        // Window capture so drag keeps updating when pointer leaves the thin ring/handles.
+        window.addEventListener('pointermove', onGhostSteerMove, { capture: true, passive: false });
+        window.addEventListener('pointerup', endGhostSteer, { capture: true });
+        window.addEventListener('pointercancel', endGhostSteer, { capture: true });
+        GhostSteer.winBound = true;
+    }
+
     function endGhostSteer(e) {
         if (!GhostSteer.mode) return;
         if (e && GhostSteer.pointerId != null && e.pointerId !== GhostSteer.pointerId) return;
@@ -296,14 +326,17 @@
         }
         GhostSteer.mode = null;
         GhostSteer.pointerId = null;
+        unbindGhostSteerWindow();
         setOrbitLocked(false);
+        // Do NOT toggle isDraggingRollRing — that flag drives the classic cockpit
+        // roll-ring window mousemove handler and must stay false during ghost drag.
         window.isDraggingGhostSteer = false;
-        if (typeof isDraggingRollRing !== 'undefined') isDraggingRollRing = false;
     }
 
     function beginNose(e) {
         if (e.button != null && e.button !== 0) return;
         if (window.isDraggingLcosRing || (typeof isDraggingJoystick !== 'undefined' && isDraggingJoystick)) return;
+        if (window.isDraggingGhostSteer) return;
         const t = canPilotTeam();
         if (!t) return;
         GhostSteer.mode = 'nose';
@@ -314,6 +347,7 @@
         GhostSteer.startJoyY = Number(t.joyY) || 0;
         window.isDraggingGhostSteer = true;
         setOrbitLocked(true);
+        bindGhostSteerWindow();
         const hud = $('ghost-steer-hud');
         if (hud) hud.classList.add('is-nose-dragging');
         try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
@@ -326,6 +360,7 @@
     function beginRoll(e) {
         if (e.button != null && e.button !== 0) return;
         if (window.isDraggingLcosRing || window.isDraggingGhostSteer) return;
+        if (typeof isDraggingRollRing !== 'undefined' && isDraggingRollRing) return;
         const t = canPilotTeam();
         if (!t) return;
         const hud = $('ghost-steer-hud');
@@ -337,9 +372,12 @@
         GhostSteer.pointerId = e.pointerId;
         GhostSteer.startAngle = Math.atan2(e.clientX - cx, -(e.clientY - cy));
         GhostSteer.startRoll = (t.pendingRoll !== 0 && t.pendingRoll != null) ? t.pendingRoll : (Number(t.roll) || 0);
+        // Seed pendingRoll so RAF / refresh always read the drag command (incl. 0).
+        GameContext.stateMachine.setRollInput(t.id, GhostSteer.startRoll);
+        syncCockpitRoll(GhostSteer.startRoll);
         window.isDraggingGhostSteer = true;
-        if (typeof isDraggingRollRing !== 'undefined') isDraggingRollRing = true;
         setOrbitLocked(true);
+        bindGhostSteerWindow();
         hud.classList.add('is-roll-dragging');
         try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
         if (e.cancelable) e.preventDefault();
@@ -368,19 +406,11 @@
         const noseTargets = [grab, grabRing].filter(Boolean);
         noseTargets.forEach((el) => {
             el.addEventListener('pointerdown', beginNose, { passive: false });
-            el.addEventListener('pointermove', onGhostSteerMove, { passive: false });
-            el.addEventListener('pointerup', endGhostSteer);
-            el.addEventListener('pointercancel', endGhostSteer);
-            el.addEventListener('lostpointercapture', endGhostSteer);
         });
 
         const rollTargets = [rollHit, left, right].filter(Boolean);
         rollTargets.forEach((el) => {
             el.addEventListener('pointerdown', beginRoll, { passive: false });
-            el.addEventListener('pointermove', onGhostSteerMove, { passive: false });
-            el.addEventListener('pointerup', endGhostSteer);
-            el.addEventListener('pointercancel', endGhostSteer);
-            el.addEventListener('lostpointercapture', endGhostSteer);
         });
     }
 
@@ -421,17 +451,13 @@
         hud.style.top = `${scr.y}px`;
 
         updateGhostJoyPip(Number(t.joyX) || 0, Number(t.joyY) || 0);
-        // While dragging roll, keep commanded angle; otherwise match ghost on-screen bank
-        // so L/R handles track the phantom's wing attitude.
-        let bank;
+        // While dragging roll, L/R handles track commanded pendingRoll (not screen bank).
+        // Idle: match ghost on-screen bank so handles sit on the phantom wings.
         if (GhostSteer.mode === 'roll') {
-            bank = (t.pendingRoll !== 0 && t.pendingRoll != null) ? t.pendingRoll : (Number(t.roll) || 0);
-            syncCockpitRoll(bank);
+            syncCockpitRoll(commandRollRad(t));
         } else {
             const visual = getGhostVisualBankRad();
-            bank = (visual != null)
-                ? visual
-                : ((t.pendingRoll !== 0 && t.pendingRoll != null) ? t.pendingRoll : (Number(t.roll) || 0));
+            const bank = (visual != null) ? visual : commandRollRad(t);
             syncCockpitRoll(bank, { skipCockpit: visual != null });
         }
 

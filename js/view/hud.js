@@ -682,6 +682,7 @@ function updateLcosGunHeatRing(team, coneCx = 50, coneCy = 50, coneR = 37.4, vis
         if (e.button != null && e.button !== 0) return;
         if (typeof isDraggingJoystick !== 'undefined' && isDraggingJoystick) return;
         if (typeof isDraggingRollRing !== 'undefined' && isDraggingRollRing) return;
+        if (window.isDraggingGhostSteer) return;
         const t = canPilotActive();
         if (!t) return;
 

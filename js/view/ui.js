@@ -3162,13 +3162,16 @@ document.addEventListener("DOMContentLoaded", () => {
             let currentTeam = uiCurrentTeamId();
             let t = teams[currentTeam]; 
             if (!t || t.aiEnabled || t.isDestroyed || GameContext.isAnimating() || t.ready) return;
+            // Ghost-steer HUD owns roll while its ring/handles are dragged.
+            if (window.isDraggingGhostSteer) return;
             
             isDraggingRollRing = true; if(e && e.stopPropagation) e.stopPropagation(); 
             const rect = staticCenter.getBoundingClientRect(); initialMouseAngle = Math.atan2(clientX - (rect.left + rect.width / 2), -(clientY - (rect.top + rect.height / 2)));
             initialRingRoll = t.pendingRoll !== 0 ? t.pendingRoll : (t.roll || 0);
         }
         function doRoll(clientX, clientY) {
-            if (!isDraggingRollRing) return; 
+            if (!isDraggingRollRing) return;
+            if (window.isDraggingGhostSteer) return;
             let currentTeam = uiCurrentTeamId();
             let t = teams[currentTeam]; if (!t) return;
             
