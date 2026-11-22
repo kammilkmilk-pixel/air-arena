@@ -174,10 +174,33 @@
         joyHandle.style.transform = `translate(${joyX * maxRadius}px, ${-joyY * maxRadius}px)`;
     }
 
-    function syncCockpitRoll(angle) {
-        const rollRing = $('roll-ring');
-        if (rollRing) rollRing.style.transform = `translate(-50%, -50%) rotate(${angle}rad)`;
+    /** Ghost bank on screen (wing-up vs camera) so handles follow phantom attitude. */
+    function getGhostVisualBankRad() {
+        if (!window.ghostWrapper || !window.ghostWrapper.visible) return null;
+        if (typeof THREE === 'undefined' || typeof camera === 'undefined' || !camera) return null;
+        if (camera.updateMatrixWorld) camera.updateMatrixWorld();
+        window.ghostWrapper.updateMatrixWorld(true);
+        const q = window.ghostWrapper.quaternion;
+        const bodyUp = new THREE.Vector3(0, 1, 0).applyQuaternion(q).normalize();
+        const camRight = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0).normalize();
+        const camUp = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1).normalize();
+        const camFwd = new THREE.Vector3();
+        camera.getWorldDirection(camFwd);
+        const upScreen = bodyUp.clone().addScaledVector(camFwd, -bodyUp.dot(camFwd));
+        if (upScreen.lengthSq() < 1e-8) return null;
+        upScreen.normalize();
+        // 0 = upright on screen; + = bank that lifts aircraft right wing toward screen-right.
+        return Math.atan2(upScreen.dot(camRight), upScreen.dot(camUp));
+    }
+
+    function syncCockpitRoll(angle, opts) {
+        const skipCockpit = !!(opts && opts.skipCockpit);
+        if (!skipCockpit) {
+            const rollRing = $('roll-ring');
+            if (rollRing) rollRing.style.transform = `translate(-50%, -50%) rotate(${angle}rad)`;
+        }
         // SVG only — CSS rotate on <g> uses wrong origin and drifts off-axis.
+        // L/R handles live inside this group so they bank with the ghost.
         const ghostRoll = $('ghost-roll-ring');
         if (ghostRoll) {
             if (ghostRoll.style) ghostRoll.style.transform = 'none';
@@ -391,8 +414,19 @@
         hud.style.top = `${scr.y}px`;
 
         updateGhostJoyPip(Number(t.joyX) || 0, Number(t.joyY) || 0);
-        const roll = (t.pendingRoll !== 0 && t.pendingRoll != null) ? t.pendingRoll : (Number(t.roll) || 0);
-        syncCockpitRoll(roll);
+        // While dragging roll, keep commanded angle; otherwise match ghost on-screen bank
+        // so L/R handles track the phantom's wing attitude.
+        let bank;
+        if (GhostSteer.mode === 'roll') {
+            bank = (t.pendingRoll !== 0 && t.pendingRoll != null) ? t.pendingRoll : (Number(t.roll) || 0);
+            syncCockpitRoll(bank);
+        } else {
+            const visual = getGhostVisualBankRad();
+            bank = (visual != null)
+                ? visual
+                : ((t.pendingRoll !== 0 && t.pendingRoll != null) ? t.pendingRoll : (Number(t.roll) || 0));
+            syncCockpitRoll(bank, { skipCockpit: visual != null });
+        }
 
         const thrEl = $('ghost-steer-thr');
         if (thrEl) {
