@@ -630,8 +630,9 @@
             path.dataset.ops = id;
             if (selected) path.classList.add('is-selected');
             g.appendChild(path);
-            appendWedgeText(g, textLines || [], a0, a1, 0.28);
-            appendWeaponIcon(g, iconKind || 'fox2', a0, a1, 0.72);
+            // Two zones along the arc: text then logo — no divider stroke between them.
+            appendWedgeText(g, textLines || [], a0, a1, 0.34);
+            appendWeaponIcon(g, iconKind || 'fox2', a0, a1, 0.68);
         };
         // Top 90° (−45…+45): flare then chaff.
         const flareArmed = !!(team && team.flaresArmed);
