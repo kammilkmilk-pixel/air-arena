@@ -778,6 +778,15 @@ html.startup-lock body {
 #ghost-steer-hud .ghost-side-handle {
     pointer-events: auto;
 }
+#ghost-steer-hud .ghost-handle-visual {
+    pointer-events: none;
+}
+#ghost-steer-hud #ghost-handle-layer {
+    pointer-events: none;
+}
+#ghost-steer-hud #ghost-handle-layer .ghost-side-handle {
+    pointer-events: auto;
+}
 #ghost-steer-hud #ghost-roll-hit {
     pointer-events: stroke;
 }

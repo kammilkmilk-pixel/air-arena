@@ -249,12 +249,22 @@
         // SVG transform attribute only — CSS rotate on <g> drifts off-axis.
         // Never set style.transform = 'none': inline CSS transform:none overrides
         // the SVG transform="..." attribute in SVG2/Chromium and locks rotation at 0.
+        const deg = (angle * 180) / Math.PI;
+        const rot = `rotate(${deg} 70 70)`;
         const ghostRoll = $('ghost-roll-ring');
         if (ghostRoll) {
             if (ghostRoll.style && ghostRoll.style.transform) {
                 ghostRoll.style.removeProperty('transform');
             }
-            ghostRoll.setAttribute('transform', `rotate(${(angle * 180) / Math.PI} 70 70)`);
+            ghostRoll.setAttribute('transform', rot);
+        }
+        // Hit pads sit above #ghost-roll-hit — keep them locked to the same bank.
+        const handleLayer = $('ghost-handle-layer');
+        if (handleLayer) {
+            if (handleLayer.style && handleLayer.style.transform) {
+                handleLayer.style.removeProperty('transform');
+            }
+            handleLayer.setAttribute('transform', rot);
         }
     }
 
