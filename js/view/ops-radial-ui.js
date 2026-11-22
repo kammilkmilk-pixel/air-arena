@@ -92,7 +92,7 @@
     // outer ring + L/R handles = roll.
     // -------------------------------------------------------------------------
     const GhostSteer = {
-        mode: null, // 'nose' | 'roll'
+        mode: null, // 'nose' | 'roll' | 'throttle'
         pointerId: null,
         startX: 0,
         startY: 0,
@@ -102,6 +102,7 @@
         startAngle: 0,
         startRadius: 0,
         startThrottle: 4,
+        bankEnabled: false, // true only when dragging L/R handles
         bound: false,
         winBound: false
     };
@@ -109,11 +110,16 @@
     const ROLL_RING_BASE_PX = 53;
     /** Radial drag (px) that maps to ±1.0 throttle. */
     const ROLL_THR_SOFT_PX = 36;
+    /** Below this radius, bank angle is frozen (atan2 jumps near center / nose ring). */
+    const ROLL_BANK_MIN_PX = 38;
+    /** Keep scaled ring outside the nose grab (r≈40). */
+    const ROLL_SCALE_MIN = 0.86;
+    const ROLL_SCALE_MAX = 1.32;
 
     /** Commanded bank for HUD: during roll-drag pendingRoll is authoritative (incl. 0). */
     function commandRollRad(t) {
         if (!t) return 0;
-        if (GhostSteer.mode === 'roll') {
+        if (GhostSteer.mode === 'roll' || GhostSteer.mode === 'throttle') {
             return (t.pendingRoll != null && !Number.isNaN(Number(t.pendingRoll)))
                 ? Number(t.pendingRoll)
                 : (GhostSteer.startRoll || 0);
@@ -288,11 +294,11 @@
     function setRollRingScale(scale) {
         const g = $('ghost-roll-scale');
         if (!g) return;
-        const s = Math.max(0.72, Math.min(1.38, Number(scale) || 1));
+        const s = Math.max(ROLL_SCALE_MIN, Math.min(ROLL_SCALE_MAX, Number(scale) || 1));
         g.setAttribute('transform', `translate(70 70) scale(${s.toFixed(3)}) translate(-70 -70)`);
     }
 
-    function applyRollDrag(clientX, clientY) {
+    function applyRingDrag(clientX, clientY) {
         const t = canPilotTeam();
         if (!t) return;
         const hud = $('ghost-steer-hud');
@@ -304,13 +310,19 @@
         const dy = clientY - cy;
         const ang = Math.atan2(dx, -dy);
         const radius = Math.hypot(dx, dy);
-        let delta = ang - GhostSteer.startAngle;
-        if (delta > Math.PI) delta -= Math.PI * 2;
-        if (delta < -Math.PI) delta += Math.PI * 2;
-        const angle = GhostSteer.startRoll + delta;
-        if (!GameContext.stateMachine.setRollInput(t.id, angle)) return;
-        // Always sync L/R handles to the applied command (pendingRoll may be 0).
-        syncCockpitRoll(commandRollRad(t));
+
+        // Bank only from L/R handles, and only while outside the nose-ring deadzone.
+        if (GhostSteer.bankEnabled && radius >= ROLL_BANK_MIN_PX) {
+            let delta = ang - GhostSteer.startAngle;
+            if (delta > Math.PI) delta -= Math.PI * 2;
+            if (delta < -Math.PI) delta += Math.PI * 2;
+            const angle = GhostSteer.startRoll + delta;
+            GameContext.stateMachine.setRollInput(t.id, angle);
+            syncCockpitRoll(commandRollRad(t));
+        } else if (GhostSteer.bankEnabled) {
+            // Near center: freeze bank so atan2 noise / nose overlap does not jump.
+            syncCockpitRoll(commandRollRad(t));
+        }
 
         // Radial: pull outward = accelerate, inward = decelerate.
         const baseR = GhostSteer.startRadius > 8 ? GhostSteer.startRadius : ROLL_RING_BASE_PX;
@@ -322,6 +334,7 @@
         } else {
             t.throttle = nextThr;
         }
+        // Clamp visual scale so the ring never collapses into the nose grab.
         setRollRingScale(radius / Math.max(8, ROLL_RING_BASE_PX));
         syncGhostSteerMeta(t);
         if (typeof uiRefreshPreview === 'function') uiRefreshPreview(t);
@@ -355,19 +368,20 @@
     function endGhostSteer(e) {
         if (!GhostSteer.mode) return;
         if (e && GhostSteer.pointerId != null && e.pointerId !== GhostSteer.pointerId) return;
-        const wasRoll = GhostSteer.mode === 'roll';
+        const wasRing = GhostSteer.mode === 'roll' || GhostSteer.mode === 'throttle';
         const hud = $('ghost-steer-hud');
         if (hud) {
-            hud.classList.remove('is-nose-dragging', 'is-roll-dragging');
+            hud.classList.remove('is-nose-dragging', 'is-roll-dragging', 'is-throttle-dragging');
         }
         GhostSteer.mode = null;
         GhostSteer.pointerId = null;
+        GhostSteer.bankEnabled = false;
         unbindGhostSteerWindow();
         setOrbitLocked(false);
         // Do NOT toggle isDraggingRollRing — that flag drives the classic cockpit
         // roll-ring window mousemove handler and must stay false during ghost drag.
         window.isDraggingGhostSteer = false;
-        if (wasRoll) setRollRingScale(1);
+        if (wasRing) setRollRingScale(1);
     }
 
     function beginNose(e) {
@@ -377,6 +391,7 @@
         const t = canPilotTeam();
         if (!t) return;
         GhostSteer.mode = 'nose';
+        GhostSteer.bankEnabled = false;
         GhostSteer.pointerId = e.pointerId;
         GhostSteer.startX = e.clientX;
         GhostSteer.startY = e.clientY;
@@ -394,7 +409,7 @@
         updateGhostJoyPip(GhostSteer.startJoyX, GhostSteer.startJoyY);
     }
 
-    function beginRoll(e) {
+    function beginRingGesture(e, opts) {
         if (e.button != null && e.button !== 0) return;
         if (window.isDraggingLcosRing || window.isDraggingGhostSteer) return;
         if (typeof isDraggingRollRing !== 'undefined' && isDraggingRollRing) return;
@@ -402,26 +417,38 @@
         if (!t) return;
         const hud = $('ghost-steer-hud');
         if (!hud) return;
+        const bankEnabled = !!(opts && opts.bankEnabled);
         const rect = hud.getBoundingClientRect();
         const cx = rect.left + rect.width / 2;
         const cy = rect.top + rect.height / 2;
-        GhostSteer.mode = 'roll';
+        GhostSteer.mode = bankEnabled ? 'roll' : 'throttle';
+        GhostSteer.bankEnabled = bankEnabled;
         GhostSteer.pointerId = e.pointerId;
         GhostSteer.startAngle = Math.atan2(e.clientX - cx, -(e.clientY - cy));
         GhostSteer.startRadius = Math.hypot(e.clientX - cx, e.clientY - cy);
         GhostSteer.startThrottle = Number(t.throttle) || 4;
         GhostSteer.startRoll = (t.pendingRoll !== 0 && t.pendingRoll != null) ? t.pendingRoll : (Number(t.roll) || 0);
-        // Seed pendingRoll so RAF / refresh always read the drag command (incl. 0).
-        GameContext.stateMachine.setRollInput(t.id, GhostSteer.startRoll);
-        syncCockpitRoll(GhostSteer.startRoll);
+        if (bankEnabled) {
+            GameContext.stateMachine.setRollInput(t.id, GhostSteer.startRoll);
+            syncCockpitRoll(GhostSteer.startRoll);
+        }
         setRollRingScale(GhostSteer.startRadius / Math.max(8, ROLL_RING_BASE_PX));
         window.isDraggingGhostSteer = true;
         setOrbitLocked(true);
         bindGhostSteerWindow();
-        hud.classList.add('is-roll-dragging');
+        hud.classList.add(bankEnabled ? 'is-roll-dragging' : 'is-throttle-dragging');
         try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
         if (e.cancelable) e.preventDefault();
         e.stopPropagation();
+    }
+
+    function beginRollHandle(e) {
+        beginRingGesture(e, { bankEnabled: true });
+    }
+
+    function beginThrottleRing(e) {
+        // Ring stroke: throttle only — no bank.
+        beginRingGesture(e, { bankEnabled: false });
     }
 
     function onGhostSteerMove(e) {
@@ -430,7 +457,9 @@
         if (e.cancelable) e.preventDefault();
         e.stopPropagation();
         if (GhostSteer.mode === 'nose') applyNoseDrag(e.clientX, e.clientY);
-        else if (GhostSteer.mode === 'roll') applyRollDrag(e.clientX, e.clientY);
+        else if (GhostSteer.mode === 'roll' || GhostSteer.mode === 'throttle') {
+            applyRingDrag(e.clientX, e.clientY);
+        }
     }
 
     function bindGhostSteerHud() {
@@ -448,10 +477,11 @@
             el.addEventListener('pointerdown', beginNose, { passive: false });
         });
 
-        const rollTargets = [rollHit, left, right].filter(Boolean);
-        rollTargets.forEach((el) => {
-            el.addEventListener('pointerdown', beginRoll, { passive: false });
+        // Handles only: bank + throttle. Ring stroke: throttle only.
+        [left, right].filter(Boolean).forEach((el) => {
+            el.addEventListener('pointerdown', beginRollHandle, { passive: false });
         });
+        rollHit.addEventListener('pointerdown', beginThrottleRing, { passive: false });
     }
 
     function projectGhostScreen() {
@@ -516,15 +546,15 @@
         hud.style.top = `${scr.y}px`;
 
         if (t) updateGhostJoyPip(Number(t.joyX) || 0, Number(t.joyY) || 0);
-        // While dragging roll, L/R handles track commanded pendingRoll (not screen bank).
+        // While dragging ring/handles, keep commanded bank (frozen during throttle-only).
         // Idle: match ghost on-screen bank so handles sit on the phantom wings.
-        if (GhostSteer.mode === 'roll') {
+        if (GhostSteer.mode === 'roll' || GhostSteer.mode === 'throttle') {
             syncCockpitRoll(commandRollRad(t));
         } else {
             const visual = getGhostVisualBankRad();
             const bank = (visual != null) ? visual : commandRollRad(t);
             syncCockpitRoll(bank, { skipCockpit: visual != null });
-            if (GhostSteer.mode !== 'roll') setRollRingScale(1);
+            setRollRingScale(1);
         }
 
         syncGhostSteerMeta(t);

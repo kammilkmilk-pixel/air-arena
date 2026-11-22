@@ -788,6 +788,16 @@ html.startup-lock body {
 #ghost-steer-hud.is-roll-dragging #ghost-roll-ring circle:first-child {
     stroke: #00e5ff;
 }
+#ghost-steer-hud.is-throttle-dragging #ghost-roll-ring circle:first-child {
+    stroke: #ffb74d;
+}
+/* While pulling the outer ring, ignore nose grab so inward throttle cannot jump into stick. */
+#ghost-steer-hud.is-roll-dragging #ghost-grab-hit,
+#ghost-steer-hud.is-roll-dragging #ghost-grab-ring,
+#ghost-steer-hud.is-throttle-dragging #ghost-grab-hit,
+#ghost-steer-hud.is-throttle-dragging #ghost-grab-ring {
+    pointer-events: none !important;
+}
 .ghost-steer-meta {
     position: absolute;
     left: 50%;
