@@ -666,9 +666,36 @@
     }
 
     function clickPylon(pylonId) {
-        const stick = document.querySelector(`.pylon-switch-wrapper[data-pylon="${pylonId}"] .pylon-stick`)
-            || $(`pylon-stick-${pylonId}`);
+        // Listener is on the wrapper, not the stick.
+        const wrap = document.querySelector(`.pylon-switch-wrapper[data-pylon="${pylonId}"]`);
+        if (wrap) {
+            wrap.click();
+            return;
+        }
+        const stick = $(`pylon-stick-${pylonId}`);
         if (stick) stick.click();
+    }
+
+    let _lastOpsAt = 0;
+    function handleOpsAction(opsId) {
+        if (!opsId) return;
+        const now = Date.now();
+        if (now - _lastOpsAt < 280) return; // swallow click+pointerup doubles
+        _lastOpsAt = now;
+        // Ensure SMS handlers see the seat this radial was opened for.
+        const teamId = OpsRadial.teamId;
+        if (teamId && typeof selectTeam === 'function') {
+            try { selectTeam(teamId); } catch (_) { /* ignore */ }
+        }
+        if (opsId === 'flare') {
+            const b = $('btn-flare'); if (b) b.click();
+        } else if (opsId === 'chaff') {
+            const b = $('btn-chaff'); if (b) b.click();
+        } else if (opsId.indexOf('pylon-') === 0) {
+            const n = parseInt(opsId.slice(6), 10);
+            if (n >= 1 && n <= 4) clickPylon(n);
+        }
+        refresh();
     }
 
     function bindActions() {
@@ -691,24 +718,45 @@
             });
         }
 
+        // Full SVG annulus wedges (paths are rebuilt often — delegate on stable <g>).
+        const wedges = $('ops-radial-wedges');
+        if (wedges && !wedges.dataset.bound) {
+            wedges.dataset.bound = '1';
+            const onWedge = (e) => {
+                let el = e.target;
+                while (el && el !== wedges) {
+                    if (el.getAttribute && el.getAttribute('data-ops')) break;
+                    el = el.parentNode;
+                }
+                if (!el || el === wedges) return;
+                const opsId = el.getAttribute('data-ops');
+                if (!opsId) return;
+                e.preventDefault();
+                e.stopPropagation();
+                handleOpsAction(opsId);
+            };
+            wedges.addEventListener('click', onWedge);
+            wedges.addEventListener('pointerup', (e) => {
+                // Touch: path click can be flaky; treat short taps via pointerup.
+                if (e.pointerType === 'touch' || e.pointerType === 'pen') onWedge(e);
+            });
+        }
+
         const flare = $('ops-hit-flare');
         if (flare) flare.addEventListener('click', (e) => {
             e.preventDefault(); e.stopPropagation();
-            const b = $('btn-flare'); if (b) b.click();
-            refresh();
+            handleOpsAction('flare');
         });
         const chaff = $('ops-hit-chaff');
         if (chaff) chaff.addEventListener('click', (e) => {
             e.preventDefault(); e.stopPropagation();
-            const b = $('btn-chaff'); if (b) b.click();
-            refresh();
+            handleOpsAction('chaff');
         });
         [1, 2, 3, 4].forEach((n) => {
             const hit = $(`ops-hit-p${n}`);
             if (hit) hit.addEventListener('click', (e) => {
                 e.preventDefault(); e.stopPropagation();
-                clickPylon(n);
-                refresh();
+                handleOpsAction(`pylon-${n}`);
             });
         });
 

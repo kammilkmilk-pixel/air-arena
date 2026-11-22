@@ -321,9 +321,10 @@
                 <circle class="ghost-roll-port" cx="12" cy="70" r="5" fill="#ff3355"/>
                 <circle class="ghost-roll-stbd" cx="128" cy="70" r="5" fill="#00ff88"/>
             </g>
-            <!-- Invisible fat hit for roll -->
-            <circle id="ghost-roll-hit" cx="70" cy="70" r="66" fill="rgba(255,255,255,0.001)"
-                stroke="rgba(255,255,255,0.001)" stroke-width="14" style="cursor:grab"/>
+            <!-- Roll hit = ring stroke only (not a filled disc — that blocked pylon wedges underneath) -->
+            <circle id="ghost-roll-hit" cx="70" cy="70" r="62" fill="none"
+                stroke="rgba(255,255,255,0.01)" stroke-width="16"
+                style="cursor:grab; pointer-events: stroke;"/>
             <!-- Left / right grab handles -->
             <g id="ghost-handle-left" class="ghost-side-handle" style="cursor:grab">
                 <rect x="4" y="52" width="14" height="36" rx="4" fill="rgba(0,0,0,0.45)" stroke="#fff" stroke-width="1.5"/>

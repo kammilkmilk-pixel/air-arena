@@ -764,7 +764,8 @@ html.startup-lock body {
 #ghost-steer-hud[hidden] { display: none !important; }
 #ghost-steer-hud.is-visible {
     display: block !important;
-    pointer-events: auto;
+    /* Keep none on the box — only grab/roll/handles capture; rest passes to ops wedges below */
+    pointer-events: none;
 }
 #ghost-steer-hud svg {
     width: 100%;
@@ -774,9 +775,11 @@ html.startup-lock body {
 }
 #ghost-steer-hud #ghost-grab-hit,
 #ghost-steer-hud #ghost-grab-ring,
-#ghost-steer-hud #ghost-roll-hit,
 #ghost-steer-hud .ghost-side-handle {
     pointer-events: auto;
+}
+#ghost-steer-hud #ghost-roll-hit {
+    pointer-events: stroke;
 }
 #ghost-steer-hud.is-nose-dragging #ghost-grab-ring {
     stroke: #ffeb3b;
@@ -835,9 +838,13 @@ html.startup-lock body {
     pointer-events: none;
     filter: drop-shadow(0 2px 10px rgba(0,0,0,0.45));
 }
+#ops-radial-wedges {
+    pointer-events: auto;
+}
 #ops-radial-wedges path {
     pointer-events: fill;
     cursor: pointer;
+    touch-action: manipulation;
 }
 #ops-radial-wedges path.is-selected {
     filter: none;
@@ -903,17 +910,17 @@ html.startup-lock body {
     position: absolute;
     left: 50%;
     top: 50%;
-    width: 48px;
-    height: 30px;
-    margin-left: -24px;
-    margin-top: -15px;
+    width: 72px;
+    height: 56px;
+    margin-left: -36px;
+    margin-top: -28px;
     border: 0;
     background: transparent;
     color: transparent;
     font-size: 0;
     cursor: pointer;
     pointer-events: auto;
-    z-index: 2;
+    z-index: 5;
     /* Outer ring mid-radius ≈132; 360px widget */
     transform: rotate(calc(var(--a0) + var(--span) / 2)) translateY(-170px) rotate(calc(-1 * (var(--a0) + var(--span) / 2)));
 }
