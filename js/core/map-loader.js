@@ -103,6 +103,26 @@ window.MapLoader = (function () {
             sky: normalizeSky(raw && raw.sky),
             objects: Array.isArray(raw && raw.objects)
                 ? raw.objects.map((o, i) => normalizeObject(o, i))
+                : [],
+            /** Phase B A2G objectives (optional). Runtime seeds defaults when empty. */
+            groundTargets: Array.isArray(raw && raw.groundTargets)
+                ? raw.groundTargets.map((t, i) => {
+                    if (typeof AirArenaGroundTargets !== 'undefined'
+                        && typeof AirArenaGroundTargets.normalizeGroundTarget === 'function') {
+                        return AirArenaGroundTargets.normalizeGroundTarget(t, i);
+                    }
+                    return {
+                        id: String((t && t.id) || `gt_${i}`),
+                        name: String((t && t.name) || `gt_${i}`),
+                        x: Number(t && t.x) || 0,
+                        y: Number(t && t.y) || 0,
+                        z: Number(t && t.z) || 0,
+                        radius: Math.max(2, Number(t && t.radius) || 6),
+                        hp: Math.max(1, Number(t && t.hp) || 100),
+                        kind: String((t && t.kind) || 'default'),
+                        faction: (t && t.faction) || 'neutral'
+                    };
+                })
                 : []
         };
         // Venue envelope (AO + altitude) — kept on doc; applied via AirArenaArenaEnvelope on load.

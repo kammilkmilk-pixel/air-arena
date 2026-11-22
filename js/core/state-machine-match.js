@@ -135,6 +135,9 @@ window.StateMachineMatchApi = {
         if (typeof AirArenaRocket !== 'undefined' && typeof AirArenaRocket.clearRocketVisuals === 'function') {
             try { AirArenaRocket.clearRocketVisuals({ dispose: true }); } catch (_) { /* ignore */ }
         }
+        if (typeof AirArenaGroundTargets !== 'undefined' && typeof AirArenaGroundTargets.resetHp === 'function') {
+            try { AirArenaGroundTargets.resetHp(); } catch (_) { /* ignore */ }
+        }
         if (typeof AirArenaAI !== 'undefined' && AirArenaAI.mergeDivergeMemory) {
             AirArenaAI.mergeDivergeMemory = {};
         }

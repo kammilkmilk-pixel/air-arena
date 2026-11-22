@@ -726,7 +726,10 @@ GameContext.stateMachine = {
                 ? wingBrain.getWingmanLeadId(teamId)
                 : AirArenaAI.getWingmanLeadId(teamId);
             if (leadId) {
-                const labels = { follow: '跟隨', attack: '攻擊我的目標', free: '主動進攻', cover: '掩護', break: '脫離' };
+                const labels = {
+                    follow: '跟隨', attack: '攻擊我的目標', strike: '對地攻擊',
+                    free: '主動進攻', cover: '掩護', break: '脫離'
+                };
                 const label = labels[t.wingmanOrder];
                 if (label && t.aiStatusText && t.aiStatusText.indexOf(label) < 0) {
                     t.aiStatusText = `${t.aiStatusText}｜${label}`;
@@ -1102,13 +1105,41 @@ GameContext.stateMachine = {
     setWingmanOrder(teamId, order) {
         const t = this.getTeamOrNull(teamId);
         if (!t) return false;
-        const normalized = ['follow', 'attack', 'free', 'cover', 'break'].includes(order) ? order : 'follow';
+        const normalized = ['follow', 'attack', 'strike', 'free', 'cover', 'break'].includes(order) ? order : 'follow';
         t.wingmanOrder = normalized;
-        const labels = { follow: '跟隨', attack: '攻擊我的目標', free: '主動進攻', cover: '掩護', break: '脫離' };
+        const labels = {
+            follow: '跟隨', attack: '攻擊我的目標', strike: '對地攻擊',
+            free: '主動進攻', cover: '掩護', break: '脫離'
+        };
         if (t.aiEnabled && !t.isDestroyed && !(typeof t.hp === 'number' && t.hp <= 0)) {
             t.aiStatusText = `NPC: 僚機令｜${labels[normalized]}`;
         }
         return true;
+    },
+
+    /** Designate a map ground target for strike / A2G HUD (Phase B). */
+    setDesignatedGroundTarget(teamId, targetId) {
+        if (typeof AirArenaGroundTargets !== 'undefined' && AirArenaGroundTargets.setDesignated) {
+            return AirArenaGroundTargets.setDesignated(teamId, targetId);
+        }
+        const t = this.getTeamOrNull(teamId);
+        if (!t) return false;
+        t.designatedGroundTargetId = targetId || null;
+        return true;
+    },
+
+    cycleDesignatedGroundTarget(teamId, dir) {
+        if (typeof GameContext !== 'undefined' && typeof GameContext.cycleDesignatedGroundTarget === 'function') {
+            return GameContext.cycleDesignatedGroundTarget(teamId, dir);
+        }
+        if (typeof AirArenaGroundTargets !== 'undefined' && AirArenaGroundTargets.cycleId) {
+            const t = this.getTeamOrNull(teamId);
+            if (!t) return null;
+            const next = AirArenaGroundTargets.cycleId(t.designatedGroundTargetId, dir);
+            AirArenaGroundTargets.setDesignated(teamId, next);
+            return AirArenaGroundTargets.get(next);
+        }
+        return null;
     },
 
     setLockedTarget(teamId, targetId) {

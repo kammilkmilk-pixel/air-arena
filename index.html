@@ -226,9 +226,11 @@
         <div class="wingman-orders-title">WINGMAN</div>
         <button type="button" class="wingman-order-btn" data-order="follow">跟隨</button>
         <button type="button" class="wingman-order-btn" data-order="attack">攻擊我的目標</button>
+        <button type="button" class="wingman-order-btn" data-order="strike">對地攻擊</button>
         <button type="button" class="wingman-order-btn" data-order="free">主動進攻</button>
         <button type="button" class="wingman-order-btn" data-order="cover">掩護</button>
         <button type="button" class="wingman-order-btn" data-order="break">脫離</button>
+        <button type="button" class="wingman-gt-btn" id="wingman-gt-cycle" title="循環指定對地目標">目標 ▶</button>
     </div>
 </div>
 
@@ -271,9 +273,11 @@
         <div class="ai-debug-wingman-orders" role="group" aria-label="wingman orders">
             <button type="button" class="ai-debug-wingman-btn" data-order="follow">跟隨</button>
             <button type="button" class="ai-debug-wingman-btn" data-order="attack">攻擊我的目標</button>
+            <button type="button" class="ai-debug-wingman-btn" data-order="strike">對地攻擊</button>
             <button type="button" class="ai-debug-wingman-btn" data-order="free">主動進攻</button>
             <button type="button" class="ai-debug-wingman-btn" data-order="cover">掩護</button>
             <button type="button" class="ai-debug-wingman-btn" data-order="break">脫離</button>
+            <button type="button" class="ai-debug-wingman-btn" data-order="__gt_cycle__" id="ai-debug-gt-cycle">目標 ▶</button>
         </div>
     </div>
     <div id="ai-debug-body" class="ai-debug-body">
@@ -653,6 +657,7 @@
     <script src="js/logic/sarh.js"></script>
     <script src="js/logic/weapon.js"></script>
     <script src="js/logic/combat-helpers.js"></script>
+    <script src="js/logic/ground-targets.js"></script>
     <script src="js/logic/bomb.js"></script>
     <script src="js/logic/rocket.js"></script>
     <script src="js/logic/combat-pipeline.js"></script>

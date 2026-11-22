@@ -117,6 +117,9 @@ function clearCityScene() {
         if (window.MapLoader) window.MapLoader.disposeObject3D(cityRoot);
         cityRoot = null;
     }
+    if (typeof AirArenaGroundTargets !== 'undefined' && AirArenaGroundTargets.clear) {
+        AirArenaGroundTargets.clear();
+    }
 }
 
 function restoreOriginalEnvironment() {
@@ -1750,6 +1753,9 @@ function loadCityGlbFallback() {
                     cityCollisionProxies.push(proxy);
                 });
                 applyArenaMode();
+                if (typeof AirArenaGroundTargets !== 'undefined' && AirArenaGroundTargets.loadFromMapDoc) {
+                    AirArenaGroundTargets.loadFromMapDoc({ ground: ORIGINAL_ENV && ORIGINAL_ENV.ground });
+                }
                 if (CONFIG.debug) console.log(`🏙️ [加載成功] 城市模型部署完畢。已登記 ${cityObstacles.length} 個建築網格，${cityCollisionProxies.length} 個足跡代理碰撞。`);
                 activeMapMeta = { id: 'original', path: null, doc: null, aiMapPath: null };
                 refreshAirArenaAiMap({ mapId: 'original', reason: 'city-glb' });
@@ -1763,6 +1769,9 @@ function loadCityGlbFallback() {
                 cityRoot = window.AssetFallbacks.buildProceduralCity(scene, cityObstacles);
                 cityRoot.updateMatrixWorld(true);
                 applyArenaMode();
+                if (typeof AirArenaGroundTargets !== 'undefined' && AirArenaGroundTargets.loadFromMapDoc) {
+                    AirArenaGroundTargets.loadFromMapDoc({ ground: ORIGINAL_ENV && ORIGINAL_ENV.ground });
+                }
                 activeMapMeta = { id: 'original', path: null, doc: null, aiMapPath: null };
                 refreshAirArenaAiMap({ mapId: 'original', reason: 'procedural-city' });
                 resolve(cityRoot);
@@ -1786,6 +1795,9 @@ function finishMapBuild(root, mapDoc) {
         camera.updateProjectionMatrix();
     }
     applyArenaMode();
+    if (typeof AirArenaGroundTargets !== 'undefined' && AirArenaGroundTargets.loadFromMapDoc) {
+        AirArenaGroundTargets.loadFromMapDoc(mapDoc || {});
+    }
 }
 
 /**

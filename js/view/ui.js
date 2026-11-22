@@ -1393,7 +1393,10 @@ function uiSetWingmanOrder(order, teamId = null) {
     if (!GameContext.stateMachine.setWingmanOrder(id, order)) return;
     uiRefreshWingmanOrderButtons(id);
     uiRefreshAIDebugWingmanOrders(id);
-    const labels = { follow: '跟隨', attack: '攻擊我的目標', free: '主動進攻', cover: '掩護', break: '脫離' };
+    const labels = {
+        follow: '跟隨', attack: '攻擊我的目標', strike: '對地攻擊',
+        free: '主動進攻', cover: '掩護', break: '脫離'
+    };
     if (typeof showSMSAlert === 'function') {
         showSMSAlert(`${id.toUpperCase()} 指令: ${labels[order] || order}`, '#ffffff');
     }
@@ -1428,14 +1431,55 @@ function uiBindAIDebugWingmanOnce() {
         e.stopPropagation();
         const id = uiAIDebugExpandedTeam;
         if (!id) return;
-        uiSetWingmanOrder(btn.getAttribute('data-order'), id);
+        const order = btn.getAttribute('data-order');
+        if (order === '__gt_cycle__') {
+            uiCycleGroundTarget(id);
+            return;
+        }
+        uiSetWingmanOrder(order, id);
     });
 }
+function uiCycleGroundTarget(teamId = null) {
+    const id = teamId || uiCurrentTeamId();
+    // Designate on the human lead seat (current team), not necessarily the AI wingman.
+    const designatorId = uiCurrentTeamId() || id;
+    let gt = null;
+    if (GameContext.stateMachine && typeof GameContext.stateMachine.cycleDesignatedGroundTarget === 'function') {
+        gt = GameContext.stateMachine.cycleDesignatedGroundTarget(designatorId, 1);
+    } else if (typeof GameContext.cycleDesignatedGroundTarget === 'function') {
+        gt = GameContext.cycleDesignatedGroundTarget(designatorId, 1);
+    }
+    if (!gt) {
+        if (typeof showSMSAlert === 'function') showSMSAlert('無可用對地目標', '#ffaa66');
+        return;
+    }
+    // Mirror designation onto the commanded AI wingman so strike resolves immediately.
+    if (id && id !== designatorId && GameContext.stateMachine
+        && typeof GameContext.stateMachine.setDesignatedGroundTarget === 'function') {
+        GameContext.stateMachine.setDesignatedGroundTarget(id, gt.id);
+    }
+    if (typeof showSMSAlert === 'function') {
+        showSMSAlert(`對地目標: ${gt.name || gt.id}`, '#ffcc66');
+    }
+    const t = teams[id];
+    if (t && t.aiEnabled && !t.ready && !t.isDestroyed && t.wingmanOrder === 'strike') {
+        uiRunAI(id);
+    }
+    updateDashboardUI(teams[uiCurrentTeamId()] || t);
+}
+
 function uiBindWingmanOrderHudOnce() {
     const hud = document.getElementById('wingman-order-hud');
     if (!hud || hud.dataset.bound) return;
     hud.dataset.bound = '1';
     hud.addEventListener('click', (e) => {
+        const gtBtn = e.target.closest('.wingman-gt-btn');
+        if (gtBtn) {
+            e.preventDefault();
+            e.stopPropagation();
+            uiCycleGroundTarget(uiCurrentTeamId());
+            return;
+        }
         const btn = e.target.closest('.wingman-order-btn');
         if (!btn) return;
         e.preventDefault();

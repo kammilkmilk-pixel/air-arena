@@ -8720,13 +8720,14 @@ window.AirArenaAI = {
     getWingmanOrder(teamId) {
         const t = (typeof GameContext !== 'undefined' && GameContext.getTeam) ? GameContext.getTeam(teamId) : null;
         const order = t && t.wingmanOrder;
-        return ['follow', 'attack', 'free', 'cover', 'break'].includes(order) ? order : 'follow';
+        return ['follow', 'attack', 'strike', 'free', 'cover', 'break'].includes(order) ? order : 'follow';
     },
 
     getWingmanOrderLabel(order) {
         return ({
             follow: '跟隨',
             attack: '攻擊我的目標',
+            strike: '對地攻擊',
             free: '主動進攻',
             cover: '掩護',
             break: '脫離'
@@ -8736,6 +8737,91 @@ window.AirArenaAI = {
     /** Orders that use formation / support FSM (not independent combat). */
     isWingmanSupportOrder(order) {
         return order === 'follow' || order === 'cover' || order === 'break';
+    },
+
+    /**
+     * Phase B strike: steer toward designated / lead / nearest ground target and
+     * release bomb or Impact rockets when the CCIP/Impact window is true.
+     */
+    decideWingmanStrike(teamId, battleState, leadId) {
+        const self = battleState.teams[teamId];
+        const liveSelf = GameContext.getTeam(teamId);
+        if (!self || !liveSelf || !self.position || self.isDestroyed) return null;
+        if (typeof AirArenaGroundTargets === 'undefined') return null;
+
+        const selfPos = this.toVector3(self.position);
+        const selfForward = this.toVector3(self.forward).normalize();
+        const selfQuat = (liveSelf.wrapper)
+            ? liveSelf.wrapper.quaternion.clone()
+            : new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), selfForward);
+
+        const gt = AirArenaGroundTargets.resolveStrikeTarget(teamId, leadId, selfPos);
+        if (!gt || gt.destroyed) {
+            // No objective → fall back to formation follow when a lead exists.
+            if (leadId) {
+                const support = this.decideWingmanSupport(teamId, battleState, leadId, 'follow');
+                if (support) {
+                    support.statusText = (support.statusText || 'NPC: 僚機') + '｜無對地目標';
+                    if (!support.debug) support.debug = {};
+                    support.debug.wingmanOrder = 'strike';
+                    support.debug.wingmanFallback = 'follow';
+                    return support;
+                }
+            }
+            return null;
+        }
+
+        const gtPos = AirArenaGroundTargets.positionOf(gt);
+        const horiz = Math.hypot(selfPos.x - gt.x, selfPos.z - gt.z);
+        // Initial point: offset back along approach, hold attack alt ~42–55.
+        const toGt = new THREE.Vector3(gt.x - selfPos.x, 0, gt.z - selfPos.z);
+        if (toGt.lengthSq() < 1e-4) toGt.copy(selfForward.clone().setY(0));
+        toGt.normalize();
+        const ipDist = horiz > 55 ? 38 : Math.max(18, horiz * 0.55);
+        const ipAlt = this.clamp(Math.max(Number(selfPos.y) || 40, 38), 36, 58);
+        const aimPos = (horiz > 28)
+            ? new THREE.Vector3(gt.x, ipAlt, gt.z).addScaledVector(toGt, -ipDist)
+            : new THREE.Vector3(gt.x, Math.max(8, (Number(gt.y) || 0) + 4), gt.z);
+        const steer = this.steerTowardWorldPoint(selfPos, selfQuat, aimPos);
+        // Dive cue when close — soft pitch down toward the objective.
+        if (horiz < 55 && horiz > 12) {
+            steer.joyY = this.clamp(steer.joyY - 0.22, -0.55, 0.55);
+        }
+
+        const action = this.withDebug({
+            state: 'wingmanStrike',
+            statusText: `NPC: 對地｜${gt.name || gt.id}`,
+            throttle: horiz > 70 ? 5 : (horiz > 35 ? 4 : 3),
+            joyX: steer.joyX,
+            joyY: steer.joyY,
+            roll: steer.roll,
+            weapon: 'rocket',
+            rocketFuze: 'impact',
+            queueAction: 'none',
+            powerPylons: false,
+            ready: true,
+            reason: `Strike approach ${gt.id} horiz=${horiz.toFixed(1)}`
+        }, {
+            wingmanOrder: 'strike',
+            leadId: leadId || null,
+            groundTargetId: gt.id,
+            groundTargetName: gt.name,
+            distance: Number(horiz.toFixed(1))
+        }, [
+            `wingman: order=strike gt=${gt.id} horiz=${horiz.toFixed(1)}`
+        ], 'wingmanStrike');
+
+        // Release when Impact / bomb window is good.
+        if (typeof AirArenaA2GStoresDoctrine !== 'undefined') {
+            const commit = AirArenaA2GStoresDoctrine.pickStrikeStoresCommit(action, liveSelf, gt, {
+                distance: horiz,
+                angleDeg: Number(steer.local && Math.acos(this.clamp(steer.local.z, -1, 1)) * 180 / Math.PI)
+            });
+            if (commit) {
+                AirArenaA2GStoresDoctrine.applyStoresCommit(action, commit);
+            }
+        }
+        return action;
     },
 
     /**
@@ -17430,13 +17516,21 @@ window.AirArenaAI = {
         const wingmanOrder = this.getWingmanOrder(teamId);
 
         // Phase 1: wingman support orders (follow / cover / break).
-        // attack = lead's target; free = independent hunt (full combat AI).
+        // attack = lead's target; strike = ground target; free = independent hunt.
         {
             const wingmanAction = this.tryDecideGate('wingmanSupport', () => {
                 if (!(leadId && liveSelf && liveSelf.aiEnabled && this.isWingmanSupportOrder(wingmanOrder))) return null;
                 return this.decideWingmanSupport(teamId, battleState, leadId, wingmanOrder) || null;
             });
             if (wingmanAction) return wingmanAction;
+        }
+
+        // Phase B: 對地攻擊 — lead or solo AI with strike order.
+        if (liveSelf && liveSelf.aiEnabled && wingmanOrder === 'strike') {
+            const strikeAction = this.tryDecideGate('wingmanStrike', () =>
+                this.decideWingmanStrike(teamId, battleState, leadId) || null
+            );
+            if (strikeAction) return strikeAction;
         }
 
         // Attack-my-target: lead lock / nearest living hostile of lead only.
@@ -24505,6 +24599,23 @@ altitude,
         if (!action || !team || typeof AirArenaA2GStoresDoctrine === 'undefined') return action;
         const Doc = AirArenaA2GStoresDoctrine;
         if (!Doc.weaponAiEnabled('rocket') && !Doc.weaponAiEnabled('bomb')) return action;
+        // Strike path already picked bomb/Impact against a ground target — do not steal for A2A VT.
+        if (action.state === 'wingmanStrike' || this.getWingmanOrder(teamId) === 'strike') {
+            if (action.queueAction === 'bomb' || action.queueAction === 'rocket') return action;
+            // Still allow a late strike commit if approach stick arrived without a release yet.
+            if (typeof AirArenaGroundTargets !== 'undefined') {
+                const leadId = this.getWingmanLeadId(teamId);
+                const selfPos = team.wrapper && team.wrapper.position;
+                const gt = AirArenaGroundTargets.resolveStrikeTarget(teamId, leadId, selfPos);
+                if (gt) {
+                    const commit = Doc.pickStrikeStoresCommit(action, team, gt, {
+                        distance: Number(action.debug && action.debug.distance)
+                    });
+                    if (commit) return Doc.applyStoresCommit(action, commit);
+                }
+            }
+            return action;
+        }
 
         const foeId = this.getEnemyId(teamId);
         const foe = (typeof GameContext !== 'undefined' && GameContext.getTeam)

@@ -17,6 +17,7 @@
      */
     const PREFIX_GATE_ORDER = Object.freeze([
         'wingmanSupport',
+        'wingmanStrike',
         'noValidTarget',
         'sensorBlind'
     ]);
@@ -36,6 +37,7 @@
 
     const GATE_DOCS = Object.freeze({
         wingmanSupport: 'follow/cover/break support; attack fallback',
+        wingmanStrike: 'Phase B A2G strike vs designated / nearest ground target',
         noValidTarget: 'idle when no living enemy',
         sensorBlind: 'no track: search ground safety or bearing search',
         obstacleEmergency: 'high building risk escape before dive pull-up',

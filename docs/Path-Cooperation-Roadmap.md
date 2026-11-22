@@ -36,7 +36,7 @@
 | 階段 | 內容 | 現況 |
 |------|------|------|
 | **A 單機空戰** | A.0：`seek_angle` 優先目錄＋回退；A.1 dump 已關；A.2a press／extend 目錄閘（碼已上）。目前基準 `-pulloverclean`（80／140 n=6 building 0、combat 6、gate 6/6）。可選新 A2A（佔位、不進 `decide`） | **狀態凍結（2026-11-19）** |
-| **B 對地武器** | 地圖地面目標 schema；bake 終點可改地面點；單機 A2G envelope＋decide | **下一步（schema 未開）** |
+| **B 對地武器** | 地圖地面目標 schema；bake 終點可改地面點；單機 A2G envelope＋decide | **schema＋`strike` 指令已上**（bake IP 簡化版；編隊 `strike_cover` 仍待 C） |
 | **C 編隊 AI** | 兩架 AI 共用契約（不是人類 HUD）；A2G 已上才可選 `strike_cover` | 全 AI 仍各打各的 |
 
 ```
@@ -119,7 +119,7 @@ A 與 B 都過之後才實作。第一刀是 **`split` + 分側**，不是跟隨
 | **defend 目錄閘驗收** | **已關** 2026-10-11 | 80／140 n=3 `b2-test_01-1791697752764` 2／3 beam `fallback=0`。碼留下 |
 | **FOX-2 f2why=gate** | **現役** 2026-10-11 | 解制前只在發射門內跟目標。不放寬 10°／6°。針 `coastSteer=1` |
 | **新 A2A**（火箭 VT） | **單獨武器刀已上**（`a2g-stores-doctrine` 後期覆蓋） | VT 在 FOX 乾彈／出包線時補射；不改 stick；不綁 B2 |
-| **對地（A2G）** | **階段 B**（schema 未開；Impact／炸彈暫打貼地空中目標） | 先 schema，再地面點 bake；編隊的 `strike_cover` 等 C |
+| **對地（A2G）** | **階段 B（進行中）** | `groundTargets`＋僚機 `strike`＋指定目標已上；完整 bake 走廊與 `strike_cover` 等 C |
 | **新機體外觀／掛架 UI** | 隨時 | 不進 `decide` |
 | **新機體飛性／HP／AP** | **A.1 dump 穩了，最好 A.2 也過了** | 現在全場 `mig21`。換飛性＝換 stick 與接敵時間，須先凍結一架對照 |
 | **混機種雙機** | **階段 C 的 split／分側之後** | 先同機種分側 |

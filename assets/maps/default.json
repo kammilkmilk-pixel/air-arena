@@ -178,5 +178,10 @@
       "color": 2894892,
       "collision": true
     }
+  ],
+  "groundTargets": [
+    { "id": "gt_radar", "name": "雷達站", "x": 8, "y": 0, "z": 35, "radius": 7, "hp": 120, "kind": "radar" },
+    { "id": "gt_depot", "name": "彈藥庫", "x": -15, "y": 0, "z": 50, "radius": 8, "hp": 100, "kind": "depot" },
+    { "id": "gt_aaa", "name": "防空陣地", "x": 22, "y": 0, "z": 28, "radius": 6, "hp": 80, "kind": "aaa" }
   ]
 }

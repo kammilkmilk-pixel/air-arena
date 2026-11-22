@@ -883,6 +883,18 @@
                     r.exploded = true;
                     explodedAt[r.trackId] = step;
                     pushRocketExplosionVfx(ctx, step, r.pos, cfg);
+                    if (typeof AirArenaGroundTargets !== 'undefined'
+                        && typeof AirArenaGroundTargets.applyBlastDamage === 'function') {
+                        const gtHits = AirArenaGroundTargets.applyBlastDamage(r.pos, blastR, damage, {
+                            ownerId: id, weapon: 'rocket'
+                        });
+                        if (gtHits.length) {
+                            ctx.log.groundTargetHits = ctx.log.groundTargetHits || [];
+                            gtHits.forEach((h) => ctx.log.groundTargetHits.push({
+                                step, ownerId: id, weapon: 'rocket', ...h
+                            }));
+                        }
+                    }
 
                     const applyBlast = (vid) => {
                         const vt = teams[vid];

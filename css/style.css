@@ -1329,6 +1329,20 @@ html.startup-lock body {
 #wingman-order-hud .wingman-order-btn:hover {
     background: rgba(255,255,255,0.22);
 }
+#wingman-order-hud .wingman-gt-btn {
+    pointer-events: auto;
+    margin-top: 4px;
+    border: 1px solid rgba(255, 204, 102, 0.85);
+    background: rgba(40, 28, 8, 0.65);
+    color: #ffcc66;
+    font-family: 'Courier New', monospace;
+    font-size: 11px;
+    padding: 4px 8px;
+    cursor: pointer;
+}
+#wingman-order-hud .wingman-gt-btn:hover {
+    background: rgba(255, 204, 102, 0.22);
+}
 
 /* ─── SMS 戰術面板 ─── */
 #tactical-computer-module {

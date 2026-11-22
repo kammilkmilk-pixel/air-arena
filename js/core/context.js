@@ -452,6 +452,7 @@ window.GameContext = {
             aiPolicyMode: team.aiPolicyMode || 'heuristic',
             wingmanOrder: team.wingmanOrder || 'follow',
             lockedTargetId: team.lockedTargetId || null,
+            designatedGroundTargetId: team.designatedGroundTargetId || null,
             wreckPhase: team.wreckPhase || null,
             wreckBurstTurn: Number(team.wreckBurstTurn) || 0,
             matchActive: team.matchActive !== false,

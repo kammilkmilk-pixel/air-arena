@@ -121,6 +121,8 @@ function createTeamState(id, colorMain, matchActive = true) {
         missileShots: [],
         wingmanOrder: 'follow',
         lockedTargetId: null,
+        /** Phase B: designated ground-target id for strike / A2G HUD. */
+        designatedGroundTargetId: null,
         wreckPhase: null,
         wreckBurstTurn: 0,
         pendingPitch: 0,

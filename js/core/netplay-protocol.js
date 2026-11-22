@@ -99,6 +99,7 @@
             flaresArmed: !!t.flaresArmed,
             chaffArmed: !!t.chaffArmed,
             lockedTargetId: t.lockedTargetId || null,
+            designatedGroundTargetId: t.designatedGroundTargetId || null,
             wingmanOrder: t.wingmanOrder || 'follow',
             pylons: pylons,
             ready: true,
@@ -151,6 +152,15 @@
         t.singleMissileShot = !!intent.singleMissileShot;
         if (intent.lockedTargetId) GC.setLockedTarget(teamId, intent.lockedTargetId);
         else t.lockedTargetId = null;
+        if (intent.designatedGroundTargetId) {
+            if (typeof GC.stateMachine.setDesignatedGroundTarget === 'function') {
+                GC.stateMachine.setDesignatedGroundTarget(teamId, intent.designatedGroundTargetId);
+            } else {
+                t.designatedGroundTargetId = intent.designatedGroundTargetId;
+            }
+        } else {
+            t.designatedGroundTargetId = null;
+        }
         if (intent.wingmanOrder) GC.stateMachine.setWingmanOrder(teamId, intent.wingmanOrder);
 
         const qa = intent.queuedAction || 'none';

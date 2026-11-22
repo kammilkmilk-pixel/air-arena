@@ -476,7 +476,19 @@
                     b.hitGround = true;
                     explodedAt[b.pylonId] = step;
                     pushBombExplosionVfx(ctx, step, b.pos, cfg);
-                    // Soft blast vs any aircraft in radius (ground targets deferred).
+                    if (typeof AirArenaGroundTargets !== 'undefined'
+                        && typeof AirArenaGroundTargets.applyBlastDamage === 'function') {
+                        const gtHits = AirArenaGroundTargets.applyBlastDamage(b.pos, blastR, damage, {
+                            ownerId: id, weapon: 'bomb'
+                        });
+                        if (gtHits.length) {
+                            ctx.log.groundTargetHits = ctx.log.groundTargetHits || [];
+                            gtHits.forEach((h) => ctx.log.groundTargetHits.push({
+                                step, ownerId: id, weapon: 'bomb', ...h
+                            }));
+                        }
+                    }
+                    // Soft blast vs any aircraft in radius.
                     ids.forEach((vid) => {
                         const vt = teams[vid];
                         if (!vt || vt.isDestroyed || !vt.pathPoints) return;

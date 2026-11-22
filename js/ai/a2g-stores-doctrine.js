@@ -1,7 +1,7 @@
 // ============================================================================
 // a2g-stores-doctrine.js — AI employment for rocket (VT/Impact) + bomb
-// Soft overlay only: does not rewrite stick geometry. Phase B ground-target
-// schema still pending; Impact/bomb currently target dirt-skimming air foes.
+// Soft overlay only: does not rewrite stick geometry.
+// Supports dirt-skimming air foes + Phase B map groundTargets (strike order).
 // ============================================================================
 (function initA2GStoresDoctrine(root, factory) {
     const api = factory();
@@ -227,6 +227,130 @@
         return { ok: true, reason: 'ccipNear', path, miss, slant };
     }
 
+    function groundPoint(gt) {
+        if (!gt) return null;
+        if (gt.wrapper && gt.wrapper.position) return gt.wrapper.position;
+        if (typeof THREE !== 'undefined' && THREE.Vector3) {
+            return new THREE.Vector3(Number(gt.x) || 0, Number(gt.y) || 0, Number(gt.z) || 0);
+        }
+        return { x: Number(gt.x) || 0, y: Number(gt.y) || 0, z: Number(gt.z) || 0 };
+    }
+
+    /** Impact rocket vs map ground target (blast / surface centroid). */
+    function evaluateRocketImpactVsGround(team, groundTarget, ctx = {}) {
+        if (!weaponAiEnabled('rocket')) return { ok: false, reason: 'disabled' };
+        if (!teamRocketAmmo(team)) return { ok: false, reason: 'noAmmo' };
+        if (!groundTarget || groundTarget.destroyed) return { ok: false, reason: 'noTarget' };
+        const doc = getRocketDoctrine();
+        const gp = groundPoint(groundTarget);
+        if (typeof AirArenaRocket === 'undefined' || typeof AirArenaRocket.computeRocketAimSolution !== 'function') {
+            const dist = Number(ctx.distance);
+            const ang = Number(ctx.angleDeg);
+            const soft = Number.isFinite(dist) && dist >= doc.impactMinSlant && dist <= doc.impactMaxSlant
+                && Number.isFinite(ang) && ang <= 35;
+            return soft
+                ? { ok: true, reason: 'geomFallback', fuze: 'impact', groundTarget }
+                : { ok: false, reason: 'noSolver' };
+        }
+        // Fake a grounded "enemy" at the objective so the existing impact solver can run.
+        const fakeEnemy = {
+            id: groundTarget.id,
+            isDestroyed: false,
+            wrapper: { position: gp, quaternion: (team.wrapper && team.wrapper.quaternion) || { x: 0, y: 0, z: 0, w: 1 } },
+            flightLength: 0,
+            pathPoints: null
+        };
+        const sol = withRocketFuze(team, 'impact', () => AirArenaRocket.computeRocketAimSolution(team, fakeEnemy));
+        if (!sol || sol.fuze !== 'impact' || !sol.grounded || !sol.aimWorld) {
+            return { ok: false, reason: 'ungrounded', sol };
+        }
+        const miss = horizDist(sol.aimWorld, gp);
+        const missMax = (Number(sol.blastRadius) || doc.blastRadius) * doc.impactMissMaxFrac
+            + (Number(groundTarget.radius) || 0) * 0.35;
+        if (!(miss <= missMax)) return { ok: false, reason: 'miss', miss, missMax, sol };
+        const slant = Number(sol.slantDist);
+        if (Number.isFinite(slant) && (slant < doc.impactMinSlant || slant > doc.impactMaxSlant)) {
+            return { ok: false, reason: 'slant', slant, sol };
+        }
+        return { ok: true, reason: 'gtImpact', fuze: 'impact', sol, miss, groundTarget };
+    }
+
+    /** Bomb CCIP vs map ground target. */
+    function evaluateBombVsGround(team, groundTarget, ctx = {}) {
+        if (!weaponAiEnabled('bomb')) return { ok: false, reason: 'disabled' };
+        if (!teamBombReady(team)) return { ok: false, reason: 'noAmmo' };
+        if (!groundTarget || groundTarget.destroyed) return { ok: false, reason: 'noTarget' };
+        const doc = getBombDoctrine();
+        const gp = groundPoint(groundTarget);
+        if (typeof AirArenaBomb === 'undefined'
+            || typeof AirArenaBomb.estimateReleaseState !== 'function'
+            || typeof AirArenaBomb.computeBallisticPath !== 'function') {
+            return { ok: false, reason: 'noSolver' };
+        }
+        const pods = (typeof AirArenaBomb.teamBombPylons === 'function')
+            ? AirArenaBomb.teamBombPylons(team)
+            : (team.pylons || []).filter((p) => pylonTypeOf(p) === 'bomb');
+        const pod = pods.find((p) => p && p.state !== 'empty') || pods[0];
+        if (!pod) return { ok: false, reason: 'noPod' };
+        const rel = AirArenaBomb.estimateReleaseState(team, pod);
+        const path = AirArenaBomb.computeBallisticPath(rel.pos, rel.vel, {});
+        if (!path || !path.hitGround || !path.impact) return { ok: false, reason: 'noImpact' };
+        const miss = horizDist(path.impact, gp);
+        const missMax = doc.blastRadius * doc.missMaxFrac + (Number(groundTarget.radius) || 0) * 0.35;
+        if (!(miss <= missMax)) return { ok: false, reason: 'miss', miss, missMax, path };
+        const slant = rel.pos && path.impact && rel.pos.distanceTo
+            ? rel.pos.distanceTo(path.impact)
+            : Math.hypot(
+                (rel.pos.x || 0) - (path.impact.x || 0),
+                (rel.pos.y || 0) - (path.impact.y || 0),
+                (rel.pos.z || 0) - (path.impact.z || 0)
+            );
+        if (Number.isFinite(slant) && (slant < doc.minSlant || slant > doc.maxSlant)) {
+            return { ok: false, reason: 'slant', slant };
+        }
+        return { ok: true, reason: 'gtBomb', path, miss, slant, groundTarget };
+    }
+
+    /**
+     * Strike-order stores pick: prefer bomb, then Impact rocket against a ground target.
+     * Ignores air FOX priority (strike is an explicit A2G command).
+     */
+    function pickStrikeStoresCommit(action, team, groundTarget, ctx = {}) {
+        if (!action || !team || !groundTarget || groundTarget.destroyed) return null;
+        const q = action.queueAction || 'none';
+        if (q === 'flare' || q === 'chaff') return null;
+        if (isSurvivalState(action.state) && !/wingman/i.test(String(action.state || ''))) return null;
+
+        const bomb = evaluateBombVsGround(team, groundTarget, ctx);
+        if (bomb.ok) {
+            return {
+                weapon: 'bomb',
+                queueAction: 'bomb',
+                state: 'bombAttack',
+                statusText: `炸彈｜${groundTarget.name || groundTarget.id}`,
+                reason: `strike Bomb ${bomb.reason}`,
+                note: bomb.reason,
+                path: bomb.path || null,
+                groundTargetId: groundTarget.id
+            };
+        }
+        const impact = evaluateRocketImpactVsGround(team, groundTarget, ctx);
+        if (impact.ok) {
+            return {
+                weapon: 'rocket',
+                queueAction: 'rocket',
+                rocketFuze: 'impact',
+                state: 'rocketAttack',
+                statusText: `火箭 IMPACT｜${groundTarget.name || groundTarget.id}`,
+                reason: `strike Impact ${impact.reason}`,
+                note: impact.reason,
+                sol: impact.sol || null,
+                groundTargetId: groundTarget.id
+            };
+        }
+        return null;
+    }
+
     function isSurvivalState(state) {
         const s = String(state || '');
         return /escape|avoid|recover|stall|ground|terrain|embed|pullUp|obstacleEmergency|postGround|energyCritical|defensive/i.test(s);
@@ -352,7 +476,10 @@
         evaluateRocketVtShot,
         evaluateRocketImpactShot,
         evaluateBombShot,
+        evaluateRocketImpactVsGround,
+        evaluateBombVsGround,
         pickStoresCommit,
+        pickStrikeStoresCommit,
         applyStoresCommit,
         isSurvivalState,
         missileOutOfEnvelope
