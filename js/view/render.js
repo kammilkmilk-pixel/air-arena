@@ -662,15 +662,18 @@ for (let i = 0; i < SPARK_STREAK_LIMIT; i++) {
 
 const threatEnvGroup = new THREE.Group(); scene.add(threatEnvGroup);
 window.ghostWrapper = new THREE.Group(); window.ghostWrapper.visible = false; scene.add(window.ghostWrapper);
+// Legacy under-ghost ring + canvas text retired — ALT/THR live on the screen-space steer HUD.
 const ringGeo1 = new THREE.RingGeometry(0.4, 0.45, 32);
 window.ghostRing = new THREE.Mesh(ringGeo1, new THREE.MeshBasicMaterial({color: 0xffffff, transparent: true, opacity: 0.4, side: THREE.DoubleSide, depthWrite: false}));
 window.ghostRing.rotation.x = Math.PI / 2; window.ghostRing.position.y = -0.08;
+window.ghostRing.visible = false;
 const ghostCanvas = document.createElement('canvas'); ghostCanvas.width = 128; ghostCanvas.height = 64;
 window.ghostCtx = ghostCanvas.getContext('2d'); window.ghostTex = new THREE.CanvasTexture(ghostCanvas);
-const ghostTextPlane = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 0.75), new THREE.MeshBasicMaterial({map: window.ghostTex, transparent: true, side: THREE.DoubleSide, depthTest: false}));
-ghostTextPlane.position.set(0, 0.1, -0.5); ghostTextPlane.rotation.set(-Math.PI / 2, 0, Math.PI);
+window.ghostTextPlane = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 0.75), new THREE.MeshBasicMaterial({map: window.ghostTex, transparent: true, side: THREE.DoubleSide, depthTest: false}));
+window.ghostTextPlane.position.set(0, 0.1, -0.5); window.ghostTextPlane.rotation.set(-Math.PI / 2, 0, Math.PI);
+window.ghostTextPlane.visible = false;
 
-window.ghostWrapper.add(window.ghostRing, ghostTextPlane);
+window.ghostWrapper.add(window.ghostRing, window.ghostTextPlane);
 
 const trackMaterialRed = new THREE.MeshBasicMaterial({ color: 0xff0055, transparent: true, opacity: 0.65, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }); 
 const trackMaterialBlue = new THREE.MeshBasicMaterial({ color: 0x00bcd4, transparent: true, opacity: 0.65, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false });
@@ -995,12 +998,14 @@ function updateSpatialHelpers() {
     });
     
     let ghostLabel = document.getElementById('alt-label-ghost');
-    const activeFaction = (GameContext.getFaction && GameContext.getFaction(window.activeTeamId)) || window.activeTeamId;
+    // Ghost altitude label moved under the screen roll ring — keep beam, hide floating label.
+    if (ghostLabel) ghostLabel.style.display = 'none';
     if (window.ghostWrapper && window.ghostWrapper.visible && !isReplaying && !splitView) { 
         let correctedGhostY = window.ghostWrapper.position.y - 0.08; ghostBeam.position.set(window.ghostWrapper.position.x, correctedGhostY, window.ghostWrapper.position.z); ghostBeam.scale.set(1, Math.max(0.01, correctedGhostY), 1); ghostBeam.visible = true; 
-        let pos = window.ghostWrapper.position.clone(); pos.y = pos.y * 0.8; pos.project(camera);
-        if (ghostLabel) { ghostLabel.style.left = `${(pos.x*.5+.5)*window.innerWidth}px`; ghostLabel.style.top = `${(pos.y*-.5+.5)*window.innerHeight}px`; ghostLabel.style.color = activeFaction === 'blue' ? '#00bcd4' : '#ff0055'; ghostLabel.innerText = `${window.ghostWrapper.position.y.toFixed(1)}m`; ghostLabel.style.display = 'block'; }
-    } else { ghostBeam.visible = false; if(ghostLabel) ghostLabel.style.display = 'none'; }
+        if (window.AirArenaOpsRadial && typeof window.AirArenaOpsRadial.syncGhostSteer === 'function') {
+            try { window.AirArenaOpsRadial.syncGhostSteer(); } catch (_) { /* ignore */ }
+        }
+    } else { ghostBeam.visible = false; }
 }
 
 function drawTrajectoryLine(teamObj) {
@@ -1113,32 +1118,15 @@ function drawTrajectoryLine(teamObj) {
             window.ghostWrapper.add(window.ghostPlaneMesh);
         }
 
-        let teamColor = ((GameContext.getFaction && GameContext.getFaction(teamObj.id)) === 'blue') ? 0x00bcd4 : 0xff0055;
-        if (window.ghostRing) window.ghostRing.material.color.setHex(teamColor);
-
-        window.ghostCtx.clearRect(0,0,128,64); 
-        window.ghostCtx.shadowColor = 'rgba(0,0,0,0.9)'; window.ghostCtx.shadowOffsetX = 2; window.ghostCtx.shadowOffsetY = 2; window.ghostCtx.shadowBlur = 4; 
-        window.ghostCtx.textAlign = 'center'; window.ghostCtx.textBaseline = 'middle';
-        const opsOpen = !!(window.AirArenaOpsRadial && window.AirArenaOpsRadial.isOpen && window.AirArenaOpsRadial.isOpen());
-        if (opsOpen) {
-            const thr = Number(teamObj.throttle) || 4;
-            let band = 'MIL';
-            if (thr >= 4.5) band = 'AB';
-            else if (thr >= 3.5) band = 'MIL';
-            else if (thr >= 2.5) band = 'ECO';
-            else if (thr >= 1.5) band = 'IDL';
-            else band = 'BRK';
-            window.ghostCtx.fillStyle = '#ffffff';
-            window.ghostCtx.font = 'bold 22px Courier New';
-            window.ghostCtx.fillText(`THR ${thr.toFixed(1)} ${band}`, 64, 24);
-            window.ghostCtx.fillStyle = '#ffeb3b';
-            window.ghostCtx.font = 'bold 16px Courier New';
-            window.ghostCtx.fillText(teamObj.flightLength.toFixed(1) + 'm', 64, 48);
-        } else {
-            window.ghostCtx.fillStyle = '#ffeb3b'; window.ghostCtx.font = 'bold 30px Courier New';
-            window.ghostCtx.fillText(teamObj.flightLength.toFixed(1) + 'm', 64, 32);
+        if (window.ghostRing) window.ghostRing.visible = false;
+        if (window.ghostTextPlane) window.ghostTextPlane.visible = false;
+        if (window.ghostCtx && window.ghostTex) {
+            window.ghostCtx.clearRect(0, 0, 128, 64);
+            window.ghostTex.needsUpdate = true;
         }
-        window.ghostTex.needsUpdate = true;
+        if (window.AirArenaOpsRadial && typeof window.AirArenaOpsRadial.syncGhostSteer === 'function') {
+            try { window.AirArenaOpsRadial.syncGhostSteer(teamObj); } catch (_) { /* ignore */ }
+        }
     } else if (teamObj.id === tAct) { 
         window.ghostWrapper.visible = false; 
     }

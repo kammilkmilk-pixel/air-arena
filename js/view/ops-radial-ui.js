@@ -100,9 +100,15 @@
         startJoyY: 0,
         startRoll: 0,
         startAngle: 0,
+        startRadius: 0,
+        startThrottle: 4,
         bound: false,
         winBound: false
     };
+    /** Nominal roll-ring radius in HUD CSS px (matches SVG r≈62 on 120px box). */
+    const ROLL_RING_BASE_PX = 53;
+    /** Radial drag (px) that maps to ±1.0 throttle. */
+    const ROLL_THR_SOFT_PX = 36;
 
     /** Commanded bank for HUD: during roll-drag pendingRoll is authoritative (incl. 0). */
     function commandRollRad(t) {
@@ -279,6 +285,13 @@
         else if (typeof updateDashboardUI === 'function') updateDashboardUI(t);
     }
 
+    function setRollRingScale(scale) {
+        const g = $('ghost-roll-scale');
+        if (!g) return;
+        const s = Math.max(0.72, Math.min(1.38, Number(scale) || 1));
+        g.setAttribute('transform', `translate(70 70) scale(${s.toFixed(3)}) translate(-70 -70)`);
+    }
+
     function applyRollDrag(clientX, clientY) {
         const t = canPilotTeam();
         if (!t) return;
@@ -287,7 +300,10 @@
         const rect = hud.getBoundingClientRect();
         const cx = rect.left + rect.width / 2;
         const cy = rect.top + rect.height / 2;
-        const ang = Math.atan2(clientX - cx, -(clientY - cy));
+        const dx = clientX - cx;
+        const dy = clientY - cy;
+        const ang = Math.atan2(dx, -dy);
+        const radius = Math.hypot(dx, dy);
         let delta = ang - GhostSteer.startAngle;
         if (delta > Math.PI) delta -= Math.PI * 2;
         if (delta < -Math.PI) delta += Math.PI * 2;
@@ -295,6 +311,19 @@
         if (!GameContext.stateMachine.setRollInput(t.id, angle)) return;
         // Always sync L/R handles to the applied command (pendingRoll may be 0).
         syncCockpitRoll(commandRollRad(t));
+
+        // Radial: pull outward = accelerate, inward = decelerate.
+        const baseR = GhostSteer.startRadius > 8 ? GhostSteer.startRadius : ROLL_RING_BASE_PX;
+        const dr = radius - baseR;
+        const thrDelta = (dr / ROLL_THR_SOFT_PX);
+        const nextThr = Math.max(1, Math.min(5, GhostSteer.startThrottle + thrDelta));
+        if (GameContext.stateMachine && GameContext.stateMachine.setThrottle) {
+            GameContext.stateMachine.setThrottle(t.id, nextThr);
+        } else {
+            t.throttle = nextThr;
+        }
+        setRollRingScale(radius / Math.max(8, ROLL_RING_BASE_PX));
+        syncGhostSteerMeta(t);
         if (typeof uiRefreshPreview === 'function') uiRefreshPreview(t);
     }
 
@@ -326,6 +355,7 @@
     function endGhostSteer(e) {
         if (!GhostSteer.mode) return;
         if (e && GhostSteer.pointerId != null && e.pointerId !== GhostSteer.pointerId) return;
+        const wasRoll = GhostSteer.mode === 'roll';
         const hud = $('ghost-steer-hud');
         if (hud) {
             hud.classList.remove('is-nose-dragging', 'is-roll-dragging');
@@ -337,6 +367,7 @@
         // Do NOT toggle isDraggingRollRing — that flag drives the classic cockpit
         // roll-ring window mousemove handler and must stay false during ghost drag.
         window.isDraggingGhostSteer = false;
+        if (wasRoll) setRollRingScale(1);
     }
 
     function beginNose(e) {
@@ -377,10 +408,13 @@
         GhostSteer.mode = 'roll';
         GhostSteer.pointerId = e.pointerId;
         GhostSteer.startAngle = Math.atan2(e.clientX - cx, -(e.clientY - cy));
+        GhostSteer.startRadius = Math.hypot(e.clientX - cx, e.clientY - cy);
+        GhostSteer.startThrottle = Number(t.throttle) || 4;
         GhostSteer.startRoll = (t.pendingRoll !== 0 && t.pendingRoll != null) ? t.pendingRoll : (Number(t.roll) || 0);
         // Seed pendingRoll so RAF / refresh always read the drag command (incl. 0).
         GameContext.stateMachine.setRollInput(t.id, GhostSteer.startRoll);
         syncCockpitRoll(GhostSteer.startRoll);
+        setRollRingScale(GhostSteer.startRadius / Math.max(8, ROLL_RING_BASE_PX));
         window.isDraggingGhostSteer = true;
         setOrbitLocked(true);
         bindGhostSteerWindow();
@@ -432,12 +466,37 @@
         };
     }
 
+    function ghostSteerShouldShow(team) {
+        const t = team || canPilotTeam() || (teams && teams[OpsRadial.teamId]);
+        if (!t || t.isDestroyed || t.matchActive === false) return false;
+        if (GameContext.isReplayMode && GameContext.isReplayMode()) return false;
+        if (GameContext.isAnimating && GameContext.isAnimating()) return false;
+        return !!(window.ghostWrapper && window.ghostWrapper.visible);
+    }
+
+    function syncGhostSteerMeta(team) {
+        const t = team;
+        const altEl = $('ghost-steer-alt');
+        if (altEl) {
+            const y = (window.ghostWrapper && window.ghostWrapper.visible)
+                ? Number(window.ghostWrapper.position.y)
+                : (t && t.wrapper ? Number(t.wrapper.position.y) : NaN);
+            altEl.textContent = Number.isFinite(y) ? `ALT ${y.toFixed(1)}m` : 'ALT —';
+        }
+        const thrEl = $('ghost-steer-thr');
+        if (thrEl && t) {
+            const thr = Number(t.throttle) || 4;
+            thrEl.textContent = `THR ${thr.toFixed(1)} ${thrBandLabel(thr)}`;
+        }
+    }
+
     function syncGhostSteerHud(team) {
         const hud = $('ghost-steer-hud');
         if (!hud) return;
-        const t = team || canPilotTeam();
-        const show = !!(OpsRadial.open && t && window.ghostWrapper && window.ghostWrapper.visible
-            && !GameContext.isReplayMode() && !GameContext.isAnimating());
+        const id = OpsRadial.teamId || (typeof uiCurrentTeamId === 'function' ? uiCurrentTeamId() : null);
+        const t = team || canPilotTeam() || (teams && teams[id]);
+        // Persistent while the forward ghost is on screen (not only when ops radial is open).
+        const show = ghostSteerShouldShow(t);
         if (!show) {
             hud.hidden = true;
             hud.classList.remove('is-visible');
@@ -456,7 +515,7 @@
         hud.style.left = `${scr.x}px`;
         hud.style.top = `${scr.y}px`;
 
-        updateGhostJoyPip(Number(t.joyX) || 0, Number(t.joyY) || 0);
+        if (t) updateGhostJoyPip(Number(t.joyX) || 0, Number(t.joyY) || 0);
         // While dragging roll, L/R handles track commanded pendingRoll (not screen bank).
         // Idle: match ghost on-screen bank so handles sit on the phantom wings.
         if (GhostSteer.mode === 'roll') {
@@ -465,13 +524,11 @@
             const visual = getGhostVisualBankRad();
             const bank = (visual != null) ? visual : commandRollRad(t);
             syncCockpitRoll(bank, { skipCockpit: visual != null });
+            if (GhostSteer.mode !== 'roll') setRollRingScale(1);
         }
 
-        const thrEl = $('ghost-steer-thr');
-        if (thrEl) {
-            const thr = Number(t.throttle) || 4;
-            thrEl.textContent = `THR ${thr.toFixed(1)} ${thrBandLabel(thr)}`;
-        }
+        syncGhostSteerMeta(t);
+        ensureGhostSteerTrack();
     }
 
     /** Legacy 3D gizmo removed — interaction is the screen-space ghost-steer HUD. */
@@ -494,25 +551,41 @@
         el.setAttribute('title', `HP ${Math.round(hp)}`);
     }
 
+    /** Legacy 3D ghost canvas retired — ALT/THR live under the screen roll ring. */
     function paintGhostThrottle(team) {
-        if (!window.ghostCtx || !window.ghostTex || !team) return;
-        if (!OpsRadial.open) return;
-        const thr = Number(team.throttle) || 4;
-        const band = thrBandLabel(thr);
-        const dist = (typeof team.flightLength === 'number') ? team.flightLength.toFixed(1) : '—';
-        const ctx = window.ghostCtx;
-        ctx.clearRect(0, 0, 128, 64);
-        ctx.shadowColor = 'rgba(0,0,0,0.9)';
-        ctx.shadowOffsetX = 2; ctx.shadowOffsetY = 2; ctx.shadowBlur = 4;
-        ctx.fillStyle = '#ffffff';
-        ctx.font = 'bold 22px Courier New';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(`THR ${thr.toFixed(1)} ${band}`, 64, 24);
-        ctx.font = 'bold 16px Courier New';
-        ctx.fillStyle = '#ffeb3b';
-        ctx.fillText(`${dist}m`, 64, 48);
-        window.ghostTex.needsUpdate = true;
+        if (window.ghostCtx && window.ghostTex) {
+            window.ghostCtx.clearRect(0, 0, 128, 64);
+            window.ghostTex.needsUpdate = true;
+        }
+        if (window.ghostRing) window.ghostRing.visible = false;
+        if (window.ghostTextPlane) window.ghostTextPlane.visible = false;
+        syncGhostSteerHud(team);
+    }
+
+    function ensureGhostSteerTrack() {
+        if (OpsRadial._raf) return;
+        const tick = () => {
+            const id = OpsRadial.teamId || (typeof uiCurrentTeamId === 'function' ? uiCurrentTeamId() : null);
+            const team = teams && teams[id];
+            const needGhost = ghostSteerShouldShow(team);
+            if (!OpsRadial.open && !needGhost) {
+                OpsRadial._raf = 0;
+                const hud = $('ghost-steer-hud');
+                if (hud) {
+                    hud.hidden = true;
+                    hud.classList.remove('is-visible');
+                }
+                return;
+            }
+            if (OpsRadial.open && team) {
+                sync3dOverlays(team);
+                layoutAnchor(team);
+            } else if (needGhost) {
+                syncGhostSteerHud(team);
+            }
+            OpsRadial._raf = requestAnimationFrame(tick);
+        };
+        OpsRadial._raf = requestAnimationFrame(tick);
     }
 
     function setOpen(open, focus, teamId) {
@@ -528,18 +601,14 @@
             // Prefer collapsed classic panel so the new HUD owns the view.
             setClassicCollapsed(true);
             refresh();
-            startTrack();
+            ensureGhostSteerTrack();
         } else {
-            stopTrack();
             hideWeaponDetail();
             const o = OpsRadial._3d;
             if (o && o.gizmo) o.gizmo.visible = false;
-            const hud = $('ghost-steer-hud');
-            if (hud) {
-                hud.hidden = true;
-                hud.classList.remove('is-visible', 'is-nose-dragging', 'is-roll-dragging');
-            }
+            // Ghost steer ring stays resident while the forward phantom is visible.
             endGhostSteer();
+            ensureGhostSteerTrack();
         }
     }
 
@@ -801,18 +870,7 @@
     }
 
     function startTrack() {
-        stopTrack();
-        const tick = () => {
-            if (!OpsRadial.open) return;
-            const id = OpsRadial.teamId;
-            const team = teams && teams[id];
-            if (team) {
-                sync3dOverlays(team);
-                layoutAnchor(team);
-            }
-            OpsRadial._raf = requestAnimationFrame(tick);
-        };
-        OpsRadial._raf = requestAnimationFrame(tick);
+        ensureGhostSteerTrack();
     }
 
     function stopTrack() {
@@ -1142,7 +1200,8 @@
             isOpen: () => OpsRadial.open,
             state: OpsRadial,
             onPick: onAircraftOrGhostPicked,
-            setClassicCollapsed
+            setClassicCollapsed,
+            syncGhostSteer: syncGhostSteerHud
         };
     }
 

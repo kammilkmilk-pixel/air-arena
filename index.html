@@ -313,35 +313,40 @@
     <!-- Ghost steer HUD: LCOS-style grab (nose) + roll ring + L/R handles -->
     <div id="ghost-steer-hud" hidden aria-hidden="true">
         <svg viewBox="0 0 140 140" aria-label="ghost steer">
-            <!-- Outer roll ring (drag tangentially to bank) -->
+            <!-- Outer roll track (tangential = bank, radial = throttle) -->
             <circle id="ghost-roll-track" cx="70" cy="70" r="62" fill="none"
-                stroke="rgba(255,255,255,0.35)" stroke-width="2" stroke-dasharray="4 5"/>
-            <!-- Roll ring + L/R handles bank with ghost attitude (rotated as one group) -->
-            <g id="ghost-roll-ring">
-                <circle cx="70" cy="70" r="62" fill="none" stroke="rgba(255,255,255,0.85)" stroke-width="2.4"/>
-                <circle class="ghost-roll-port" cx="12" cy="70" r="5" fill="#ff3355"/>
-                <circle class="ghost-roll-stbd" cx="128" cy="70" r="5" fill="#00ff88"/>
-                <g id="ghost-handle-left" class="ghost-side-handle" style="cursor:grab">
-                    <rect x="4" y="52" width="14" height="36" rx="4" fill="rgba(0,0,0,0.45)" stroke="#fff" stroke-width="1.5"/>
-                    <line x1="8" y1="58" x2="8" y2="82" stroke="#fff" stroke-width="1.2" opacity="0.7"/>
-                    <line x1="14" y1="58" x2="14" y2="82" stroke="#fff" stroke-width="1.2" opacity="0.7"/>
-                </g>
-                <g id="ghost-handle-right" class="ghost-side-handle" style="cursor:grab">
-                    <rect x="122" y="52" width="14" height="36" rx="4" fill="rgba(0,0,0,0.45)" stroke="#fff" stroke-width="1.5"/>
-                    <line x1="126" y1="58" x2="126" y2="82" stroke="#fff" stroke-width="1.2" opacity="0.7"/>
-                    <line x1="132" y1="58" x2="132" y2="82" stroke="#fff" stroke-width="1.2" opacity="0.7"/>
+                stroke="rgba(255,255,255,0.35)" stroke-width="3" stroke-dasharray="5 6"/>
+            <!-- Scale group = radial throttle pull; rotate group = bank -->
+            <g id="ghost-roll-scale">
+                <g id="ghost-roll-ring">
+                    <circle cx="70" cy="70" r="62" fill="none" stroke="rgba(255,255,255,0.9)" stroke-width="5.5"/>
+                    <circle class="ghost-roll-port" cx="12" cy="70" r="5.5" fill="#ff3355"/>
+                    <circle class="ghost-roll-stbd" cx="128" cy="70" r="5.5" fill="#00ff88"/>
+                    <g id="ghost-handle-left" class="ghost-side-handle" style="cursor:grab">
+                        <rect x="3" y="50" width="16" height="40" rx="4" fill="rgba(0,0,0,0.45)" stroke="#fff" stroke-width="1.5"/>
+                        <line x1="8" y1="56" x2="8" y2="84" stroke="#fff" stroke-width="1.2" opacity="0.7"/>
+                        <line x1="14" y1="56" x2="14" y2="84" stroke="#fff" stroke-width="1.2" opacity="0.7"/>
+                    </g>
+                    <g id="ghost-handle-right" class="ghost-side-handle" style="cursor:grab">
+                        <rect x="121" y="50" width="16" height="40" rx="4" fill="rgba(0,0,0,0.45)" stroke="#fff" stroke-width="1.5"/>
+                        <line x1="126" y1="56" x2="126" y2="84" stroke="#fff" stroke-width="1.2" opacity="0.7"/>
+                        <line x1="132" y1="56" x2="132" y2="84" stroke="#fff" stroke-width="1.2" opacity="0.7"/>
+                    </g>
                 </g>
             </g>
-            <!-- Roll hit = ring stroke only (not a filled disc — that blocked pylon wedges underneath) -->
+            <!-- Roll hit = thickened ring stroke -->
             <circle id="ghost-roll-hit" cx="70" cy="70" r="62" fill="none"
-                stroke="rgba(255,255,255,0.01)" stroke-width="16"
+                stroke="rgba(255,255,255,0.01)" stroke-width="22"
                 style="cursor:grab; pointer-events: stroke;"/>
-            <!-- Nose grab ring (no crosshair / aim marks) -->
+            <!-- Nose grab ring -->
             <circle id="ghost-grab-hit" cx="70" cy="70" r="40" fill="rgba(255,255,255,0.02)" style="cursor:grab"/>
             <circle id="ghost-grab-ring" cx="70" cy="70" r="32" fill="none" stroke="#ffffff" stroke-width="2.4"/>
             <circle id="ghost-joy-pip" cx="70" cy="70" r="3.2" fill="#ffeb3b"/>
         </svg>
-        <div id="ghost-steer-thr" class="ghost-steer-thr">THR —</div>
+        <div id="ghost-steer-meta" class="ghost-steer-meta">
+            <div id="ghost-steer-alt" class="ghost-steer-alt">ALT —</div>
+            <div id="ghost-steer-thr" class="ghost-steer-thr">THR —</div>
+        </div>
     </div>
 
     <!-- Semi-transparent radial ops HUD (appears on aircraft / ghost pick) -->
