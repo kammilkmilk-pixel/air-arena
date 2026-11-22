@@ -980,9 +980,15 @@
         const fire = $('ops-wpn-fire');
         if (fire) {
             const canFire = p.state === 'armed';
+            const queueAct = (wt === 'bomb' || wt === 'rocket') ? wt : 'missile';
+            const queued = !!(t && t.wpnQueued && t.queuedAction === queueAct);
             fire.disabled = !canFire;
+            fire.classList.toggle('is-armed-ready', canFire && !queued);
+            fire.classList.toggle('is-queued', canFire && queued);
             fire.textContent = wt === 'bomb' ? '投放 ENT' : (wt === 'rocket' ? '齊射 ENT' : '發射 ENT');
-            fire.title = canFire ? '排程發射／投放' : (p.state === 'powering' ? '尋標頭開機中' : '需先通電就緒');
+            fire.title = !canFire
+                ? (p.state === 'powering' ? '尋標頭開機中' : '需先通電就緒')
+                : (queued ? '已排程 — 再按可取消' : '通電就緒 — 按 ENT 排程發射');
         }
         panel.hidden = false;
         panel.setAttribute('aria-hidden', 'false');
