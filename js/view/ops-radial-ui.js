@@ -268,6 +268,9 @@
             }
             handleLayer.setAttribute('transform', rot);
         }
+        // HEAT/AP HTML layer banks with the grips (CSS rotate about HUD centre).
+        const stats = $('ghost-handle-stats');
+        if (stats) stats.style.transform = `rotate(${deg}deg)`;
     }
 
     function setOrbitLocked(locked) {

@@ -351,17 +351,19 @@
                 <g id="ghost-handle-right" class="ghost-side-handle" style="cursor:grab">
                     <rect x="118" y="46" width="22" height="48" rx="4" fill="rgba(0,0,0,0.01)"/>
                 </g>
-                <!-- HEAT / AP ride with the grips (ex-tactical strip) -->
-                <g class="ghost-handle-stat ghost-handle-stat-heat" pointer-events="none">
-                    <text class="ghost-handle-stat-k" x="-4" y="54" text-anchor="end">HEAT</text>
-                    <text class="ghost-handle-stat-v" id="ops-val-heat" x="-4" y="74" text-anchor="end">150°</text>
-                </g>
-                <g class="ghost-handle-stat ghost-handle-stat-ap" pointer-events="none">
-                    <text class="ghost-handle-stat-k" x="144" y="54" text-anchor="start">AP</text>
-                    <text class="ghost-handle-stat-v" id="ops-val-ap" x="144" y="74" text-anchor="start">0</text>
-                </g>
             </g>
         </svg>
+        <!-- HEAT / AP: same text-shadow as ALT/THR under the ring; banks with grips -->
+        <div id="ghost-handle-stats" aria-hidden="true">
+            <div class="ghost-handle-stat ghost-handle-stat-heat">
+                <span class="ghost-handle-stat-k">HEAT</span>
+                <span class="ghost-handle-stat-v" id="ops-val-heat">150°</span>
+            </div>
+            <div class="ghost-handle-stat ghost-handle-stat-ap">
+                <span class="ghost-handle-stat-k">AP</span>
+                <span class="ghost-handle-stat-v" id="ops-val-ap">0</span>
+            </div>
+        </div>
         <div id="ghost-steer-meta" class="ghost-steer-meta">
             <div id="ghost-steer-alt" class="ghost-steer-alt">ALT —</div>
             <div id="ghost-steer-thr" class="ghost-steer-thr">THR —</div>

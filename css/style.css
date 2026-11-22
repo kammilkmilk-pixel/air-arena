@@ -787,31 +787,52 @@ html.startup-lock body {
 #ghost-steer-hud #ghost-handle-layer .ghost-side-handle {
     pointer-events: auto;
 }
-#ghost-steer-hud .ghost-handle-stat-k {
-    fill: rgba(255, 255, 255, 0.85);
-    font-family: 'Courier New', monospace;
-    font-size: 9px;
-    letter-spacing: 0.7px;
-    paint-order: stroke fill;
-    stroke: rgba(0, 0, 0, 0.92);
-    stroke-width: 3.2px;
-    stroke-linejoin: round;
+/* HEAT/AP — match ALT under-ring shadow; stack vertically centered on grips */
+#ghost-handle-stats {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    transform-origin: 50% 50%;
 }
-#ghost-steer-hud .ghost-handle-stat-v {
+.ghost-handle-stat {
+    position: absolute;
+    top: 50%;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 1px;
+    line-height: 1.05;
+    transform: translateY(-50%);
     font-family: 'Courier New', monospace;
-    font-size: 15px;
     font-weight: bold;
-    paint-order: stroke fill;
-    stroke: rgba(0, 0, 0, 0.95);
-    stroke-width: 4px;
-    stroke-linejoin: round;
+    white-space: nowrap;
+    /* Same recipe as .ghost-steer-alt */
+    text-shadow: 0 1px 3px #000, 0 0 6px rgba(0,0,0,0.8);
 }
-#ghost-steer-hud .ghost-handle-stat-heat .ghost-handle-stat-v {
-    fill: #ffb74d;
+.ghost-handle-stat-heat {
+    right: calc(100% + 2px);
+    align-items: flex-end;
+    text-align: right;
 }
-#ghost-steer-hud .ghost-handle-stat-ap .ghost-handle-stat-v {
-    fill: #4dd0e1;
+.ghost-handle-stat-ap {
+    left: calc(100% + 2px);
+    align-items: flex-start;
+    text-align: left;
 }
+.ghost-handle-stat-k {
+    font-size: 10px;
+    letter-spacing: 0.5px;
+    color: rgba(255, 255, 255, 0.9);
+}
+.ghost-handle-stat-v {
+    font-size: 14px;
+    letter-spacing: 0.3px;
+}
+.ghost-handle-stat-heat .ghost-handle-stat-v { color: #ff9800; }
+.ghost-handle-stat-ap .ghost-handle-stat-v { color: #00bcd4; }
 #ghost-steer-hud #ghost-roll-hit {
     pointer-events: stroke;
 }
