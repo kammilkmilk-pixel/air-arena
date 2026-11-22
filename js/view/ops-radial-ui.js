@@ -110,8 +110,6 @@
         /** Frozen HUD centre in client px for the whole gesture (ghost must not move the pivot). */
         anchorCx: 0,
         anchorCy: 0,
-        freezeLeft: '',
-        freezeTop: '',
         bankEnabled: false, // true only when dragging L/R handles
         ringFactor: 1,
         bound: false,
@@ -145,16 +143,6 @@
         return Number(t.roll) || 0;
     }
 
-    const NOSE_DRAG = {
-        softJoy: 0.40,
-        softFrac: 0.09,
-        softMin: 64,
-        softMax: 96,
-        fullFrac: 0.26,
-        fullMin: 170,
-        fullMax: 260
-    };
-
     function canPilotTeam(teamId) {
         if (typeof GameContext === 'undefined' || typeof teams === 'undefined') return null;
         const id = teamId || OpsRadial.teamId || (typeof uiCurrentTeamId === 'function' ? uiCurrentTeamId() : null);
@@ -164,61 +152,11 @@
         return t;
     }
 
-    function getNoseDragRadii() {
-        const shortSide = Math.min(window.innerWidth || 800, window.innerHeight || 600);
-        const softPx = Math.max(NOSE_DRAG.softMin, Math.min(NOSE_DRAG.softMax, shortSide * NOSE_DRAG.softFrac));
-        const fullPx = Math.max(NOSE_DRAG.fullMin, Math.min(NOSE_DRAG.fullMax, shortSide * NOSE_DRAG.fullFrac));
-        return { softPx, fullPx: Math.max(fullPx, softPx + 40) };
-    }
-
-    function mapDistToJoyMag(dist, softPx, fullPx) {
-        if (!(dist > 0)) return 0;
-        if (dist <= softPx) return (dist / softPx) * NOSE_DRAG.softJoy;
-        const span = Math.max(1, fullPx - softPx);
-        const t = Math.min(1, (dist - softPx) / span);
-        return NOSE_DRAG.softJoy + (1 - NOSE_DRAG.softJoy) * (t * t);
-    }
-
-    function mapScreenDragToJoy(dx, dy, mag, team) {
-        const dist = Math.hypot(dx, dy);
-        if (!(dist > 0.001) || !(mag > 0)) return { joyX: 0, joyY: 0 };
-        const cam = (typeof camera !== 'undefined') ? camera : null;
-        const quat = team && team.wrapper
-            ? (team.wrapper.userData.logicalQuat || team.wrapper.quaternion)
-            : null;
-        if (!cam || !quat || typeof THREE === 'undefined') {
-            return { joyX: (-dx / dist) * mag, joyY: (-dy / dist) * mag };
-        }
-        const camRight = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 0).normalize();
-        const camUp = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 1).normalize();
-        const camFwd = new THREE.Vector3();
-        cam.getWorldDirection(camFwd);
-        const desired = camRight.clone().multiplyScalar(dx).add(camUp.clone().multiplyScalar(-dy));
-        if (desired.lengthSq() < 1e-10) return { joyX: 0, joyY: 0 };
-        desired.normalize();
-        const bodyRight = new THREE.Vector3(1, 0, 0).applyQuaternion(quat);
-        const bodyUp = new THREE.Vector3(0, 1, 0).applyQuaternion(quat);
-        const rightScreen = bodyRight.clone().addScaledVector(camFwd, -bodyRight.dot(camFwd));
-        const upScreen = bodyUp.clone().addScaledVector(camFwd, -bodyUp.dot(camFwd));
-        if (rightScreen.lengthSq() < 1e-8 || upScreen.lengthSq() < 1e-8) {
-            return { joyX: (-dx / dist) * mag, joyY: (-dy / dist) * mag };
-        }
-        rightScreen.normalize();
-        upScreen.normalize();
-        let jx = desired.dot(rightScreen);
-        let jy = desired.dot(upScreen);
-        const len = Math.hypot(jx, jy);
-        if (len < 1e-6) return { joyX: 0, joyY: 0 };
-        return { joyX: (-jx / len) * mag, joyY: (jy / len) * mag };
-    }
-
-    function clampJoy(joyX, joyY) {
-        const len = Math.hypot(joyX, joyY);
-        if (len <= 1 || len < 1e-8) return { joyX, joyY };
-        return { joyX: joyX / len, joyY: joyY / len };
-    }
-
     function syncCockpitJoy(joyX, joyY) {
+        if (window.AirArenaNoseDrag && typeof window.AirArenaNoseDrag.syncCockpitJoy === 'function') {
+            window.AirArenaNoseDrag.syncCockpitJoy(joyX, joyY);
+            return;
+        }
         const joyZone = $('joystick-zone');
         const joyHandle = $('joystick-handle');
         if (!joyZone || !joyHandle) return;
@@ -277,6 +215,10 @@
     }
 
     function setOrbitLocked(locked) {
+        if (window.AirArenaNoseDrag && typeof window.AirArenaNoseDrag.setOrbitLocked === 'function') {
+            window.AirArenaNoseDrag.setOrbitLocked(locked, '_ghostSteerOrbitBackup');
+            return;
+        }
         if (typeof controls === 'undefined' || !controls) return;
         if (!controls.userData) controls.userData = {};
         if (locked) {
@@ -301,7 +243,8 @@
 
     function applyNoseDrag(clientX, clientY) {
         const t = canPilotTeam();
-        if (!t) return;
+        const nd = window.AirArenaNoseDrag;
+        if (!t || !nd) return;
         if (typeof camera !== 'undefined' && camera && camera.updateMatrixWorld) camera.updateMatrixWorld();
         const dx = clientX - GhostSteer.startX;
         const dy = clientY - GhostSteer.startY;
@@ -310,10 +253,10 @@
             syncCockpitJoy(GhostSteer.startJoyX, GhostSteer.startJoyY);
             return;
         }
-        const { softPx, fullPx } = getNoseDragRadii();
-        const mag = mapDistToJoyMag(dist, softPx, fullPx);
-        const delta = mapScreenDragToJoy(dx, dy, mag, t);
-        const next = clampJoy(GhostSteer.startJoyX + delta.joyX, GhostSteer.startJoyY + delta.joyY);
+        const { softPx, fullPx } = nd.getRadii();
+        const mag = nd.mapDistToJoyMag(dist, softPx, fullPx);
+        const delta = nd.mapScreenDragToJoy(dx, dy, mag, t);
+        const next = nd.clampJoyVector(GhostSteer.startJoyX + delta.joyX, GhostSteer.startJoyY + delta.joyY);
         if (!GameContext.stateMachine.setJoystickInput(t.id, next.joyX, next.joyY)) return;
         syncCockpitJoy(next.joyX, next.joyY);
         updateGhostJoyPip(next.joyX, next.joyY);
@@ -480,8 +423,6 @@
         GhostSteer.mode = null;
         GhostSteer.pointerId = null;
         GhostSteer.bankEnabled = false;
-        GhostSteer.freezeLeft = '';
-        GhostSteer.freezeTop = '';
         unbindGhostSteerWindow();
         setOrbitLocked(false);
         // Do NOT toggle isDraggingRollRing — that flag drives the classic cockpit
@@ -534,8 +475,6 @@
         GhostSteer.pointerId = e.pointerId;
         GhostSteer.anchorCx = cx;
         GhostSteer.anchorCy = cy;
-        GhostSteer.freezeLeft = hud.style.left || '';
-        GhostSteer.freezeTop = hud.style.top || '';
         GhostSteer.startAngle = ang0;
         GhostSteer.lastAngle = ang0;
         GhostSteer.accumRoll = startRoll;
@@ -700,9 +639,7 @@
         ensureGhostSteerTrack();
     }
 
-    /** Legacy 3D gizmo removed — interaction is the screen-space ghost-steer HUD. */
     function sync3dOverlays(team) {
-        if (OpsRadial._3d && OpsRadial._3d.gizmo) OpsRadial._3d.gizmo.visible = false;
         syncGhostSteerHud(team);
     }
 
@@ -720,14 +657,7 @@
         el.setAttribute('title', `HP ${Math.round(hp)}`);
     }
 
-    /** Legacy 3D ghost canvas retired — ALT/THR live under the screen roll ring. */
     function paintGhostThrottle(team) {
-        if (window.ghostCtx && window.ghostTex) {
-            window.ghostCtx.clearRect(0, 0, 128, 64);
-            window.ghostTex.needsUpdate = true;
-        }
-        if (window.ghostRing) window.ghostRing.visible = false;
-        if (window.ghostTextPlane) window.ghostTextPlane.visible = false;
         syncGhostSteerHud(team);
     }
 
@@ -1015,23 +945,6 @@
         if (!OpsRadial.open || !team) return;
 
         rebuildWedges(team);
-
-        // HTML labels retired — text lives inside SVG wedges (text | logo).
-        ['ops-label-flare', 'ops-label-chaff', 'ops-label-p1', 'ops-label-p2', 'ops-label-p3', 'ops-label-p4']
-            .forEach((id) => { const el = $(id); if (el) el.hidden = true; });
-
-        const pylons = Array.isArray(team.pylons) ? team.pylons : [];
-        [1, 2, 3, 4].forEach((n) => {
-            const hit = $(`ops-hit-p${n}`);
-            const p = pylons[n - 1];
-            if (hit) {
-                hit.hidden = !p;
-                hit.classList.toggle('is-empty', !!(p && p.state === 'empty'));
-                hit.classList.toggle('is-armed', !!(p && p.state === 'armed'));
-                hit.classList.toggle('is-powering', !!(p && p.state === 'powering'));
-            }
-        });
-
         syncHpRing(team);
 
         const ok = $('ops-radial-ok');
@@ -1122,15 +1035,6 @@
         anchor.style.bottom = 'auto';
         anchor.style.transform = 'translate(-50%, -50%)';
         layoutWeaponDetailPanel();
-    }
-
-    function startTrack() {
-        ensureGhostSteerTrack();
-    }
-
-    function stopTrack() {
-        if (OpsRadial._raf) cancelAnimationFrame(OpsRadial._raf);
-        OpsRadial._raf = 0;
     }
 
     function clickPylon(pylonId) {
@@ -1504,31 +1408,6 @@
             });
         }
 
-        const flare = $('ops-hit-flare');
-        if (flare) flare.addEventListener('click', (e) => {
-            e.preventDefault(); e.stopPropagation();
-            handleOpsAction('flare');
-        });
-        const gun = $('ops-hit-gun');
-        if (gun) gun.addEventListener('click', (e) => {
-            e.preventDefault(); e.stopPropagation();
-            handleOpsAction('gun');
-        });
-        const chaff = $('ops-hit-chaff');
-        if (chaff) chaff.addEventListener('click', (e) => {
-            e.preventDefault(); e.stopPropagation();
-            handleOpsAction('chaff');
-        });
-        [1, 2, 3, 4].forEach((n) => {
-            const hit = $(`ops-hit-p${n}`);
-            if (hit) hit.addEventListener('click', (e) => {
-                e.preventDefault(); e.stopPropagation();
-                handleOpsAction(`pylon-${n}`);
-            });
-        });
-
-        // Drag stick tip on 3D gizmo via pointer on canvas is handled in game pick layer later;
-        // HTML fallback: scroll wheel on radial adjusts throttle slightly.
         const ring = $('ops-radial-ring');
         if (ring) {
             ring.addEventListener('wheel', (e) => {

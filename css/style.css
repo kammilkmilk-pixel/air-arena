@@ -982,10 +982,6 @@ html.startup-lock body {
 .ops-wedge-text text {
     pointer-events: none;
 }
-/* Legacy HTML labels — content moved into SVG wedge halves */
-.ops-label {
-    display: none !important;
-}
 .ops-radial-rim {
     stroke: rgba(255,255,255,0.4);
     stroke-width: 1.25;
@@ -1046,30 +1042,6 @@ html.startup-lock body {
 .ops-radial-ok.is-ready { color: #fff; }
 .ops-radial-ok.is-ai { color: #9ad0ff; }
 .ops-radial-ok:disabled { opacity: 0.45; cursor: default; }
-
-.ops-wedge-hit {
-    position: absolute;
-    left: 50%;
-    top: 50%;
-    width: 88px;
-    height: 64px;
-    margin-left: -44px;
-    margin-top: -32px;
-    border: 0;
-    background: transparent;
-    color: transparent;
-    font-size: 0;
-    cursor: pointer;
-    pointer-events: auto;
-    z-index: 5;
-    /* Outer ring mid-radius ≈269; 700px / 640 viewBox */
-    transform: rotate(calc(var(--a0) + var(--span) / 2)) translateY(-294px) rotate(calc(-1 * (var(--a0) + var(--span) / 2)));
-}
-.ops-wedge-hit.is-empty {
-    opacity: 0.25;
-    pointer-events: none;
-    cursor: default;
-}
 
 /* Pylon weapon performance detail — fixed beside wedge (screen left/right) */
 .ops-weapon-detail {
@@ -1180,31 +1152,6 @@ html.startup-lock body {
     color: rgba(255,255,255,0.45);
     box-shadow: none;
 }
-.ops-label {
-    position: absolute;
-    left: 50%;
-    top: 50%;
-    width: 84px;
-    margin-left: -42px;
-    margin-top: 6px;
-    text-align: center;
-    color: #fff;
-    font-family: 'Courier New', monospace;
-    font-size: 8px;
-    font-weight: bold;
-    line-height: 1.15;
-    white-space: pre-line;
-    text-shadow: 0 1px 3px #000, 0 0 8px rgba(0,0,0,0.8);
-    pointer-events: none;
-    z-index: 1;
-}
-/* Labels sit just outside icon mid-arc */
-.ops-label-flare { transform: rotate(-22.5deg) translateY(-188px) rotate(22.5deg); }
-.ops-label-chaff { transform: rotate(22.5deg) translateY(-188px) rotate(-22.5deg); }
-.ops-label-p1 { transform: rotate(78.75deg) translateY(-188px) rotate(-78.75deg); }
-.ops-label-p2 { transform: rotate(146.25deg) translateY(-188px) rotate(-146.25deg); }
-.ops-label-p3 { transform: rotate(213.75deg) translateY(-188px) rotate(-213.75deg); }
-.ops-label-p4 { transform: rotate(281.25deg) translateY(-188px) rotate(-281.25deg); }
 
 /* On OK chord top edge — SMS only (HEAT/AP moved to roll grips) */
 #ops-tactical-strip {
@@ -1255,9 +1202,6 @@ html.startup-lock body {
         height: 357px;
         padding-bottom: 20px;
         font-size: 14px;
-    }
-    .ops-wedge-hit {
-        transform: rotate(calc(var(--a0) + var(--span) / 2)) translateY(-218px) rotate(calc(-1 * (var(--a0) + var(--span) / 2)));
     }
     .ops-weapon-detail { width: min(92vw, 280px); }
 }

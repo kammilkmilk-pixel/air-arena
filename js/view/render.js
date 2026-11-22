@@ -662,18 +662,6 @@ for (let i = 0; i < SPARK_STREAK_LIMIT; i++) {
 
 const threatEnvGroup = new THREE.Group(); scene.add(threatEnvGroup);
 window.ghostWrapper = new THREE.Group(); window.ghostWrapper.visible = false; scene.add(window.ghostWrapper);
-// Legacy under-ghost ring + canvas text retired — ALT/THR live on the screen-space steer HUD.
-const ringGeo1 = new THREE.RingGeometry(0.4, 0.45, 32);
-window.ghostRing = new THREE.Mesh(ringGeo1, new THREE.MeshBasicMaterial({color: 0xffffff, transparent: true, opacity: 0.4, side: THREE.DoubleSide, depthWrite: false}));
-window.ghostRing.rotation.x = Math.PI / 2; window.ghostRing.position.y = -0.08;
-window.ghostRing.visible = false;
-const ghostCanvas = document.createElement('canvas'); ghostCanvas.width = 128; ghostCanvas.height = 64;
-window.ghostCtx = ghostCanvas.getContext('2d'); window.ghostTex = new THREE.CanvasTexture(ghostCanvas);
-window.ghostTextPlane = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 0.75), new THREE.MeshBasicMaterial({map: window.ghostTex, transparent: true, side: THREE.DoubleSide, depthTest: false}));
-window.ghostTextPlane.position.set(0, 0.1, -0.5); window.ghostTextPlane.rotation.set(-Math.PI / 2, 0, Math.PI);
-window.ghostTextPlane.visible = false;
-
-window.ghostWrapper.add(window.ghostRing, window.ghostTextPlane);
 
 const trackMaterialRed = new THREE.MeshBasicMaterial({ color: 0xff0055, transparent: true, opacity: 0.65, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }); 
 const trackMaterialBlue = new THREE.MeshBasicMaterial({ color: 0x00bcd4, transparent: true, opacity: 0.65, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false });
@@ -1118,12 +1106,6 @@ function drawTrajectoryLine(teamObj) {
             window.ghostWrapper.add(window.ghostPlaneMesh);
         }
 
-        if (window.ghostRing) window.ghostRing.visible = false;
-        if (window.ghostTextPlane) window.ghostTextPlane.visible = false;
-        if (window.ghostCtx && window.ghostTex) {
-            window.ghostCtx.clearRect(0, 0, 128, 64);
-            window.ghostTex.needsUpdate = true;
-        }
         if (window.AirArenaOpsRadial && typeof window.AirArenaOpsRadial.syncGhostSteer === 'function') {
             try { window.AirArenaOpsRadial.syncGhostSteer(teamObj); } catch (_) { /* ignore */ }
         }
@@ -2185,9 +2167,9 @@ GameContext.three = {
     get ghost() {
         return {
             wrapper: window.ghostWrapper,
-            ring: window.ghostRing,
-            ctx: window.ghostCtx,
-            tex: window.ghostTex,
+            ring: null,
+            ctx: null,
+            tex: null,
             planeMesh: window.ghostPlaneMesh || null
         };
     }

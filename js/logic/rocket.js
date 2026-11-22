@@ -908,18 +908,12 @@
         }
         grp.visible = true;
 
-        // Keep 3D aim markers; drop RKT impact-range text overlay.
-        const hud = document.getElementById('rocket-aim-hud');
-        if (hud) hud.style.display = 'none';
-
         // Preview: idle glow in pod when rocket mode / queued salvo.
         syncPodMuzzleFlames(0, null, true);
     }
 
     function hideRocketAimPreview() {
         if (Rocket._aimGroup) Rocket._aimGroup.visible = false;
-        const hud = document.getElementById('rocket-aim-hud');
-        if (hud) hud.style.display = 'none';
         // Dim pod flames when leaving rocket aim.
         if (typeof teams !== 'undefined') {
             const ids = (typeof combatActiveIds === 'function') ? combatActiveIds() : Object.keys(teams);

@@ -734,15 +734,15 @@ function updateLcosGunHeatRing(team, coneCx = 50, coneCy = 50, coneR = 37.4, vis
         else if (typeof updateDashboardUI === 'function') updateDashboardUI(t);
     }
 
-    function setOrbitLockedForLcosDrag(locked) {
+    function setOrbitLocked(locked, backupKey = '_lcosOrbitBackup') {
         if (typeof controls === 'undefined' || !controls) return;
         if (!controls.userData) controls.userData = {};
         const touchLikely = ('ontouchstart' in window)
             || (navigator.maxTouchPoints > 0)
             || (window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
         if (locked) {
-            if (!controls.userData._lcosOrbitBackup) {
-                controls.userData._lcosOrbitBackup = {
+            if (!controls.userData[backupKey]) {
+                controls.userData[backupKey] = {
                     enableZoom: controls.enableZoom,
                     enablePan: controls.enablePan,
                     enableRotate: controls.enableRotate
@@ -751,15 +751,25 @@ function updateLcosGunHeatRing(team, coneCx = 50, coneCy = 50, coneR = 37.4, vis
             controls.enableZoom = false;
             controls.enablePan = false;
             controls.enableRotate = false;
-        } else if (controls.userData._lcosOrbitBackup) {
-            const b = controls.userData._lcosOrbitBackup;
+        } else if (controls.userData[backupKey]) {
+            const b = controls.userData[backupKey];
             // Touch devices keep zoom off permanently (browser pinch is the real hazard).
             controls.enableZoom = touchLikely ? false : (b.enableZoom !== false);
             controls.enablePan = b.enablePan !== false;
             controls.enableRotate = b.enableRotate !== false;
-            controls.userData._lcosOrbitBackup = null;
+            controls.userData[backupKey] = null;
         }
     }
+
+    window.AirArenaNoseDrag = {
+        DRAG_CONFIG: LCOS_DRAG,
+        getRadii: getDragRadii,
+        mapDistToJoyMag,
+        mapScreenDragToJoy,
+        clampJoyVector,
+        syncCockpitJoy: syncJoystickHandle,
+        setOrbitLocked
+    };
 
     function getLcosDragShield() {
         let shield = document.getElementById('lcos-drag-shield');
@@ -803,7 +813,7 @@ function updateLcosGunHeatRing(team, coneCx = 50, coneCy = 50, coneR = 37.4, vis
         const wasDrag = dragMoved;
         window.isDraggingLcosRing = false;
         activePointerId = null;
-        setOrbitLockedForLcosDrag(false);
+        setOrbitLocked(false, '_lcosOrbitBackup');
         setLcosDragShield(false);
         ['lcos-grab-ring', 'lcos-grab-hit'].forEach((id) => {
             const el = document.getElementById(id);
@@ -850,7 +860,7 @@ function updateLcosGunHeatRing(team, coneCx = 50, coneCy = 50, coneR = 37.4, vis
 
         window.isDraggingLcosRing = true;
         activePointerId = e.pointerId;
-        setOrbitLockedForLcosDrag(true);
+        setOrbitLocked(true, '_lcosOrbitBackup');
         setLcosDragShield(true);
         try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
         e.currentTarget.style.cursor = 'grabbing';

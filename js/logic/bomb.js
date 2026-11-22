@@ -231,40 +231,8 @@
         return g;
     }
 
-    function ensureHud() {
-        if (Bomb._previewHud) return Bomb._previewHud;
-        let el = document.getElementById('bomb-ccip-hud');
-        if (!el) {
-            el = document.createElement('div');
-            el.id = 'bomb-ccip-hud';
-            el.style.cssText = [
-                'position:absolute', 'left:50%', 'bottom:18%', 'transform:translateX(-50%)',
-                'z-index:7500', 'pointer-events:none', 'display:none',
-                'font:600 13px/1.3 Consolas,monospace', 'letter-spacing:0.04em',
-                'color:#dce88a', 'text-shadow:0 0 6px #223300,0 1px 2px #000',
-                'background:rgba(20,28,8,0.45)', 'padding:6px 12px', 'border:1px solid rgba(200,224,106,0.45)'
-            ].join(';');
-            document.body.appendChild(el);
-        }
-        Bomb._previewHud = el;
-        return el;
-    }
-
     function hideCcipPreview() {
         if (Bomb._previewGroup) Bomb._previewGroup.visible = false;
-        const hud = Bomb._previewHud || document.getElementById('bomb-ccip-hud');
-        if (hud) hud.style.display = 'none';
-        Bomb._lastCcipLine = null;
-        const opsSms = document.getElementById('ops-sms-text');
-        if (opsSms) opsSms.classList.remove('is-ccip');
-    }
-
-    function getCcipStatusLine() {
-        return Bomb._lastCcipLine || null;
-    }
-
-    function getCcipStatusColor() {
-        return Bomb._lastCcipColor || '#dce88a';
     }
 
     /** Update CCIP path + impact marker for human bomb mode. */
@@ -315,14 +283,6 @@
             Bomb._previewCross.position.y = (bombConfig().groundY != null ? Number(bombConfig().groundY) : 0) + 0.05;
         }
         grp.visible = true;
-
-        // Keep 3D path/impact markers; drop CCIP range/landing text overlays.
-        Bomb._lastCcipLine = null;
-        Bomb._lastCcipColor = null;
-        const hud = Bomb._previewHud || document.getElementById('bomb-ccip-hud');
-        if (hud) hud.style.display = 'none';
-        const opsSms = document.getElementById('ops-sms-text');
-        if (opsSms) opsSms.classList.remove('is-ccip');
         return path;
     }
 
@@ -640,8 +600,6 @@
     Bomb.updateCcipPreview = updateCcipPreview;
     Bomb.hideCcipPreview = hideCcipPreview;
     Bomb.clearBombVisuals = clearBombVisuals;
-    Bomb.getCcipStatusLine = getCcipStatusLine;
-    Bomb.getCcipStatusColor = getCcipStatusColor;
     Bomb.processBombDrops = processBombDrops;
     Bomb.resolveBombsForStep = resolveBombsForStep;
     Bomb.applyBombVisuals = applyBombVisuals;
