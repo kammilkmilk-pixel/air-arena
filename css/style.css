@@ -1086,17 +1086,23 @@ html.startup-lock body {
 .ops-label-p3 { transform: rotate(213.75deg) translateY(-188px) rotate(-213.75deg); }
 .ops-label-p4 { transform: rotate(281.25deg) translateY(-188px) rotate(-281.25deg); }
 
+/* On OK chord top edge (SVG y=412 → ~70.6% of 640 viewBox → ~494px on 700px ring) */
 #ops-tactical-strip {
-    width: 300px;
+    position: absolute;
+    left: 50%;
+    top: 70.6%;
+    transform: translate(-50%, -50%);
+    z-index: 4;
+    width: min(320px, 72%);
     display: grid;
-    grid-template-columns: 58px 1fr 58px;
-    gap: 4px;
+    grid-template-columns: 52px 1fr 52px;
+    gap: 3px;
     pointer-events: auto;
     background: rgba(0,0,0,0.82);
-    border: 1px solid rgba(255,255,255,0.18);
-    border-radius: 6px;
-    padding: 5px 6px;
-    box-shadow: 0 6px 18px rgba(0,0,0,0.45);
+    border: 1px solid rgba(255,255,255,0.22);
+    border-radius: 5px;
+    padding: 4px 6px;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.45);
     backdrop-filter: blur(8px);
     -webkit-backdrop-filter: blur(8px);
 }
@@ -1141,17 +1147,15 @@ html.startup-lock body {
     width: 100%;
     text-shadow: 0 0 6px rgba(255,235,59,0.35);
 }
-#ops-sms-text.is-ccip {
-    color: #dce88a;
-    letter-spacing: 0.03em;
-    text-shadow: 0 0 6px rgba(220, 232, 138, 0.45), 0 1px 2px #000;
-}
-
 @media (max-width: 720px) {
     .ops-panel-toggle { bottom: 168px !important; }
     #ops-radial-anchor { width: min(92vw, 520px); }
     #ops-radial-ring { width: min(92vw, 520px); height: min(92vw, 520px); }
-    #ops-tactical-strip { width: min(86vw, 280px); }
+    #ops-tactical-strip {
+        width: min(260px, 78%);
+        top: 70.6%;
+        grid-template-columns: 44px 1fr 44px;
+    }
     .ops-radial-ok {
         width: 357px;
         height: 357px;

@@ -414,6 +414,20 @@
                         d="M 104 412 L 456 412 A 220 220 0 0 1 104 412 Z"/>
                 </svg>
                 <button type="button" id="ops-radial-ok" class="ops-radial-ok" title="確認交戰">OK</button>
+                <!-- Tactical computer sits on the OK chord top edge (center) -->
+                <div id="ops-tactical-strip">
+                    <div class="ops-tac-side" id="ops-tac-heat" title="引擎溫度">
+                        <span class="ops-tac-k">HEAT</span>
+                        <span class="ops-tac-v" id="ops-val-heat">150°</span>
+                    </div>
+                    <div class="ops-tac-screen" id="ops-tac-screen" title="戰術電腦">
+                        <div id="ops-sms-text">狀態 [就緒]</div>
+                    </div>
+                    <div class="ops-tac-side" id="ops-tac-ap" title="AP">
+                        <span class="ops-tac-k">AP</span>
+                        <span class="ops-tac-v" id="ops-val-ap">0</span>
+                    </div>
+                </div>
                 <button type="button" class="ops-wedge-hit" data-ops="flare" id="ops-hit-flare" style="--a0:-45deg;--span:45deg" title="FLARE">FL</button>
                 <button type="button" class="ops-wedge-hit" data-ops="chaff" id="ops-hit-chaff" style="--a0:0deg;--span:45deg" title="CHAFF">CH</button>
                 <button type="button" class="ops-wedge-hit" data-ops="pylon-1" id="ops-hit-p1" style="--a0:45deg;--span:67.5deg" title="PYLON 1">1</button>
@@ -426,19 +440,6 @@
                 <div class="ops-label ops-label-p2" id="ops-label-p2">P2</div>
                 <div class="ops-label ops-label-p3" id="ops-label-p3">P3</div>
                 <div class="ops-label ops-label-p4" id="ops-label-p4">P4</div>
-            </div>
-            <div id="ops-tactical-strip">
-                <div class="ops-tac-side" id="ops-tac-heat" title="引擎溫度">
-                    <span class="ops-tac-k">HEAT</span>
-                    <span class="ops-tac-v" id="ops-val-heat">150°</span>
-                </div>
-                <div class="ops-tac-screen" id="ops-tac-screen" title="戰術電腦">
-                    <div id="ops-sms-text">狀態 [就緒]</div>
-                </div>
-                <div class="ops-tac-side" id="ops-tac-ap" title="AP">
-                    <span class="ops-tac-k">AP</span>
-                    <span class="ops-tac-v" id="ops-val-ap">0</span>
-                </div>
             </div>
         </div>
         <!-- Weapon performance detail — fixed beside the pressed pylon (screen L/R) -->

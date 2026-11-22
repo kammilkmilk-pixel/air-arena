@@ -869,7 +869,6 @@
         }
 
         const ammo = ensurePodAmmo(pod);
-        const max = Number(pod.ammoMax) || roundsPerPod();
         const salvo = Math.min(salvoPerTurn(), ammo);
         const stepsPerTurn = (typeof CONFIG !== 'undefined' && CONFIG.rules && CONFIG.rules.stepsPerTurn)
             ? Number(CONFIG.rules.stepsPerTurn) : 100;
@@ -879,7 +878,6 @@
         const grp = ensureAimVisuals(Math.max(salvo, 3));
         if (!grp) return;
 
-        const impactSummaries = [];
         for (let i = 0; i < Rocket._aimSlots.length; i++) {
             const slot = Rocket._aimSlots[i];
             const show = i < salvo;
@@ -907,33 +905,12 @@
             slot.cross.position.y = groundY + 0.05 + i * 0.01;
             slot.pip.position.copy(rel.pos);
 
-            impactSummaries.push({
-                i: i + 1,
-                step: launchStep,
-                range: team.wrapper ? team.wrapper.position.distanceTo(pred.impact) : NaN
-            });
         }
         grp.visible = true;
 
-        let hud = document.getElementById('rocket-aim-hud');
-        if (!hud) {
-            hud = document.createElement('div');
-            hud.id = 'rocket-aim-hud';
-            hud.style.cssText = [
-                'position:absolute', 'left:50%', 'bottom:18%', 'transform:translateX(-50%)',
-                'z-index:7500', 'pointer-events:none',
-                'font:600 13px/1.3 Consolas,monospace', 'color:#ffb07a',
-                'text-shadow:0 0 6px #401800,0 1px 2px #000',
-                'background:rgba(40,18,8,0.45)', 'padding:6px 12px',
-                'border:1px solid rgba(255,153,102,0.45)'
-            ].join(';');
-            document.body.appendChild(hud);
-        }
-        const ranges = impactSummaries
-            .map((s) => (Number.isFinite(s.range) ? `${s.range.toFixed(0)}m@${s.step}fr` : `—@${s.step}fr`))
-            .join('  ');
-        hud.innerText = `RKT VT  ${ammo}/${max}  ·  ${salvo}彈著  ${ranges}  ·  ENT 齊射`;
-        hud.style.display = 'block';
+        // Keep 3D aim markers; drop RKT impact-range text overlay.
+        const hud = document.getElementById('rocket-aim-hud');
+        if (hud) hud.style.display = 'none';
 
         // Preview: idle glow in pod when rocket mode / queued salvo.
         syncPodMuzzleFlames(0, null, true);

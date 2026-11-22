@@ -316,30 +316,13 @@
         }
         grp.visible = true;
 
-        const hud = ensureHud();
-        const range = path.impact && team.wrapper
-            ? team.wrapper.position.distanceTo(path.impact)
-            : NaN;
-        const fall = path.hitGround ? `${path.steps}fr` : 'NO IMPACT';
-        const line = Number.isFinite(range)
-            ? `CCIP  ${range.toFixed(0)}m  ·  ${fall}  ·  ENT 投放`
-            : `CCIP  —  ·  ENT 投放`;
-        Bomb._lastCcipLine = line;
-        Bomb._lastCcipColor = '#dce88a';
-        hud.innerText = line;
-        // Prefer ops radial tactical strip when that HUD is open; keep floating bar as fallback.
-        const opsOpen = !!(window.AirArenaOpsRadial && window.AirArenaOpsRadial.isOpen
-            && window.AirArenaOpsRadial.isOpen());
+        // Keep 3D path/impact markers; drop CCIP range/landing text overlays.
+        Bomb._lastCcipLine = null;
+        Bomb._lastCcipColor = null;
+        const hud = Bomb._previewHud || document.getElementById('bomb-ccip-hud');
+        if (hud) hud.style.display = 'none';
         const opsSms = document.getElementById('ops-sms-text');
-        if (opsOpen && opsSms) {
-            opsSms.textContent = line;
-            opsSms.style.color = '#dce88a';
-            opsSms.classList.add('is-ccip');
-            hud.style.display = 'none';
-        } else {
-            hud.style.display = 'block';
-            if (opsSms) opsSms.classList.remove('is-ccip');
-        }
+        if (opsSms) opsSms.classList.remove('is-ccip');
         return path;
     }
 
