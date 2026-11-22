@@ -19,7 +19,9 @@
         open: false,
         focus: null, // 'aircraft' | 'ghost'
         teamId: null,
-        _raf: 0
+        _raf: 0,
+        _outsideBound: false,
+        _outsideArmAt: 0 // ignore outside closes until after the opening pick settles
     };
 
     function $(id) { return document.getElementById(id); }
@@ -643,6 +645,51 @@
         OpsRadial._raf = requestAnimationFrame(tick);
     }
 
+    function isOpsRingChrome(el) {
+        if (!el || !el.closest) return false;
+        if (el.closest('#ops-radial-ring')) return true;
+        if (el.closest('#ops-weapon-detail')) return true;
+        return false;
+    }
+
+    /** True when the pointer is inside the circular footprint of the weapon ring. */
+    function isInsideOpsRingFootprint(clientX, clientY) {
+        const ring = $('ops-radial-ring');
+        if (!ring) return false;
+        const rect = ring.getBoundingClientRect();
+        const cx = rect.left + rect.width / 2;
+        const cy = rect.top + rect.height / 2;
+        const r = Math.min(rect.width, rect.height) * 0.5;
+        return Math.hypot(clientX - cx, clientY - cy) <= r;
+    }
+
+    function onOpsOutsidePointerDown(e) {
+        if (!OpsRadial.open) return;
+        if (Date.now() < OpsRadial._outsideArmAt) return;
+        // Only primary button / touch; ignore while ghost-steer / LCOS drag is active.
+        if (e.button != null && e.button !== 0) return;
+        if (window.isDraggingGhostSteer || window.isDraggingLcosRing) return;
+        if (isOpsRingChrome(e.target)) return;
+        // Hollow center / gaps have pointer-events:none — still treat as "inside the ring".
+        if (isInsideOpsRingFootprint(e.clientX, e.clientY)) return;
+        setOpen(false);
+    }
+
+    function bindOpsOutsideClose(enable) {
+        if (enable) {
+            if (!OpsRadial._outsideBound) {
+                window.addEventListener('pointerdown', onOpsOutsidePointerDown, true);
+                OpsRadial._outsideBound = true;
+            }
+            // Opening pick arrives in the same gesture — arm after it settles.
+            OpsRadial._outsideArmAt = Date.now() + 320;
+        } else if (OpsRadial._outsideBound) {
+            window.removeEventListener('pointerdown', onOpsOutsidePointerDown, true);
+            OpsRadial._outsideBound = false;
+            OpsRadial._outsideArmAt = 0;
+        }
+    }
+
     function setOpen(open, focus, teamId) {
         OpsRadial.open = !!open;
         OpsRadial.focus = focus || null;
@@ -657,7 +704,9 @@
             setClassicCollapsed(true);
             refresh();
             ensureGhostSteerTrack();
+            bindOpsOutsideClose(true);
         } else {
+            bindOpsOutsideClose(false);
             hideWeaponDetail();
             const o = OpsRadial._3d;
             if (o && o.gizmo) o.gizmo.visible = false;
@@ -1264,8 +1313,15 @@
             if (teamId && typeof selectTeam === 'function') {
                 try { selectTeam(teamId); } catch (_) { /* ignore */ }
             }
+            const before = !!(teams && teams[teamId] && teams[teamId].wpnQueued);
             if (typeof uiToggleWeaponFireQueue === 'function') uiToggleWeaponFireQueue(teamId);
             const t = teams && teams[teamId];
+            const queued = !!(t && t.wpnQueued);
+            // After choosing fire (newly queued), dismiss the weapon ring.
+            if (queued && !before) {
+                setOpen(false);
+                return;
+            }
             syncWeaponDetail(t);
             refresh(t);
         });
