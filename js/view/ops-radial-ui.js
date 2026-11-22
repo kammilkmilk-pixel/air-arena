@@ -670,9 +670,24 @@
             ap.textContent = `${Math.round(Math.max(0, baseAp - cost))}`;
         }
         if (sms) {
-            const src = $('sms-text-content');
-            sms.textContent = (src && src.innerText) ? src.innerText : '狀態 [就緒]';
-            sms.style.color = (src && src.style.color) ? src.style.color : '#ffeb3b';
+            // Bomb CCIP fire-control line belongs in HEAT | text | AP when active.
+            const ccipLine = (team.weapon === 'bomb'
+                && typeof AirArenaBomb !== 'undefined'
+                && typeof AirArenaBomb.getCcipStatusLine === 'function')
+                ? AirArenaBomb.getCcipStatusLine()
+                : null;
+            if (ccipLine) {
+                sms.textContent = ccipLine;
+                sms.style.color = (typeof AirArenaBomb.getCcipStatusColor === 'function')
+                    ? AirArenaBomb.getCcipStatusColor()
+                    : '#dce88a';
+                sms.classList.add('is-ccip');
+            } else {
+                const src = $('sms-text-content');
+                sms.textContent = (src && src.innerText) ? src.innerText : '狀態 [就緒]';
+                sms.style.color = (src && src.style.color) ? src.style.color : '#ffeb3b';
+                sms.classList.remove('is-ccip');
+            }
         }
 
         sync3dOverlays(team);

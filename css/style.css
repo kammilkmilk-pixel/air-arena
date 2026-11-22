@@ -1010,6 +1010,11 @@ html.startup-lock body {
     width: 100%;
     text-shadow: 0 0 6px rgba(255,235,59,0.35);
 }
+#ops-sms-text.is-ccip {
+    color: #dce88a;
+    letter-spacing: 0.03em;
+    text-shadow: 0 0 6px rgba(220, 232, 138, 0.45), 0 1px 2px #000;
+}
 
 @media (max-width: 720px) {
     .ops-panel-toggle { bottom: 168px !important; }
