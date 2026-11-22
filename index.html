@@ -334,14 +334,14 @@
                     </g>
                 </g>
             </g>
-            <!-- Roll hit = thickened ring stroke -->
+            <!-- Nose grab (kept inside visual ring so it cannot steal outer-ring hits) -->
+            <circle id="ghost-grab-hit" cx="70" cy="70" r="26" fill="rgba(255,255,255,0.02)" style="cursor:grab"/>
+            <circle id="ghost-grab-ring" cx="70" cy="70" r="32" fill="none" stroke="#ffffff" stroke-width="2.4"/>
+            <circle id="ghost-joy-pip" cx="70" cy="70" r="3.2" fill="#ffeb3b"/>
+            <!-- Roll hit last: thickened stroke wins over nose disk at the periphery -->
             <circle id="ghost-roll-hit" cx="70" cy="70" r="62" fill="none"
                 stroke="rgba(255,255,255,0.01)" stroke-width="22"
                 style="cursor:grab; pointer-events: stroke;"/>
-            <!-- Nose grab ring -->
-            <circle id="ghost-grab-hit" cx="70" cy="70" r="40" fill="rgba(255,255,255,0.02)" style="cursor:grab"/>
-            <circle id="ghost-grab-ring" cx="70" cy="70" r="32" fill="none" stroke="#ffffff" stroke-width="2.4"/>
-            <circle id="ghost-joy-pip" cx="70" cy="70" r="3.2" fill="#ffeb3b"/>
         </svg>
         <div id="ghost-steer-meta" class="ghost-steer-meta">
             <div id="ghost-steer-alt" class="ghost-steer-alt">ALT —</div>

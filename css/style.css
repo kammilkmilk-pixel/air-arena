@@ -798,6 +798,10 @@ html.startup-lock body {
 #ghost-steer-hud.is-throttle-dragging #ghost-grab-ring {
     pointer-events: none !important;
 }
+/* During ring/handle drag the HUD screen position is frozen in JS; keep hit targets stable. */
+#ghost-steer-hud.is-drag-frozen {
+    will-change: auto;
+}
 .ghost-steer-meta {
     position: absolute;
     left: 50%;
