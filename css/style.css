@@ -815,7 +815,7 @@ html.startup-lock body {
     left: 50%;
     top: 55%;
     bottom: auto;
-    width: 360px;
+    width: 420px;
     transform: translate(-50%, -50%);
     pointer-events: none;
     display: flex;
@@ -826,8 +826,8 @@ html.startup-lock body {
 }
 #ops-radial-ring {
     position: relative;
-    width: 360px;
-    height: 360px;
+    width: 420px;
+    height: 420px;
     /* Hollow center must not steal hits from ghost-steer / 3D behind it */
     pointer-events: none;
 }
@@ -848,6 +848,11 @@ html.startup-lock body {
 }
 #ops-radial-wedges path.is-selected {
     filter: none;
+}
+.ops-wedge-icon {
+    pointer-events: none;
+    opacity: 0.95;
+    filter: drop-shadow(0 1px 2px rgba(0,0,0,0.85));
 }
 .ops-radial-rim {
     stroke: rgba(255,255,255,0.4);
@@ -921,20 +926,20 @@ html.startup-lock body {
     cursor: pointer;
     pointer-events: auto;
     z-index: 5;
-    /* Outer ring mid-radius ≈132; 360px widget */
-    transform: rotate(calc(var(--a0) + var(--span) / 2)) translateY(-170px) rotate(calc(-1 * (var(--a0) + var(--span) / 2)));
+    /* Outer ring mid-radius ≈146.5; 420px / 380 viewBox */
+    transform: rotate(calc(var(--a0) + var(--span) / 2)) translateY(-162px) rotate(calc(-1 * (var(--a0) + var(--span) / 2)));
 }
 .ops-label {
     position: absolute;
     left: 50%;
     top: 50%;
-    width: 78px;
-    margin-left: -39px;
-    margin-top: -18px;
+    width: 84px;
+    margin-left: -42px;
+    margin-top: 6px;
     text-align: center;
     color: #fff;
     font-family: 'Courier New', monospace;
-    font-size: 9px;
+    font-size: 8px;
     font-weight: bold;
     line-height: 1.15;
     white-space: pre-line;
@@ -942,12 +947,13 @@ html.startup-lock body {
     pointer-events: none;
     z-index: 1;
 }
-.ops-label-flare { transform: rotate(-22.5deg) translateY(-170px) rotate(22.5deg); }
-.ops-label-chaff { transform: rotate(22.5deg) translateY(-170px) rotate(-22.5deg); }
-.ops-label-p1 { transform: rotate(78.75deg) translateY(-170px) rotate(-78.75deg); }
-.ops-label-p2 { transform: rotate(146.25deg) translateY(-170px) rotate(-146.25deg); }
-.ops-label-p3 { transform: rotate(213.75deg) translateY(-170px) rotate(-213.75deg); }
-.ops-label-p4 { transform: rotate(281.25deg) translateY(-170px) rotate(-281.25deg); }
+/* Labels sit just outside icon mid-arc */
+.ops-label-flare { transform: rotate(-22.5deg) translateY(-188px) rotate(22.5deg); }
+.ops-label-chaff { transform: rotate(22.5deg) translateY(-188px) rotate(-22.5deg); }
+.ops-label-p1 { transform: rotate(78.75deg) translateY(-188px) rotate(-78.75deg); }
+.ops-label-p2 { transform: rotate(146.25deg) translateY(-188px) rotate(-146.25deg); }
+.ops-label-p3 { transform: rotate(213.75deg) translateY(-188px) rotate(-213.75deg); }
+.ops-label-p4 { transform: rotate(281.25deg) translateY(-188px) rotate(-281.25deg); }
 
 #ops-tactical-strip {
     width: 300px;
@@ -1007,18 +1013,18 @@ html.startup-lock body {
 
 @media (max-width: 720px) {
     .ops-panel-toggle { bottom: 168px !important; }
-    #ops-radial-anchor { width: 300px; }
-    #ops-radial-ring { width: 300px; height: 300px; }
+    #ops-radial-anchor { width: 340px; }
+    #ops-radial-ring { width: 340px; height: 340px; }
     #ops-tactical-strip { width: 240px; }
     .ops-wedge-hit {
-        transform: rotate(calc(var(--a0) + var(--span) / 2)) translateY(-142px) rotate(calc(-1 * (var(--a0) + var(--span) / 2)));
+        transform: rotate(calc(var(--a0) + var(--span) / 2)) translateY(-131px) rotate(calc(-1 * (var(--a0) + var(--span) / 2)));
     }
-    .ops-label-flare { transform: rotate(-22.5deg) translateY(-142px) rotate(22.5deg); }
-    .ops-label-chaff { transform: rotate(22.5deg) translateY(-142px) rotate(-22.5deg); }
-    .ops-label-p1 { transform: rotate(78.75deg) translateY(-142px) rotate(-78.75deg); }
-    .ops-label-p2 { transform: rotate(146.25deg) translateY(-142px) rotate(-146.25deg); }
-    .ops-label-p3 { transform: rotate(213.75deg) translateY(-142px) rotate(-213.75deg); }
-    .ops-label-p4 { transform: rotate(281.25deg) translateY(-142px) rotate(-281.25deg); }
+    .ops-label-flare { transform: rotate(-22.5deg) translateY(-152px) rotate(22.5deg); }
+    .ops-label-chaff { transform: rotate(22.5deg) translateY(-152px) rotate(-22.5deg); }
+    .ops-label-p1 { transform: rotate(78.75deg) translateY(-152px) rotate(-78.75deg); }
+    .ops-label-p2 { transform: rotate(146.25deg) translateY(-152px) rotate(-146.25deg); }
+    .ops-label-p3 { transform: rotate(213.75deg) translateY(-152px) rotate(-213.75deg); }
+    .ops-label-p4 { transform: rotate(281.25deg) translateY(-152px) rotate(-281.25deg); }
 }
 
 #wingman-order-hud {

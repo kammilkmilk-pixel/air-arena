@@ -7,9 +7,10 @@
     const SVG_CX = 140;
     const HP_R = 110;
     const HP_CIRC = 2 * Math.PI * HP_R;
-    // Outer pylon/CM ring: ~2× annulus area (was r 114–132).
+    // Outer pylon/CM ring: ~2× prior annulus area (was r 114–150 → 114–179).
     const WEDGE_R0 = 114;
-    const WEDGE_R1 = 150;
+    const WEDGE_R1 = 179;
+    const WEDGE_ICON_R = (WEDGE_R0 + WEDGE_R1) * 0.5;
 
     const OpsRadial = {
         open: false,
@@ -507,12 +508,45 @@
         return `M ${p0.x} ${p0.y} A ${r1} ${r1} 0 ${large} 1 ${p1.x} ${p1.y} L ${p2.x} ${p2.y} A ${r0} ${r0} 0 ${large} 0 ${p3.x} ${p3.y} Z`;
     }
 
+    function weaponIconKind(opsId, team, pylon) {
+        if (opsId === 'flare') return 'flare';
+        if (opsId === 'chaff') return 'chaff';
+        if (!pylon) return 'fox2';
+        const wt = (typeof pylonWeaponType === 'function')
+            ? pylonWeaponType(pylon)
+            : (pylon.weaponType || pylon.weapon || 'fox2');
+        if (wt === 'fox1' || wt === 'bomb' || wt === 'rocket' || wt === 'fox2') return wt;
+        return 'fox2';
+    }
+
+    /** Place white silhouette logo at wedge mid-arc (pointer-events none). */
+    function appendWeaponIcon(parent, kind, a0, a1) {
+        const NS = 'http://www.w3.org/2000/svg';
+        const mid = (a0 + a1) * 0.5;
+        const pt = polar(SVG_CX, SVG_CX, WEDGE_ICON_R, mid);
+        const ig = document.createElementNS(NS, 'g');
+        ig.setAttribute('class', 'ops-wedge-icon');
+        ig.setAttribute('transform', `translate(${pt.x.toFixed(2)} ${pt.y.toFixed(2)})`);
+        ig.style.pointerEvents = 'none';
+        const use = document.createElementNS(NS, 'use');
+        // Prefer href; keep xlink for older SVG engines (Three r128 era browsers).
+        use.setAttribute('href', `#ops-icon-${kind}`);
+        use.setAttributeNS('http://www.w3.org/1999/xlink', 'xlink:href', `#ops-icon-${kind}`);
+        use.setAttribute('x', '-11');
+        use.setAttribute('y', '-11');
+        use.setAttribute('width', '22');
+        use.setAttribute('height', '22');
+        ig.appendChild(use);
+        parent.appendChild(ig);
+    }
+
     function rebuildWedges(team) {
         const g = $('ops-radial-wedges');
         if (!g) return;
         while (g.firstChild) g.removeChild(g.firstChild);
-        const mk = (a0, a1, fill, id, selected) => {
-            const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        const NS = 'http://www.w3.org/2000/svg';
+        const mk = (a0, a1, fill, id, selected, iconKind) => {
+            const path = document.createElementNS(NS, 'path');
             path.setAttribute('d', wedgePath(a0, a1, WEDGE_R0, WEDGE_R1));
             path.setAttribute('fill', fill);
             path.setAttribute('stroke', selected ? 'rgba(255,255,255,0.85)' : 'rgba(255,255,255,0.28)');
@@ -521,12 +555,13 @@
             path.dataset.ops = id;
             if (selected) path.classList.add('is-selected');
             g.appendChild(path);
+            appendWeaponIcon(g, iconKind || 'fox2', a0, a1);
         };
         // Top 90° (−45…+45): flare then chaff. SVG 0° = up via polar helper.
         const flareArmed = !!(team && team.flaresArmed);
         const chaffArmed = !!(team && team.chaffArmed);
-        mk(-45, 0, wedgeColor(flareArmed ? 'active' : 'idle'), 'flare', flareArmed);
-        mk(0, 45, wedgeColor(chaffArmed ? 'active' : 'idle'), 'chaff', chaffArmed);
+        mk(-45, 0, wedgeColor(flareArmed ? 'active' : 'idle'), 'flare', flareArmed, 'flare');
+        mk(0, 45, wedgeColor(chaffArmed ? 'active' : 'idle'), 'chaff', chaffArmed, 'chaff');
         // Bottom 270°: four pylons (45 → 315)
         const pylons = (team && Array.isArray(team.pylons)) ? team.pylons : [];
         const spans = [
@@ -539,7 +574,8 @@
             const p = pylons[idx];
             const st = p && p.state;
             const selected = st === 'armed' || st === 'powering';
-            mk(a0, a1, wedgeColor(st), `pylon-${idx + 1}`, selected);
+            const kind = weaponIconKind(`pylon-${idx + 1}`, team, p);
+            mk(a0, a1, wedgeColor(st), `pylon-${idx + 1}`, selected, kind);
         });
     }
 
@@ -629,7 +665,7 @@
         const t = team || (teams && teams[OpsRadial.teamId]);
         const world = (t && t.wrapper) ? t.wrapper.position : null;
         const scr = projectWorldToScreen(world);
-        const half = 180; // ~half of 360px ring
+        const half = 210; // ~half of 420px ring
         if (!scr) {
             anchor.style.left = '50%';
             anchor.style.top = '55%';
