@@ -788,21 +788,29 @@ html.startup-lock body {
     pointer-events: auto;
 }
 #ghost-steer-hud .ghost-handle-stat-k {
-    fill: rgba(255, 255, 255, 0.55);
+    fill: rgba(255, 255, 255, 0.85);
     font-family: 'Courier New', monospace;
-    font-size: 7px;
-    letter-spacing: 0.6px;
+    font-size: 9px;
+    letter-spacing: 0.7px;
+    paint-order: stroke fill;
+    stroke: rgba(0, 0, 0, 0.92);
+    stroke-width: 3.2px;
+    stroke-linejoin: round;
 }
 #ghost-steer-hud .ghost-handle-stat-v {
     font-family: 'Courier New', monospace;
-    font-size: 11px;
+    font-size: 15px;
     font-weight: bold;
+    paint-order: stroke fill;
+    stroke: rgba(0, 0, 0, 0.95);
+    stroke-width: 4px;
+    stroke-linejoin: round;
 }
 #ghost-steer-hud .ghost-handle-stat-heat .ghost-handle-stat-v {
-    fill: #ff9800;
+    fill: #ffb74d;
 }
 #ghost-steer-hud .ghost-handle-stat-ap .ghost-handle-stat-v {
-    fill: #00bcd4;
+    fill: #4dd0e1;
 }
 #ghost-steer-hud #ghost-roll-hit {
     pointer-events: stroke;
