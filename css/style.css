@@ -676,6 +676,18 @@ html.startup-lock body {
     letter-spacing: 0.6px;
     color: #ffeb3b;
 }
+.lcos-wpn-name.is-clickable {
+    pointer-events: auto;
+    cursor: pointer;
+    padding: 1px 5px;
+    border-radius: 3px;
+    border: 1px solid rgba(255, 235, 59, 0.45);
+    background: rgba(0, 0, 0, 0.55);
+}
+.lcos-wpn-name.is-clickable:hover {
+    border-color: #fff;
+    background: rgba(30, 36, 48, 0.8);
+}
 .lcos-wpn-status {
     font-size: 11px;
     letter-spacing: 0.3px;
@@ -1109,6 +1121,59 @@ html.startup-lock body {
 }
 .ops-wpn-k { color: rgba(255,255,255,0.55); }
 .ops-wpn-v { color: #fff; font-weight: bold; }
+.ops-wpn-fuze {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+    margin: 0 0 8px;
+}
+.ops-wpn-fuze[hidden] { display: none !important; }
+.ops-fuze-btn {
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    background: rgba(255, 255, 255, 0.06);
+    color: rgba(255, 255, 255, 0.65);
+    font-family: 'Courier New', monospace;
+    font-size: 11px;
+    font-weight: bold;
+    padding: 6px 4px;
+    border-radius: 4px;
+    cursor: pointer;
+    letter-spacing: 0.3px;
+}
+.ops-fuze-btn:hover {
+    border-color: rgba(255, 255, 255, 0.5);
+    color: #fff;
+}
+.ops-fuze-btn[data-fuze="vt"].is-active {
+    border-color: rgba(77, 208, 225, 0.9);
+    background: rgba(0, 150, 180, 0.38);
+    color: #b2ebf2;
+    box-shadow: 0 0 8px rgba(0, 229, 255, 0.28);
+}
+.ops-fuze-btn[data-fuze="impact"].is-active {
+    border-color: rgba(255, 153, 102, 0.95);
+    background: rgba(210, 90, 30, 0.42);
+    color: #ffe0cc;
+    box-shadow: 0 0 8px rgba(255, 140, 70, 0.32);
+}
+.sms-fuze-btn {
+    border: 1px solid rgba(255, 255, 255, 0.35);
+    background: rgba(20, 28, 36, 0.85);
+    color: #80deea;
+    font-family: 'Courier New', monospace;
+    font-size: 11px;
+    font-weight: bold;
+    padding: 4px 7px;
+    margin-right: 4px;
+    border-radius: 4px;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+.sms-fuze-btn[hidden] { display: none !important; }
+.sms-fuze-btn.is-impact {
+    color: #ffab76;
+    border-color: rgba(255, 153, 102, 0.75);
+}
 .ops-wpn-fire {
     width: 100%;
     border: 1px solid rgba(255,255,255,0.2);

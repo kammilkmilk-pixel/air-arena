@@ -36,28 +36,30 @@
         return 'BRK';
     }
 
-    function pylonShortLabel(p) {
+    function pylonShortLabel(p, team) {
         if (!p) return '—';
         const wt = (typeof pylonWeaponType === 'function') ? pylonWeaponType(p) : p.weaponType;
         let w = 'F2';
+        let st = (p.state || 'standby').slice(0, 3).toUpperCase();
         if (wt === 'fox1') w = 'F1';
         else if (wt === 'bomb') w = 'BMB';
         else if (wt === 'rocket') {
             const ammo = (typeof AirArenaRocket !== 'undefined')
                 ? AirArenaRocket.ensurePodAmmo(p)
                 : (Number(p.ammo) || 0);
-            const max = Number(p.ammoMax) || 9;
+            const fuze = (typeof AirArenaRocket !== 'undefined' && typeof AirArenaRocket.getTeamFuzeMode === 'function')
+                ? AirArenaRocket.getTeamFuzeMode(team)
+                : ((team && team.rocketFuze === 'impact') ? 'impact' : 'vt');
             w = `R${ammo}`;
-            void max;
+            if (p.state !== 'empty') st = `${st}·${fuze === 'impact' ? 'IM' : 'VT'}`;
         }
-        const st = (p.state || 'standby').slice(0, 3).toUpperCase();
         return `P${p.id} ${w}\n${st}`;
     }
 
-    /** Two-line label for in-wedge text area (e.g. "P4 R2" / "STA"). */
-    function pylonWedgeLines(p) {
+    /** Two-line label for in-wedge text area (e.g. "P4 R2" / "ARM·VT"). */
+    function pylonWedgeLines(p, team) {
         if (!p) return ['—', ''];
-        const raw = pylonShortLabel(p).split('\n');
+        const raw = pylonShortLabel(p, team).split('\n');
         return [raw[0] || '—', raw[1] || ''];
     }
 
@@ -935,7 +937,7 @@
                 ? 'empty'
                 : (modeMatch ? st : ((st === 'armed' || st === 'powering') ? 'idle' : st));
             const kind = weaponIconKind(`pylon-${idx + 1}`, team, p);
-            mk(a0, a1, wedgeColor(colorState), `pylon-${idx + 1}`, selected, kind, pylonWedgeLines(p), empty);
+            mk(a0, a1, wedgeColor(colorState), `pylon-${idx + 1}`, selected, kind, pylonWedgeLines(p, team), empty);
         });
     }
 
@@ -1056,7 +1058,7 @@
         return { wt, cfg: table[wt] || table.fox2 || {} };
     }
 
-    function buildWeaponStatRows(p, wt, cfg) {
+    function buildWeaponStatRows(p, wt, cfg, team) {
         const rows = [];
         const st = (p && p.state) || '—';
         rows.push(['掛架', `P${p && p.id != null ? p.id : '—'} · ${String(st).toUpperCase()}`]);
@@ -1075,10 +1077,18 @@
                 ? AirArenaRocket.ensurePodAmmo(p)
                 : (Number(p && p.ammo) || 0);
             const max = Number(p && p.ammoMax) || cfg.roundsPerPod || 9;
+            const fuze = (typeof AirArenaRocket !== 'undefined' && typeof AirArenaRocket.getTeamFuzeMode === 'function')
+                ? AirArenaRocket.getTeamFuzeMode(team)
+                : ((team && team.rocketFuze === 'impact') ? 'impact' : 'vt');
             rows.push(['彈藥', `${ammo} / ${max}`]);
             if (cfg.salvoPerTurn != null) rows.push(['齊射', `${cfg.salvoPerTurn} / 回`]);
-            if (cfg.range != null) rows.push(['射程', `${cfg.range} m`]);
-            if (cfg.vtRadius != null) rows.push(['VT 引信', `${cfg.vtRadius} m`]);
+            rows.push(['引信', fuze === 'impact' ? 'IMPACT 撞擊對地' : 'VT 對空近發']);
+            if (fuze === 'vt') {
+                if (cfg.range != null) rows.push(['對空射程', `${cfg.range} m`]);
+                if (cfg.vtRadius != null) rows.push(['VT 半徑', `${cfg.vtRadius} m`]);
+            } else {
+                rows.push(['觸發', '觸地／建築／直擊']);
+            }
             if (cfg.blastRadius != null) rows.push(['爆震半徑', `${cfg.blastRadius} m`]);
         } else if (wt === 'bomb') {
             if (cfg.blastRadius != null) rows.push(['爆震半徑', `${cfg.blastRadius} m`]);
@@ -1185,7 +1195,9 @@
             return;
         }
 
+        const fuzeWrap = $('ops-wpn-fuze');
         if (OpsDetail.kind === 'gun') {
+            if (fuzeWrap) fuzeWrap.hidden = true;
             const cfg = (typeof CONFIG !== 'undefined' && CONFIG.weapons && CONFIG.weapons.gun)
                 ? CONFIG.weapons.gun
                 : {};
@@ -1234,11 +1246,24 @@
         const list = $('ops-wpn-stats');
         if (list) {
             list.innerHTML = '';
-            buildWeaponStatRows(p, wt, cfg).forEach(([k, v]) => {
+            buildWeaponStatRows(p, wt, cfg, t).forEach(([k, v]) => {
                 const li = document.createElement('li');
                 li.innerHTML = `<span class="ops-wpn-k">${k}</span><span class="ops-wpn-v">${v}</span>`;
                 list.appendChild(li);
             });
+        }
+        if (fuzeWrap) {
+            if (wt === 'rocket') {
+                fuzeWrap.hidden = false;
+                const curFuze = (typeof AirArenaRocket !== 'undefined' && typeof AirArenaRocket.getTeamFuzeMode === 'function')
+                    ? AirArenaRocket.getTeamFuzeMode(t)
+                    : (t.rocketFuze === 'impact' ? 'impact' : 'vt');
+                fuzeWrap.querySelectorAll('.ops-fuze-btn').forEach((btn) => {
+                    btn.classList.toggle('is-active', btn.getAttribute('data-fuze') === curFuze);
+                });
+            } else {
+                fuzeWrap.hidden = true;
+            }
         }
         const fire = $('ops-wpn-fire');
         if (fire) {
@@ -1364,6 +1389,25 @@
             e.preventDefault(); e.stopPropagation();
             hideWeaponDetail();
         });
+        const wpnFuze = $('ops-wpn-fuze');
+        if (wpnFuze) {
+            wpnFuze.addEventListener('click', (e) => {
+                const btn = e.target && e.target.closest ? e.target.closest('.ops-fuze-btn') : null;
+                if (!btn) return;
+                e.preventDefault();
+                e.stopPropagation();
+                const mode = btn.getAttribute('data-fuze');
+                const teamId = OpsRadial.teamId;
+                if (typeof window.uiToggleRocketFuze === 'function') {
+                    window.uiToggleRocketFuze(teamId, mode);
+                } else if (teamId && GameContext.stateMachine && typeof GameContext.stateMachine.setRocketFuze === 'function') {
+                    GameContext.stateMachine.setRocketFuze(teamId, mode);
+                }
+                const t = teams && teams[teamId];
+                syncWeaponDetail(t);
+                refresh(t);
+            });
+        }
         const wpnFire = $('ops-wpn-fire');
         if (wpnFire) wpnFire.addEventListener('click', (e) => {
             e.preventDefault(); e.stopPropagation();

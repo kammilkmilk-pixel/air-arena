@@ -42,6 +42,7 @@ assert(cfg.seats['blue-1'].control === 'human', 'blue human');
 const rktSeat = {
     throttle: 4.5,
     weapon: 'rocket',
+    rocketFuze: 'impact',
     queuedAction: 'rocket',
     wpnQueued: true,
     pylons: [
@@ -51,9 +52,11 @@ const rktSeat = {
 };
 const rktIntent = Proto.buildTurnIntent('blue', rktSeat, 5);
 assert(rktIntent.pylons[1].ammo === 6 && rktIntent.pylons[1].ammoMax === 9, 'rocket ammo in intent');
+assert(rktIntent.rocketFuze === 'impact', 'rocketFuze in intent');
 const hostSeat = {
     isDestroyed: false,
     matchActive: true,
+    rocketFuze: 'vt',
     pylons: [
         { id: 1, weaponType: 'bomb', state: 'standby' },
         { id: 4, weaponType: 'rocket', state: 'standby', ammo: 9, ammoMax: 9 }
@@ -68,6 +71,7 @@ const mockGC = {
         setThrottle: (_id, v) => { hostSeat.throttle = v; },
         setJoystickInput: () => {},
         setRollInput: () => {},
+        setRocketFuze: (_id, f) => { hostSeat.rocketFuze = f; return f; },
         setWeaponMode: (_id, w) => { hostSeat.weapon = w; },
         setWingmanOrder: () => {},
         toggleRocketQueue: () => { toggledRkt++; hostSeat.queuedAction = 'rocket'; hostSeat.wpnQueued = true; },
@@ -78,6 +82,7 @@ const mockGC = {
 };
 assert(Proto.applyTurnIntent('blue', rktIntent, { GameContext: mockGC }), 'apply rocket intent');
 assert(toggledRkt === 1 && hostSeat.queuedAction === 'rocket' && hostSeat.pylons[1].ammo === 6, 'rocket queued + ammo synced');
+assert(hostSeat.rocketFuze === 'impact', 'rocketFuze synced on host');
 const bombIntent = Proto.buildTurnIntent('blue', {
     weapon: 'bomb',
     queuedAction: 'bomb',

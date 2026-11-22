@@ -17,6 +17,23 @@
         return type === 'rocket';
     }
 
+    function sanitizeFuzeMode(mode) {
+        if (mode === 'impact') return 'impact';
+        if (mode === 'vt') return 'vt';
+        return rocketConfig().defaultFuze === 'impact' ? 'impact' : 'vt';
+    }
+
+    function getTeamFuzeMode(team) {
+        return sanitizeFuzeMode(team && team.rocketFuze);
+    }
+
+    function setTeamFuzeMode(team, mode) {
+        if (!team) return 'vt';
+        const next = sanitizeFuzeMode(mode);
+        team.rocketFuze = next;
+        return next;
+    }
+
     function roundsPerPod() {
         const n = Number(rocketConfig().roundsPerPod);
         return Number.isFinite(n) && n > 0 ? Math.floor(n) : 9;
@@ -204,30 +221,345 @@
         return { pos, quat, vel, ratio };
     }
 
-    /** Integrate until VT ground / impact; returns path samples + impact. */
-    function predictRocketImpact(origin, velocity, quatSeed) {
+    /**
+     * Integrate rocket trajectory for surface impact ('impact') or VT airburst ('vt').
+     * Checks ground plane and city building obstacles using contiguous 4-step segments.
+     */
+    function predictRocketImpact(origin, velocity, quatSeed, opts) {
         const knobs = ballisticKnobs();
         const cfg = rocketConfig();
+        const fuze = sanitizeFuzeMode(opts && opts.fuze);
         const vtGround = cfg.vtGroundHeight != null ? Number(cfg.vtGroundHeight) : 3.5;
         const pos = origin.clone();
         const vel = velocity.clone();
         const quat = (quatSeed && quatSeed.clone) ? quatSeed.clone() : new THREE.Quaternion();
         const points = [pos.clone()];
         let impact = null;
-        const maxSteps = cfg.maxFlightSteps != null ? Math.min(Number(cfg.maxFlightSteps), 240) : 160;
-        for (let i = 0; i < maxSteps; i++) {
+        let impactNormal = new THREE.Vector3(0, 1, 0);
+        let hitKind = 'air';
+        let grounded = false;
+        const maxSteps = cfg.maxFlightSteps != null ? Math.min(Number(cfg.maxFlightSteps), 220) : 180;
+        const hasObs = typeof obstacles !== 'undefined' && Array.isArray(obstacles) && obstacles.length > 0;
+        let segStart = pos.clone();
+
+        for (let i = 1; i <= maxSteps; i++) {
             const res = integrateRocketFrame(pos, vel, quat, knobs);
+
+            // Check obstacle collision every 4 steps (or on ground touch) over contiguous segment.
+            if (hasObs && (i % 4 === 0 || res.hitGround)) {
+                const segVec = new THREE.Vector3().subVectors(pos, segStart);
+                const segLen = segVec.length();
+                if (segLen > 1e-4) {
+                    const ray = new THREE.Raycaster(segStart, segVec.divideScalar(segLen), 0, segLen);
+                    const hits = ray.intersectObjects(obstacles, false);
+                    if (hits.length > 0) {
+                        impact = hits[0].point.clone();
+                        if (hits[0].face && hits[0].object) {
+                            impactNormal.copy(hits[0].face.normal)
+                                .transformDirection(hits[0].object.matrixWorld)
+                                .normalize();
+                        }
+                        points.push(impact.clone());
+                        hitKind = 'building';
+                        grounded = true;
+                        break;
+                    }
+                }
+                segStart.copy(pos);
+            }
+
             points.push(pos.clone());
-            if (res.hitGround || pos.y <= knobs.groundY + vtGround) {
+
+            if (res.hitGround) {
                 impact = pos.clone();
+                impactNormal.set(0, 1, 0);
+                hitKind = 'ground';
+                grounded = true;
+                break;
+            }
+            if (fuze === 'vt' && pos.y <= knobs.groundY + vtGround) {
+                impact = pos.clone();
+                impactNormal.set(0, 1, 0);
+                hitKind = 'vt_ground';
+                grounded = true;
                 break;
             }
         }
         if (!impact) impact = points[points.length - 1].clone();
-        return { points, impact };
+        return { points, impact, normal: impactNormal, hitKind, grounded };
+    }
+
+    function estimateEnemyAtStep(enemy, totalStep, stepsPerTurn) {
+        if (!enemy || !enemy.wrapper || enemy.isDestroyed) return null;
+        const spt = Math.max(1, Number(stepsPerTurn) || 100);
+        const turnDist = Number(enemy.flightLength) || ((Number(enemy.ap) || 120) * 0.015);
+        const stepDist = turnDist / spt;
+        if (enemy.pathPoints && enemy.pathPoints.length >= 2 && typeof getPosAt === 'function') {
+            if (totalStep <= spt) {
+                return getPosAt(Math.max(0, totalStep / spt), enemy.pathPoints).clone();
+            }
+            const n = enemy.pathPoints.length;
+            const pEnd = enemy.pathPoints[n - 1];
+            const pPrev = enemy.pathPoints[Math.max(0, n - 2)];
+            const tan = new THREE.Vector3().subVectors(pEnd, pPrev);
+            if (tan.lengthSq() > 1e-8) tan.normalize();
+            else tan.set(0, 0, 1).applyQuaternion(enemy.wrapper.quaternion).normalize();
+            return pEnd.clone().addScaledVector(tan, (totalStep - spt) * stepDist);
+        }
+        const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(enemy.wrapper.quaternion).normalize();
+        return enemy.wrapper.position.clone().addScaledVector(fwd, Math.max(0, totalStep) * stepDist);
+    }
+
+    /**
+     * Shared aim solver for both 3D preview and 2D LCOS pipper.
+     * - 'vt': simulates airburst corridor against enemy trajectory, CPA, and 6m VT trigger.
+     * - 'impact': simulates surface/building impact points and salvo impact centroid.
+     */
+    function computeRocketAimSolution(team, enemy) {
+        if (!team || !team.wrapper || team.isDestroyed) return null;
+        const pods = teamRocketPylons(team);
+        const armed = pods.filter((p) => p.state === 'armed' && ensurePodAmmo(p) > 0);
+        const pod = armed[0] || pods[0];
+        if (!pod) return null;
+
+        const fuze = getTeamFuzeMode(team);
+        const ammo = ensurePodAmmo(pod);
+        const salvo = Math.max(1, Math.min(salvoPerTurn(), ammo > 0 ? ammo : 1));
+        const cfg = rocketConfig();
+        const knobs = ballisticKnobs();
+        const stepsPerTurn = knobs.stepsPerTurn;
+        const vtR = cfg.vtRadius != null ? Number(cfg.vtRadius) : 6;
+        const blastR = cfg.blastRadius != null ? Number(cfg.blastRadius) : 8;
+        const airRange = cfg.range != null ? Number(cfg.range) : 120;
+        const fuseDelay = cfg.fuseDelaySteps != null ? Number(cfg.fuseDelaySteps) : 4;
+        const liveEnemy = (enemy && enemy.wrapper && !enemy.isDestroyed) ? enemy : null;
+
+        // Lightweight signature cache so 3D preview + 2D HUD share one solve per input state.
+        const tp = team.wrapper.position;
+        const ep = liveEnemy ? liveEnemy.wrapper.position : null;
+        const endPt = (team.pathPoints && team.pathPoints.length)
+            ? team.pathPoints[team.pathPoints.length - 1]
+            : tp;
+        const sig = [
+            team.id, fuze, pod.id, salvo,
+            tp.x.toFixed(2), tp.y.toFixed(2), tp.z.toFixed(2),
+            endPt.x.toFixed(2), endPt.y.toFixed(2), endPt.z.toFixed(2),
+            Number(team.joyX || 0).toFixed(3), Number(team.joyY || 0).toFixed(3),
+            Number(team.pendingRoll || team.roll || 0).toFixed(3), Number(team.throttle || 4).toFixed(2),
+            ep ? `${ep.x.toFixed(2)},${ep.y.toFixed(2)},${ep.z.toFixed(2)},${(liveEnemy.flightLength || 0).toFixed(2)}` : 'noE'
+        ].join('|');
+        if (Rocket._aimCache && Rocket._aimCache.sig === sig) {
+            return Rocket._aimCache.sol;
+        }
+
+        const shots = [];
+        let anyVtHit = false;
+
+        if (fuze === 'vt') {
+            const hasObs = typeof obstacles !== 'undefined' && Array.isArray(obstacles) && obstacles.length > 0;
+            const vtGround = cfg.vtGroundHeight != null ? Number(cfg.vtGroundHeight) : 3.5;
+            const maxAirDist = airRange * 1.15;
+            const maxSteps = cfg.maxFlightSteps != null ? Math.min(Number(cfg.maxFlightSteps), 180) : 150;
+
+            for (let i = 0; i < salvo; i++) {
+                const launchStep = Math.min(stepsPerTurn, launchStepForIndex(i));
+                const ratio = Math.min(1, launchStep / Math.max(1, stepsPerTurn));
+                const rel = estimateLaunchState(team, pod, {
+                    ratio,
+                    dispersion: dispersionForIndex(i)
+                });
+                const pos = rel.pos.clone();
+                const vel = rel.vel.clone();
+                const quat = rel.quat.clone();
+                const pts = [pos.clone()];
+                let flown = 0;
+                let segStart = pos.clone();
+
+                // Estimate slant distance from release point to enemy around intercept time.
+                const eAtLaunch = liveEnemy ? estimateEnemyAtStep(liveEnemy, launchStep, stepsPerTurn) : null;
+                const estFlightSteps = eAtLaunch
+                    ? Math.min(90, Math.round(rel.pos.distanceTo(eAtLaunch) / Math.max(0.25, vel.length() * knobs.dt)))
+                    : 45;
+                const eGuess = liveEnemy
+                    ? estimateEnemyAtStep(liveEnemy, launchStep + estFlightSteps, stepsPerTurn)
+                    : null;
+                const targetSlant = eGuess ? Math.max(12, Math.min(maxAirDist, rel.pos.distanceTo(eGuess))) : 68;
+
+                let cpaDist = Infinity;
+                let cpaPos = null;
+                let cpaQuat = quat.clone();
+                let cpaEnemyPos = null;
+                let gatePos = null;
+                let gateQuat = quat.clone();
+                let gateEnemyPos = null;
+                let vtHit = false;
+
+                for (let f = 1; f <= maxSteps; f++) {
+                    const before = pos.clone();
+                    const res = integrateRocketFrame(pos, vel, quat, knobs);
+                    flown += pos.distanceTo(before);
+
+                    if (hasObs && (f % 4 === 0 || res.hitGround)) {
+                        const segVec = new THREE.Vector3().subVectors(pos, segStart);
+                        const segLen = segVec.length();
+                        if (segLen > 1e-4) {
+                            const ray = new THREE.Raycaster(segStart, segVec.divideScalar(segLen), 0, segLen);
+                            const hits = ray.intersectObjects(obstacles, false);
+                            if (hits.length > 0) {
+                                pos.copy(hits[0].point);
+                                pts.push(pos.clone());
+                                break;
+                            }
+                        }
+                        segStart.copy(pos);
+                    }
+
+                    pts.push(pos.clone());
+
+                    const totalStep = launchStep + f;
+                    if (!gatePos && flown >= targetSlant) {
+                        gatePos = pos.clone();
+                        gateQuat = quat.clone();
+                        gateEnemyPos = liveEnemy ? estimateEnemyAtStep(liveEnemy, totalStep, stepsPerTurn) : null;
+                    }
+
+                    if (liveEnemy && f >= fuseDelay) {
+                        const ePos = estimateEnemyAtStep(liveEnemy, totalStep, stepsPerTurn);
+                        if (ePos) {
+                            const d = pos.distanceTo(ePos);
+                            if (d < cpaDist) {
+                                cpaDist = d;
+                                cpaPos = pos.clone();
+                                cpaQuat = quat.clone();
+                                cpaEnemyPos = ePos.clone();
+                            }
+                            if (d <= vtR && flown <= maxAirDist) {
+                                vtHit = true;
+                                anyVtHit = true;
+                                cpaDist = d;
+                                cpaPos = pos.clone();
+                                cpaQuat = quat.clone();
+                                cpaEnemyPos = ePos.clone();
+                                break;
+                            }
+                        }
+                    }
+
+                    if (res.hitGround || pos.y <= knobs.groundY + vtGround || flown >= maxAirDist) {
+                        break;
+                    }
+                }
+
+                const endPos = pts[pts.length - 1].clone();
+                if (!gatePos) {
+                    gatePos = endPos.clone();
+                    gateQuat = quat.clone();
+                    gateEnemyPos = liveEnemy
+                        ? estimateEnemyAtStep(liveEnemy, launchStep + pts.length, stepsPerTurn)
+                        : null;
+                }
+                const ringPos = vtHit ? cpaPos : (gatePos || cpaPos || endPos);
+                const ringQuat = vtHit ? cpaQuat : (gateQuat || cpaQuat || quat);
+
+                shots.push({
+                    launchPos: rel.pos,
+                    points: pts,
+                    ringPos,
+                    ringQuat,
+                    vtHit,
+                    cpaDist,
+                    cpaEnemyPos,
+                    gatePos,
+                    gateEnemyPos,
+                    grounded: true
+                });
+            }
+
+            const midIdx = Math.floor((shots.length - 1) * 0.5);
+            const lead = shots[midIdx] || shots[0];
+            const sol = {
+                fuze: 'vt',
+                salvo,
+                ammo,
+                vtRadius: vtR,
+                blastRadius: blastR,
+                rangeMax: airRange,
+                anyVtHit,
+                aimWorld: lead ? lead.gatePos : null,
+                targetEstWorld: lead ? lead.gateEnemyPos : null,
+                slantDist: (lead && lead.gatePos) ? lead.launchPos.distanceTo(lead.gatePos) : NaN,
+                bestCpaDist: shots.reduce((m, s) => Math.min(m, s.cpaDist), Infinity),
+                grounded: true,
+                shots
+            };
+            Rocket._aimCache = { sig, sol };
+            return sol;
+        }
+
+        // IMPACT fuze: true ground / building collision + salvo impact centroid.
+        const groundedImpacts = [];
+        let hitBuilding = false;
+        for (let i = 0; i < salvo; i++) {
+            const launchStep = Math.min(stepsPerTurn, launchStepForIndex(i));
+            const ratio = Math.min(1, launchStep / Math.max(1, stepsPerTurn));
+            const rel = estimateLaunchState(team, pod, {
+                ratio,
+                dispersion: dispersionForIndex(i)
+            });
+            const pred = predictRocketImpact(rel.pos, rel.vel, rel.quat, { fuze: 'impact' });
+            if (pred.grounded) {
+                groundedImpacts.push(pred.impact);
+                if (pred.hitKind === 'building') hitBuilding = true;
+            }
+            const ringQuat = new THREE.Quaternion().setFromUnitVectors(
+                new THREE.Vector3(0, 0, 1),
+                (pred.normal && pred.normal.lengthSq() > 1e-6) ? pred.normal : new THREE.Vector3(0, 1, 0)
+            );
+            shots.push({
+                launchPos: rel.pos,
+                points: pred.points,
+                impact: pred.impact,
+                normal: pred.normal,
+                ringPos: pred.impact,
+                ringQuat,
+                grounded: pred.grounded,
+                hitKind: pred.hitKind
+            });
+        }
+
+        let centroid = null;
+        if (groundedImpacts.length > 0) {
+            centroid = new THREE.Vector3();
+            groundedImpacts.forEach((p) => centroid.add(p));
+            centroid.multiplyScalar(1 / groundedImpacts.length);
+        }
+        const midShot = shots[Math.floor((shots.length - 1) * 0.5)] || shots[0];
+        const slantDist = (centroid && midShot)
+            ? midShot.launchPos.distanceTo(centroid)
+            : NaN;
+
+        const sol = {
+            fuze: 'impact',
+            salvo,
+            ammo,
+            vtRadius: vtR,
+            blastRadius: blastR,
+            rangeMax: airRange,
+            anyVtHit: false,
+            aimWorld: centroid,
+            targetEstWorld: null,
+            slantDist,
+            grounded: groundedImpacts.length > 0,
+            hitBuilding,
+            shots
+        };
+        Rocket._aimCache = { sig, sol };
+        return sol;
     }
 
     function pushRocketExplosionVfx(ctx, step, pos, cfg) {
+        if (!ctx || !ctx.log) return;
+        if (!ctx.log.vfxTriggers) ctx.log.vfxTriggers = [];
         const exScale = cfg.explosionScale != null ? Number(cfg.explosionScale) : 1.6;
         const flScale = cfg.flashScale != null ? Number(cfg.flashScale) : 2.0;
         const pfScale = cfg.puffScale != null ? Number(cfg.puffScale) : 1.4;
@@ -289,6 +621,7 @@
                 return;
             }
 
+            const fuze = getTeamFuzeMode(t);
             const fireCount = Math.min(salvoN, ensurePodAmmo(pod));
             const turn = Math.max(
                 1,
@@ -315,7 +648,8 @@
                     vel: new THREE.Vector3(),
                     quat: new THREE.Quaternion(),
                     exploded: false,
-                    vt: true
+                    fuze,
+                    vt: fuze === 'vt'
                 };
                 t.activeRockets.push(rocket);
                 ctx.log[`${id}RktTracks`][trackId] = [];
@@ -443,7 +777,30 @@
                 tracks[r.trackId].push({ pos: r.pos.clone(), quat: r.quat.clone() });
 
                 let fuse = hitSolid ? { reason: 'impact', victimId: null } : null;
-                if (!fuse) fuse = checkVtFuse(r, step, ratio, id, knobs);
+                if (!fuse) {
+                    const rFuze = r.fuze ? sanitizeFuzeMode(r.fuze) : (r.vt === false ? 'impact' : 'vt');
+                    if (rFuze === 'vt') {
+                        fuse = checkVtFuse(r, step, ratio, id, knobs);
+                    } else {
+                        // Impact fuze: no proximity or ground-height airburst; only direct body hit.
+                        const directR = cfg.impactDirectRadius != null ? Number(cfg.impactDirectRadius) : 1.8;
+                        const fuseDelay = cfg.fuseDelaySteps != null ? Number(cfg.fuseDelaySteps) : 4;
+                        const armedStep = (r.launchStep >= 0) ? (step >= r.launchStep + fuseDelay) : ((Number(r.ageSteps) || 0) >= fuseDelay);
+                        if (armedStep) {
+                            ids.forEach((vid) => {
+                                if (fuse || vid === id) return;
+                                const vt = teams[vid];
+                                if (!vt || vt.isDestroyed || !vt.pathPoints) return;
+                                const vPos = (typeof getPosAt === 'function')
+                                    ? getPosAt(ratio, vt.pathPoints)
+                                    : (vt.wrapper && vt.wrapper.position);
+                                if (vPos && r.pos.distanceTo(vPos) <= directR) {
+                                    fuse = { reason: 'impact_direct', victimId: vid };
+                                }
+                            });
+                        }
+                    }
+                }
                 if (!fuse && r.ageSteps >= maxFlight) fuse = { reason: 'timeout', victimId: null };
 
                 if (fuse) {
@@ -810,36 +1167,34 @@
             Rocket._aimSlots = [];
             scene.add(Rocket._aimGroup);
         }
-        const colors = [0xff9966, 0xffcc66, 0xff7755];
         while (Rocket._aimSlots.length < count) {
-            const idx = Rocket._aimSlots.length;
-            const color = colors[idx % colors.length];
+            const color = 0xff9966;
             const line = new THREE.Line(
                 new THREE.BufferGeometry(),
-                new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.75 })
+                new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.78 })
             );
+            // Unit-radius ring in XY plane (+Z normal) — scaled to vtRadius (6m) or blastRadius (8m).
             const ring = new THREE.Mesh(
-                new THREE.RingGeometry(0.55, 0.95, 20),
+                new THREE.RingGeometry(0.92, 1.0, 28),
                 new THREE.MeshBasicMaterial({
-                    color, transparent: true, opacity: 0.9,
+                    color, transparent: true, opacity: 0.85,
                     side: THREE.DoubleSide, depthWrite: false
                 })
             );
-            ring.rotation.x = -Math.PI / 2;
-            // Small cross at impact
+            // Surface impact cross (XY plane, aligned with ring normal)
             const cross = new THREE.LineSegments(
                 new THREE.BufferGeometry().setFromPoints([
-                    new THREE.Vector3(-1.2, 0.03, 0),
-                    new THREE.Vector3(1.2, 0.03, 0),
-                    new THREE.Vector3(0, 0.03, -1.2),
-                    new THREE.Vector3(0, 0.03, 1.2)
+                    new THREE.Vector3(-1.4, 0, 0.03),
+                    new THREE.Vector3(1.4, 0, 0.03),
+                    new THREE.Vector3(0, -1.4, 0.03),
+                    new THREE.Vector3(0, 1.4, 0.03)
                 ]),
                 new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.95 })
             );
             // Release pip along aircraft path
             const pip = new THREE.Mesh(
-                new THREE.SphereGeometry(0.04, 8, 8),
-                new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.85 })
+                new THREE.SphereGeometry(0.05, 8, 8),
+                new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9 })
             );
             Rocket._aimGroup.add(line, ring, cross, pip);
             Rocket._aimSlots.push({ line, ring, cross, pip });
@@ -848,8 +1203,9 @@
     }
 
     /**
-     * Aim preview: one impact per salvo rocket, launched mid-path at 0 / 33 / 66…
-     * Impacts move when the planned flight curve changes; each has slight dispersion.
+     * Dual-fuze 3D preview:
+     * - VT (air-to-air): cyan/red airburst trajectories + upright 6m VT proximity rings.
+     * - IMPACT (surface): orange trajectories to ground/buildings + 8m surface blast rings & crosses.
      */
     function updateRocketAimPreview(team) {
         if (!team || team.weapon !== 'rocket' || team.isDestroyed) {
@@ -860,51 +1216,74 @@
             hideRocketAimPreview();
             return;
         }
-        const pods = teamRocketPylons(team);
-        const armed = pods.filter((p) => p.state === 'armed' && ensurePodAmmo(p) > 0);
-        const pod = armed[0] || pods[0];
-        if (!pod) {
+        const enemy = (typeof combatEnemyOf === 'function')
+            ? combatEnemyOf(team.id)
+            : null;
+        const sol = computeRocketAimSolution(team, enemy);
+        if (!sol || !sol.shots || !sol.shots.length) {
+            hideRocketAimPreview();
+            return;
+        }
+        if (sol.ammo <= 0) {
             hideRocketAimPreview();
             return;
         }
 
-        const ammo = ensurePodAmmo(pod);
-        const salvo = Math.min(salvoPerTurn(), ammo);
-        const stepsPerTurn = (typeof CONFIG !== 'undefined' && CONFIG.rules && CONFIG.rules.stepsPerTurn)
-            ? Number(CONFIG.rules.stepsPerTurn) : 100;
-        const knobs = ballisticKnobs();
-        const groundY = knobs.groundY || 0;
-
-        const grp = ensureAimVisuals(Math.max(salvo, 3));
+        const grp = ensureAimVisuals(Math.max(sol.shots.length, 3));
         if (!grp) return;
+
+        const isVt = sol.fuze === 'vt';
+        const vtColors = [0x4dd0e1, 0x80deea, 0x26c6da];
+        const impColors = [0xff9966, 0xffbb66, 0xff7755];
 
         for (let i = 0; i < Rocket._aimSlots.length; i++) {
             const slot = Rocket._aimSlots[i];
-            const show = i < salvo;
+            const shot = sol.shots[i];
+            const show = !!shot;
             slot.line.visible = show;
             slot.ring.visible = show;
-            slot.cross.visible = show;
+            slot.cross.visible = false;
             slot.pip.visible = show;
             if (!show) continue;
 
-            const launchStep = Math.min(stepsPerTurn, launchStepForIndex(i));
-            const ratio = Math.min(1, launchStep / Math.max(1, stepsPerTurn));
-            const rel = estimateLaunchState(team, pod, {
-                ratio,
-                dispersion: dispersionForIndex(i)
-            });
-            const pred = predictRocketImpact(rel.pos, rel.vel, rel.quat);
-            const sample = pred.points.filter((_, idx) => idx % 2 === 0);
-            if (sample.length < 2) sample.push(rel.pos.clone(), pred.impact.clone());
-
+            const sample = shot.points.filter((_, idx) => idx % 2 === 0 || idx === shot.points.length - 1);
+            if (sample.length < 2 && shot.ringPos) {
+                sample.push(shot.launchPos.clone(), shot.ringPos.clone());
+            }
             slot.line.geometry.dispose();
             slot.line.geometry = new THREE.BufferGeometry().setFromPoints(sample);
-            slot.ring.position.copy(pred.impact);
-            slot.ring.position.y = groundY + 0.05 + i * 0.01;
-            slot.cross.position.copy(pred.impact);
-            slot.cross.position.y = groundY + 0.05 + i * 0.01;
-            slot.pip.position.copy(rel.pos);
+            slot.pip.position.copy(shot.launchPos);
 
+            if (isVt) {
+                const col = shot.vtHit ? 0xff0055 : vtColors[i % vtColors.length];
+                slot.line.material.color.setHex(col);
+                slot.line.material.opacity = shot.vtHit ? 0.95 : 0.68;
+                slot.pip.material.color.setHex(col);
+                slot.ring.material.color.setHex(col);
+                slot.ring.material.opacity = shot.vtHit ? 0.92 : 0.42;
+                slot.ring.scale.setScalar(sol.vtRadius);
+                if (shot.ringPos) slot.ring.position.copy(shot.ringPos);
+                if (shot.ringQuat) slot.ring.quaternion.copy(shot.ringQuat);
+                slot.cross.visible = false;
+            } else {
+                const col = impColors[i % impColors.length];
+                slot.line.material.color.setHex(col);
+                slot.line.material.opacity = 0.8;
+                slot.pip.material.color.setHex(col);
+                slot.ring.visible = !!shot.grounded;
+                slot.cross.visible = !!shot.grounded;
+                if (shot.grounded && shot.ringPos) {
+                    const lift = (shot.normal || new THREE.Vector3(0, 1, 0)).clone().multiplyScalar(0.06 + i * 0.01);
+                    slot.ring.position.copy(shot.ringPos).add(lift);
+                    slot.ring.quaternion.copy(shot.ringQuat);
+                    slot.ring.scale.setScalar(sol.blastRadius);
+                    slot.ring.material.color.setHex(col);
+                    slot.ring.material.opacity = 0.65;
+                    slot.cross.position.copy(shot.ringPos).add(lift);
+                    slot.cross.quaternion.copy(shot.ringQuat);
+                    slot.cross.material.color.setHex(col);
+                }
+            }
         }
         grp.visible = true;
 
@@ -930,6 +1309,7 @@
     /** Hide or dispose in-flight rocket meshes/ribbons (replay exit or match reset). */
     function clearRocketVisuals(opts) {
         const dispose = !!(opts && opts.dispose);
+        Rocket._aimCache = null;
         hideRocketAimPreview();
         if (!Rocket._flightMeshes) return;
         Object.keys(Rocket._flightMeshes).forEach((key) => {
@@ -952,6 +1332,9 @@
     }
 
     Rocket.isRocketType = isRocketType;
+    Rocket.sanitizeFuzeMode = sanitizeFuzeMode;
+    Rocket.getTeamFuzeMode = getTeamFuzeMode;
+    Rocket.setTeamFuzeMode = setTeamFuzeMode;
     Rocket.teamRocketPylons = teamRocketPylons;
     Rocket.ensurePodAmmo = ensurePodAmmo;
     Rocket.roundsPerPod = roundsPerPod;
@@ -961,6 +1344,8 @@
     Rocket.launchStepForIndex = launchStepForIndex;
     Rocket.armRocketPylons = armRocketPylons;
     Rocket.standbyRocketPylons = standbyRocketPylons;
+    Rocket.predictRocketImpact = predictRocketImpact;
+    Rocket.computeRocketAimSolution = computeRocketAimSolution;
     Rocket.processRocketSalvos = processRocketSalvos;
     Rocket.resolveRocketsForStep = resolveRocketsForStep;
     Rocket.applyRocketVisuals = applyRocketVisuals;

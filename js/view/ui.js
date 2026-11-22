@@ -3102,6 +3102,17 @@ document.addEventListener("DOMContentLoaded", () => {
         uiToggleWeaponFireQueue();
     });
 
+    const btnFuze = document.getElementById('sms-fuze-btn');
+    if (btnFuze) {
+        btnFuze.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (typeof window.uiToggleRocketFuze === 'function') {
+                window.uiToggleRocketFuze();
+            }
+        });
+    }
+
     // 戰術電腦中央：交戰開始 ▶／執行（等同席位「規劃中／待命中」）
     const btnSmsExec = document.getElementById('sms-exec-btn');
     if (btnSmsExec) {
@@ -3438,7 +3449,10 @@ function updateDashboardUI(teamObj) {
                     (typeof AirArenaRocket !== 'undefined' ? AirArenaRocket.salvoPerTurn() : 3),
                     ammo
                 );
-                wpnName = `火箭 VT ${ammo}/${max}`;
+                const fuze = (typeof AirArenaRocket !== 'undefined' && typeof AirArenaRocket.getTeamFuzeMode === 'function')
+                    ? AirArenaRocket.getTeamFuzeMode(teamObj)
+                    : (teamObj.rocketFuze === 'impact' ? 'impact' : 'vt');
+                wpnName = `火箭 ${fuze === 'impact' ? 'IMP' : 'VT'} ${ammo}/${max}`;
                 if (teamObj.wpnQueued && teamObj.queuedAction === 'rocket') statusText = `[齊射×${salvo}]`;
                 else statusText = (armedPod && armedPod.state === 'armed' && ammo > 0) ? '[就緒]' : '[未通電]';
             } else if (teamObj.weapon === 'missile') {
@@ -3462,6 +3476,19 @@ function updateDashboardUI(teamObj) {
             elSmsContent.style.color = teamObj.weapon === 'bomb'
                 ? '#c8e06a'
                 : (teamObj.weapon === 'rocket' ? '#ff9966' : '#ffeb3b');
+        }
+        const elFuzeBtn = document.getElementById('sms-fuze-btn');
+        if (elFuzeBtn) {
+            if (teamObj.weapon === 'rocket') {
+                const fuze = (typeof AirArenaRocket !== 'undefined' && typeof AirArenaRocket.getTeamFuzeMode === 'function')
+                    ? AirArenaRocket.getTeamFuzeMode(teamObj)
+                    : (teamObj.rocketFuze === 'impact' ? 'impact' : 'vt');
+                elFuzeBtn.hidden = false;
+                elFuzeBtn.textContent = fuze === 'impact' ? 'IMP' : 'VT';
+                elFuzeBtn.classList.toggle('is-impact', fuze === 'impact');
+            } else {
+                elFuzeBtn.hidden = true;
+            }
         }
     }
     uiUpdateSmsRadarLockWarn(teamObj);
@@ -3702,6 +3729,40 @@ function uiUpdateSmsRadarLockWarn(selfTeam) {
     return locked;
 }
 
+/** Toggle or explicitly set rocket pod fuze ('vt' airburst | 'impact' surface). */
+function uiToggleRocketFuze(teamId = null, explicitMode = null) {
+    const currentTeam = teamId || uiCurrentTeamId();
+    const t = teams[currentTeam];
+    if (!t || t.aiEnabled || GameContext.isAnimating() || GameContext.isReplayMode() || t.isDestroyed || t.ready) {
+        return null;
+    }
+    const sm = GameContext.stateMachine;
+    let next = null;
+    if (explicitMode === 'vt' || explicitMode === 'impact') {
+        next = (sm && typeof sm.setRocketFuze === 'function')
+            ? sm.setRocketFuze(currentTeam, explicitMode)
+            : (t.rocketFuze = explicitMode);
+    } else {
+        next = (sm && typeof sm.toggleRocketFuze === 'function')
+            ? sm.toggleRocketFuze(currentTeam)
+            : (t.rocketFuze = (t.rocketFuze === 'impact' ? 'vt' : 'impact'));
+    }
+    if (!next) return null;
+    showSMSAlert(
+        next === 'impact'
+            ? '💥 火箭引信：IMPACT 撞擊對地（觸地／建築引爆，瞄準環鎖定落點中心）'
+            : '🎯 火箭引信：VT 對空近發（6m 空爆，瞄準環套住預估框即命中）',
+        next === 'impact' ? '#ff9966' : '#4dd0e1'
+    );
+    updateDashboardUI(t);
+    uiRefreshPreview(t);
+    if (window.AirArenaOpsRadial && typeof window.AirArenaOpsRadial.refresh === 'function') {
+        try { window.AirArenaOpsRadial.refresh(t); } catch (_) { /* ignore */ }
+    }
+    return next;
+}
+window.uiToggleRocketFuze = uiToggleRocketFuze;
+
 /** Toggle gun fire / missile launch queue for the active human seat (SMS ENT + LCOS double-tap). */
 function uiToggleWeaponFireQueue(teamId = null) {
     const currentTeam = teamId || uiCurrentTeamId();
@@ -3749,14 +3810,18 @@ function uiToggleWeaponFireQueue(teamId = null) {
             : false;
         const ammo = pods[0] ? AirArenaRocket.ensurePodAmmo(pods[0]) : 0;
         const salvo = Math.min((typeof AirArenaRocket !== 'undefined' ? AirArenaRocket.salvoPerTurn() : 3), ammo);
+        const fuze = (typeof AirArenaRocket !== 'undefined' && typeof AirArenaRocket.getTeamFuzeMode === 'function')
+            ? AirArenaRocket.getTeamFuzeMode(t)
+            : (t.rocketFuze === 'impact' ? 'impact' : 'vt');
+        const fuzeLabel = fuze === 'impact' ? 'IMPACT 對地' : 'VT 對空';
         if (!ok && !wasQueued) {
             showSMSAlert(pods.length ? '🛑 火箭無法排程' : '🛑 無火箭就緒／彈藥耗盡', '#ff0055');
         } else {
             showSMSAlert(
                 wasQueued
                     ? '⚠️ 火箭齊射已取消'
-                    : `🚀 火箭齊射已排程 ×${salvo}（VT · ~1s 間隔）`,
-                wasQueued ? '#aaa' : '#ff9966'
+                    : `🚀 火箭齊射已排程 ×${salvo}（${fuzeLabel} · ~1s 間隔）`,
+                wasQueued ? '#aaa' : (fuze === 'impact' ? '#ff9966' : '#4dd0e1')
             );
         }
     } else {

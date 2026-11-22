@@ -920,6 +920,27 @@ GameContext.stateMachine = {
         return this.queueAction(teamId, 'rocket');
     },
 
+    /** Set rocket pod fuze ('vt' airburst | 'impact' surface). */
+    setRocketFuze(teamId, mode) {
+        const t = this.getTeamOrNull(teamId);
+        if (!t || t.isDestroyed || GameContext.isAnimating() || GameContext.isReplayMode() || t.ready) return null;
+        const next = mode === 'impact' ? 'impact' : 'vt';
+        t.rocketFuze = next;
+        if (typeof AirArenaRocket !== 'undefined' && typeof AirArenaRocket.setTeamFuzeMode === 'function') {
+            AirArenaRocket.setTeamFuzeMode(t, next);
+        }
+        return next;
+    },
+
+    toggleRocketFuze(teamId) {
+        const t = this.getTeamOrNull(teamId);
+        if (!t) return null;
+        const cur = (typeof AirArenaRocket !== 'undefined' && typeof AirArenaRocket.getTeamFuzeMode === 'function')
+            ? AirArenaRocket.getTeamFuzeMode(t)
+            : (t.rocketFuze === 'impact' ? 'impact' : 'vt');
+        return this.setRocketFuze(teamId, cur === 'vt' ? 'impact' : 'vt');
+    },
+
     toggleGunQueue(teamId) {
         const t = this.getTeamOrNull(teamId);
         if (!t || t.weapon !== 'gun') return false;

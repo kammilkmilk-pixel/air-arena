@@ -93,6 +93,7 @@
             pendingPitch: Number(t.pendingPitch) || 0,
             throttle: Number(t.throttle) || 2,
             weapon: t.weapon || 'gun',
+            rocketFuze: t.rocketFuze === 'impact' ? 'impact' : 'vt',
             queuedAction: t.queuedAction || 'none',
             wpnQueued: !!t.wpnQueued,
             flaresArmed: !!t.flaresArmed,
@@ -123,6 +124,13 @@
         if (typeof intent.roll === 'number') GC.stateMachine.setRollInput(teamId, intent.roll);
         if (intent.pendingYaw != null) t.pendingYaw = Number(intent.pendingYaw) || 0;
         if (intent.pendingPitch != null) t.pendingPitch = Number(intent.pendingPitch) || 0;
+        if (intent.rocketFuze === 'impact' || intent.rocketFuze === 'vt') {
+            if (typeof GC.stateMachine.setRocketFuze === 'function') {
+                GC.stateMachine.setRocketFuze(teamId, intent.rocketFuze);
+            } else {
+                t.rocketFuze = intent.rocketFuze;
+            }
+        }
         if (intent.weapon) GC.stateMachine.setWeaponMode(teamId, intent.weapon);
 
         if (Array.isArray(intent.pylons) && Array.isArray(t.pylons)) {

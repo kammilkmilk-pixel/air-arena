@@ -233,10 +233,14 @@ const CONFIG = {
             gravityScale: 0.55,
             substeps: 2,
             groundY: 0,
+            /** Default fuze mode: 'vt' (airburst proximity) | 'impact' (surface/direct hit). */
+            defaultFuze: 'vt',
             /** VT proximity fuse radius (m). */
             vtRadius: 6,
             /** Also VT-trigger when altitude below this (airburst near ground). */
             vtGroundHeight: 3.5,
+            /** Direct airframe collision radius (m) when fuze is 'impact'. */
+            impactDirectRadius: 1.8,
             fuseDelaySteps: 4,
             blastRadius: 8,
             explosionScale: 1.6,

@@ -42,6 +42,13 @@
                 </g>
                 <circle id="lcos-center-dot" cx="50" cy="52" r="1.4" fill="#e6c200"/>
             </g>
+            <g id="lcos-surface-reticle" style="display: none; pointer-events: none;" stroke="#ff9966" stroke-width="1.6" fill="none">
+                <line x1="38" y1="50" x2="45" y2="50"/>
+                <line x1="55" y1="50" x2="62" y2="50"/>
+                <line x1="50" y1="38" x2="50" y2="45"/>
+                <line x1="50" y1="55" x2="50" y2="62"/>
+                <circle id="lcos-surface-dot" cx="50" cy="50" r="2.0" fill="#ff9966" stroke="none"/>
+            </g>
         </svg>
         <div id="lcos-wpn-tag" class="lcos-wpn-tag" aria-hidden="true">
             <div class="lcos-wpn-name" id="lcos-wpn-name">—</div>
@@ -49,6 +56,21 @@
         </div>
     `;
     pipper.title = '拖曳調機頭｜雙擊開火／發射';
+    const wpnNameEl = pipper.querySelector('#lcos-wpn-name');
+    if (wpnNameEl) {
+        wpnNameEl.addEventListener('click', (e) => {
+            const activeId = (typeof GameContext !== 'undefined' && GameContext.getActiveTeamId)
+                ? GameContext.getActiveTeamId()
+                : null;
+            const t = activeId && typeof teams !== 'undefined' ? teams[activeId] : null;
+            if (!t || t.weapon !== 'rocket') return;
+            e.preventDefault();
+            e.stopPropagation();
+            if (typeof window.uiToggleRocketFuze === 'function') {
+                window.uiToggleRocketFuze(activeId);
+            }
+        });
+    }
 })();
 
 /** Weapon type + status to the left of the LCOS aiming ring. */
@@ -150,24 +172,60 @@ function updateLcosWeaponTag(team, opts = {}) {
             tone = 'bad';
         }
     } else if (wpn === 'rocket') {
-        name = 'RKT';
+        const fuze = (typeof AirArenaRocket !== 'undefined' && typeof AirArenaRocket.getTeamFuzeMode === 'function')
+            ? AirArenaRocket.getTeamFuzeMode(team)
+            : (team.rocketFuze === 'impact' ? 'impact' : 'vt');
+        name = fuze === 'impact' ? 'RKT·IMP ⇄' : 'RKT·VT ⇄';
         const pods = (typeof AirArenaRocket !== 'undefined') ? AirArenaRocket.teamRocketPylons(team) : [];
         const armedPod = pods.find((p) => p.state === 'armed') || null;
         const ammo = armedPod && typeof AirArenaRocket !== 'undefined'
             ? AirArenaRocket.ensurePodAmmo(armedPod) : 0;
         const anyAmmo = pods.some((p) => (typeof AirArenaRocket !== 'undefined' ? AirArenaRocket.ensurePodAmmo(p) : (p.ammo || 0)) > 0);
-        if (team.wpnQueued && team.queuedAction === 'rocket') {
-            status = opts.inRange ? '齊射·射程內' : '齊射排程';
-            tone = opts.inRange ? 'hot' : 'queued';
-        } else if (armedPod && ammo > 0) {
-            status = opts.inRange ? '進入射程' : `就緒 ${ammo}發`;
-            tone = opts.inRange ? 'hot' : 'ready';
-        } else if (!anyAmmo) {
+        const queued = !!(team.wpnQueued && team.queuedAction === 'rocket');
+        if (!anyAmmo) {
             status = '彈盡';
             tone = 'bad';
-        } else {
+        } else if (!armedPod || ammo <= 0) {
             status = '未通電';
             tone = 'bad';
+        } else if (fuze === 'impact') {
+            const dStr = Number.isFinite(Number(opts.slantDist)) ? ` ${Math.round(opts.slantDist)}m` : '';
+            if (opts.grounded === false) {
+                status = '仰角過高';
+                tone = 'warn';
+            } else if (queued) {
+                status = `對地排程${dStr}`;
+                tone = 'queued';
+            } else if (opts.hitBuilding) {
+                status = `建築落點${dStr}`;
+                tone = 'ready';
+            } else {
+                status = `地面落點${dStr}`;
+                tone = 'ready';
+            }
+        } else {
+            // VT airburst mode
+            const dist = Number(opts.distance);
+            const rMax = (typeof CONFIG !== 'undefined' && CONFIG.weapons && CONFIG.weapons.rocket && Number(CONFIG.weapons.rocket.range)) || 120;
+            if (opts.obscured) {
+                status = queued ? '齊射·遮擋' : '遮擋';
+                tone = 'warn';
+            } else if (queued && opts.inRange) {
+                status = '齊射·鎖定';
+                tone = 'hot';
+            } else if (queued) {
+                status = '齊射排程';
+                tone = 'queued';
+            } else if (opts.inRange) {
+                status = 'VT 命中窗';
+                tone = 'hot';
+            } else if (Number.isFinite(dist) && dist > rMax * 1.15) {
+                status = '未進射程';
+                tone = 'idle';
+            } else {
+                status = `就緒 ${ammo}發`;
+                tone = 'ready';
+            }
         }
     } else {
         name = 'GUN';
@@ -192,7 +250,14 @@ function updateLcosWeaponTag(team, opts = {}) {
         }
     }
 
-    if (nameEl) nameEl.textContent = name;
+    if (nameEl) {
+        nameEl.textContent = name;
+        const canClick = wpn === 'rocket' && !team.aiEnabled && !team.ready
+            && !(typeof GameContext !== 'undefined' && (GameContext.isAnimating() || GameContext.isReplayMode()));
+        nameEl.classList.toggle('is-clickable', canClick);
+        if (canClick) nameEl.title = '點擊切換 VT 對空／IMPACT 對地引信';
+        else nameEl.removeAttribute('title');
+    }
     if (stEl) stEl.textContent = status;
     root.dataset.tone = tone;
     root.style.display = 'flex';
@@ -978,7 +1043,7 @@ if (typeof window.hudClickListenerRegistered === 'undefined') {
  * Keep LCOS near aircraft forward on screen. Full world-impact projection often
  * flies off the top of the viewport in top-down / planning cams.
  */
-function resolveLcosScreenPos(aimPoint, noseAnchorWorld) {
+function resolveLcosScreenPos(aimPoint, noseAnchorWorld, opts) {
     const w = window.innerWidth || 800;
     const h = window.innerHeight || 600;
     const nose = noseAnchorWorld.clone().project(camera);
@@ -999,7 +1064,10 @@ function resolveLcosScreenPos(aimPoint, noseAnchorWorld) {
         return null;
     }
 
-    if (noseOk) {
+    // Direct world mode (rocket VT intercept / surface CCIP): keep exact 3D-to-2D projection
+    // whenever on screen so the 2D pipper sits directly on the 3D ballistic point.
+    const directWorld = !!(opts && opts.directWorld);
+    if (!directWorld && noseOk) {
         const maxLeadPx = Math.min(w, h) * 0.2;
         let dx = px - nx;
         let dy = py - ny;
@@ -1140,15 +1208,16 @@ window.updateDynamicHUD = function() {
             const rktCfg = (typeof CONFIG !== 'undefined' && CONFIG.weapons && CONFIG.weapons.rocket)
                 ? CONFIG.weapons.rocket
                 : {};
-            const rktMax = Number(rktCfg.range) || 75;
-            const rktVt = Number(rktCfg.vtRadius) || 6;
             let isLocked = false;
             if (t.weapon === 'gun') {
                 isLocked = distance <= gunFireRange && angle <= Math.PI / 8;
             } else if (t.weapon === 'missile') {
                 isLocked = distance <= missileLockRange && distance >= missileLockMin && angle <= missileLockAng;
             } else if (t.weapon === 'rocket') {
-                isLocked = distance <= rktMax && angle <= Math.PI / 14 && distance * Math.sin(angle) <= rktVt * 1.5;
+                const rSol = (typeof AirArenaRocket !== 'undefined' && typeof AirArenaRocket.computeRocketAimSolution === 'function')
+                    ? AirArenaRocket.computeRocketAimSolution(t, enemy)
+                    : null;
+                isLocked = !!(rSol && rSol.fuze === 'vt' && rSol.anyVtHit);
             }
 
             const fox1Active = liveMsl === 'fox1' && t.weapon === 'missile' && (
@@ -1206,24 +1275,38 @@ window.updateDynamicHUD = function() {
             (typeof GameContext !== 'undefined' && GameContext.isAnimating && GameContext.isAnimating())
         );
 
+    const surfaceReticle = document.getElementById('lcos-surface-reticle');
+    const surfaceDot = document.getElementById('lcos-surface-dot');
+    const setSurfaceReticle = (visible, color) => {
+        if (!surfaceReticle) return;
+        surfaceReticle.style.display = visible ? 'block' : 'none';
+        if (visible && color) {
+            surfaceReticle.setAttribute('stroke', color);
+            if (surfaceDot) surfaceDot.setAttribute('fill', color);
+        }
+    };
+
     const hidePipper = () => {
         if (window.isDraggingLcosRing) return;
         if (lcosPipper) lcosPipper.style.display = 'none';
         if (ghostHud) ghostHud.style.display = 'none';
+        setSurfaceReticle(false);
         updateLcosGunHeatRing(t, 50, 50, 37.4, false);
         updateMissileSeekerBrackets({ visible: false });
         updateLcosWeaponTag(null, { hide: true });
     };
 
-    const paintPipperColor = (inRange) => {
-        const ringStroke = inRange ? '#ff0055' : '#ffffff';
+    const paintPipperColor = (inRange, customColor) => {
+        const ringStroke = customColor || (inRange ? '#ff0055' : '#ffffff');
         const aimStroke = inRange ? '#ff0055' : '#e6c200';
         if (inRange) {
             lcosPipper.style.opacity = '1.0';
             lcosPipper.querySelector('svg').style.filter = 'drop-shadow(0 0 5px #ff0055)';
         } else {
-            lcosPipper.style.opacity = '0.85';
-            lcosPipper.querySelector('svg').style.filter = 'drop-shadow(0 0 3px rgba(255, 255, 255, 0.45))';
+            lcosPipper.style.opacity = customColor ? '0.95' : '0.85';
+            lcosPipper.querySelector('svg').style.filter = customColor
+                ? `drop-shadow(0 0 4px ${customColor})`
+                : 'drop-shadow(0 0 3px rgba(255, 255, 255, 0.45))';
         }
         if (lcosConeCircle) lcosConeCircle.setAttribute('stroke', ringStroke);
         const innerT = document.getElementById('lcos-inner-t');
@@ -1237,6 +1320,7 @@ window.updateDynamicHUD = function() {
         t.weapon === 'missile' && (!!t.ready || !!t.wpnQueued);
 
     if (t.weapon === 'gun') {
+        setSurfaceReticle(false);
         updateMissileSeekerBrackets({ visible: false });
         if (typeof trajectoryMeshes !== 'undefined' && trajectoryMeshes[enemy.id]) trajectoryMeshes[enemy.id].visible = false;
         if (typeof threatEnvGroup !== 'undefined' && threatEnvGroup) threatEnvGroup.visible = false;
@@ -1384,6 +1468,7 @@ window.updateDynamicHUD = function() {
             }
         }
     } else if (t.weapon === 'missile') {
+        setSurfaceReticle(false);
         updateLcosGunHeatRing(t, 50, 50, 37.4, false);
         // 飛彈：僅外細圓環，平時黃、進入 seeker 命中窗變紅
         let shouldShowEnv = !!(enemy.userData && enemy.userData.showEnvelope && !isObscured);
@@ -1509,7 +1594,7 @@ window.updateDynamicHUD = function() {
                 });
             }
         }
-    } else if (t.weapon === 'bomb' || t.weapon === 'rocket') {
+    } else if (t.weapon === 'rocket') {
         updateLcosGunHeatRing(t, 50, 50, 37.4, false);
         updateMissileSeekerBrackets({ visible: false });
         if (typeof trajectoryMeshes !== 'undefined' && trajectoryMeshes[enemy.id]) {
@@ -1519,14 +1604,37 @@ window.updateDynamicHUD = function() {
             threatEnvGroup.visible = false;
         }
         if (t.userData && t.userData.gunPreview) t.userData.gunPreview.visible = false;
-        if (ghostHud) ghostHud.style.display = 'none';
 
         const myGhostForward = new THREE.Vector3(0, 0, 1).applyQuaternion(myGhostQuat).normalize();
-        const aimWorld = myGhostPos.clone().add(myGhostForward.clone().multiplyScalar(42));
-        const aimPoint = aimWorld.clone();
-        aimPoint.project(camera);
         const noseAnchor = myGhostPos.clone().add(myGhostForward.clone().multiplyScalar(18));
-        const screenPos = resolveLcosScreenPos(aimPoint, noseAnchor);
+        const sol = (typeof AirArenaRocket !== 'undefined' && typeof AirArenaRocket.computeRocketAimSolution === 'function')
+            ? AirArenaRocket.computeRocketAimSolution(t, isObscured ? null : enemy)
+            : null;
+        const fuze = (sol && sol.fuze)
+            || ((typeof AirArenaRocket !== 'undefined' && typeof AirArenaRocket.getTeamFuzeMode === 'function')
+                ? AirArenaRocket.getTeamFuzeMode(t)
+                : (t.rocketFuze === 'impact' ? 'impact' : 'vt'));
+
+        // Show EST. POS box only in VT air-to-air mode when LOS is clear.
+        if (fuze === 'vt' && !isObscured && sol && sol.targetEstWorld && ghostHud) {
+            const estProj = sol.targetEstWorld.clone().project(camera);
+            if (estProj.z > 1.0) {
+                ghostHud.style.display = 'none';
+            } else {
+                ghostHud.style.display = 'block';
+                ghostHud.style.left = `${(estProj.x * 0.5 + 0.5) * window.innerWidth}px`;
+                ghostHud.style.top = `${(estProj.y * -0.5 + 0.5) * window.innerHeight}px`;
+            }
+        } else if (ghostHud) {
+            ghostHud.style.display = 'none';
+        }
+
+        const hasDirectAim = !!(sol && sol.aimWorld && (fuze === 'vt' || sol.grounded));
+        const aimWorld = hasDirectAim
+            ? sol.aimWorld
+            : myGhostPos.clone().add(myGhostForward.clone().multiplyScalar(42));
+        const aimPoint = aimWorld.clone().project(camera);
+        const screenPos = resolveLcosScreenPos(aimPoint, noseAnchor, { directWorld: hasDirectAim });
 
         if (!screenPos) {
             hidePipper();
@@ -1539,17 +1647,26 @@ window.updateDynamicHUD = function() {
             } else {
                 const screenDist = window.lcosLastPos.distanceTo(new THREE.Vector2(px, py));
                 if (screenDist > 400) window.lcosLastPos.set(px, py);
-                else window.lcosLastPos.lerp(new THREE.Vector2(px, py), 0.4);
+                else window.lcosLastPos.lerp(new THREE.Vector2(px, py), 0.42);
             }
             lcosPipper.style.left = `${window.lcosLastPos.x}px`;
             lcosPipper.style.top = `${window.lcosLastPos.y}px`;
-            lcosPipper.style.width = '52px';
-            lcosPipper.style.height = '52px';
+
+            // Scale pipper diameter to physical VT (6m) or Blast (8m) radius at aim point!
+            const physRadius = fuze === 'impact'
+                ? ((sol && sol.blastRadius) || 8)
+                : ((sol && sol.vtRadius) || 6);
+            const camDist = Math.max(12, camera.position.distanceTo(aimWorld));
+            const focal = Math.max(window.innerHeight || 600, 480) * 0.72;
+            const rawDiamPx = 2 * (physRadius / camDist) * focal;
+            const pipperSizePx = Math.max(42, Math.min(96, rawDiamPx));
+            lcosPipper.style.width = `${pipperSizePx.toFixed(1)}px`;
+            lcosPipper.style.height = `${pipperSizePx.toFixed(1)}px`;
 
             const joyX = Number(t.joyX || 0);
             const joyY = Number(t.joyY || 0);
             const turnMag = Math.min(1, Math.hypot(joyX, joyY));
-            const funnelR = (32 + turnMag * 3) * 1.1;
+            const funnelR = (34 + turnMag * 2) * 1.05;
             if (lcosConeCircle) {
                 lcosConeCircle.setAttribute('cx', '50');
                 lcosConeCircle.setAttribute('cy', '50');
@@ -1562,25 +1679,101 @@ window.updateDynamicHUD = function() {
                 aimGroup.setAttribute('transform', 'translate(0 0)');
             }
 
-            const toEnemy = enemyGhostPos.clone().sub(myGhostPos);
-            const dist = toEnemy.length();
-            let a2gInRange = false;
-            if (t.weapon === 'rocket' && !isObscured && dist > 0.001) {
-                const rktCfg = (typeof CONFIG !== 'undefined' && CONFIG.weapons && CONFIG.weapons.rocket)
-                    ? CONFIG.weapons.rocket
-                    : {};
-                const rktMax = Number(rktCfg.range) || 75;
-                const rktVt = Number(rktCfg.vtRadius) || 6;
-                const toEnemyNorm = toEnemy.clone().normalize();
-                const ang = myGhostForward.angleTo(toEnemyNorm);
-                a2gInRange = dist <= rktMax
-                    && myGhostForward.dot(toEnemyNorm) > 0.85
-                    && dist * Math.sin(ang) <= rktVt * 1.5;
+            const distToEnemy = myGhostPos.distanceTo(enemyGhostPos);
+            if (fuze === 'impact') {
+                const queued = !!(t.wpnQueued && t.queuedAction === 'rocket');
+                const impCol = (sol && sol.grounded === false)
+                    ? '#ff9800'
+                    : (queued ? '#00e5ff' : '#ff9966');
+                setSurfaceReticle(true, impCol);
+                paintPipperColor(false, impCol);
+                updateLcosWeaponTag(t, {
+                    distance: distToEnemy,
+                    slantDist: sol ? sol.slantDist : NaN,
+                    grounded: sol ? sol.grounded : false,
+                    hitBuilding: !!(sol && sol.hitBuilding),
+                    inRange: false,
+                    obscured: isObscured
+                });
+            } else {
+                setSurfaceReticle(false);
+                const vtHit = !!(sol && sol.anyVtHit && !isObscured);
+                const vtBaseCol = (t.wpnQueued && t.queuedAction === 'rocket') ? '#4dd0e1' : null;
+                paintPipperColor(vtHit, vtHit ? null : vtBaseCol);
+                updateLcosWeaponTag(t, {
+                    distance: distToEnemy,
+                    inRange: vtHit,
+                    obscured: isObscured
+                });
             }
-            paintPipperColor(a2gInRange);
+        }
+    } else if (t.weapon === 'bomb') {
+        updateLcosGunHeatRing(t, 50, 50, 37.4, false);
+        updateMissileSeekerBrackets({ visible: false });
+        if (typeof trajectoryMeshes !== 'undefined' && trajectoryMeshes[enemy.id]) {
+            trajectoryMeshes[enemy.id].visible = false;
+        }
+        if (typeof threatEnvGroup !== 'undefined' && threatEnvGroup) {
+            threatEnvGroup.visible = false;
+        }
+        if (t.userData && t.userData.gunPreview) t.userData.gunPreview.visible = false;
+        if (ghostHud) ghostHud.style.display = 'none';
+
+        const myGhostForward = new THREE.Vector3(0, 0, 1).applyQuaternion(myGhostQuat).normalize();
+        const noseAnchor = myGhostPos.clone().add(myGhostForward.clone().multiplyScalar(18));
+        let bombImpact = null;
+        if (typeof AirArenaBomb !== 'undefined'
+            && typeof AirArenaBomb.estimateReleaseState === 'function'
+            && typeof AirArenaBomb.computeBallisticPath === 'function') {
+            const rel = AirArenaBomb.estimateReleaseState(t);
+            if (rel) {
+                const path = AirArenaBomb.computeBallisticPath(rel.pos, rel.vel, {});
+                if (path && path.impact) bombImpact = path.impact;
+            }
+        }
+        const aimWorld = bombImpact || myGhostPos.clone().add(myGhostForward.clone().multiplyScalar(42));
+        const aimPoint = aimWorld.clone().project(camera);
+        const screenPos = resolveLcosScreenPos(aimPoint, noseAnchor, { directWorld: !!bombImpact });
+
+        if (!screenPos) {
+            hidePipper();
+        } else {
+            lcosPipper.style.display = 'block';
+            const px = screenPos.px;
+            const py = screenPos.py;
+            if (!window.lcosLastPos) {
+                window.lcosLastPos = new THREE.Vector2(px, py);
+            } else {
+                const screenDist = window.lcosLastPos.distanceTo(new THREE.Vector2(px, py));
+                if (screenDist > 400) window.lcosLastPos.set(px, py);
+                else window.lcosLastPos.lerp(new THREE.Vector2(px, py), 0.42);
+            }
+            lcosPipper.style.left = `${window.lcosLastPos.x}px`;
+            lcosPipper.style.top = `${window.lcosLastPos.y}px`;
+            lcosPipper.style.width = '56px';
+            lcosPipper.style.height = '56px';
+
+            const joyX = Number(t.joyX || 0);
+            const joyY = Number(t.joyY || 0);
+            const turnMag = Math.min(1, Math.hypot(joyX, joyY));
+            const funnelR = (34 + turnMag * 2) * 1.05;
+            if (lcosConeCircle) {
+                lcosConeCircle.setAttribute('cx', '50');
+                lcosConeCircle.setAttribute('cy', '50');
+                lcosConeCircle.setAttribute('r', String(funnelR));
+                syncLcosGrabGeometry(50, 50, funnelR);
+            }
+            const aimGroup = document.getElementById('lcos-aim-group');
+            if (aimGroup) {
+                aimGroup.style.display = 'none';
+                aimGroup.setAttribute('transform', 'translate(0 0)');
+            }
+            const bCol = (t.wpnQueued && t.queuedAction === 'bomb') ? '#00e5ff' : '#c8e06a';
+            setSurfaceReticle(true, bCol);
+            paintPipperColor(false, bCol);
             updateLcosWeaponTag(t, {
-                distance: dist,
-                inRange: a2gInRange,
+                distance: myGhostPos.distanceTo(enemyGhostPos),
+                inRange: false,
                 obscured: isObscured
             });
         }
