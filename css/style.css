@@ -849,10 +849,18 @@ html.startup-lock body {
 #ops-radial-wedges path.is-selected {
     filter: none;
 }
-.ops-wedge-icon {
+.ops-wedge-icon,
+.ops-wedge-text {
     pointer-events: none;
     opacity: 0.95;
     filter: drop-shadow(0 1px 2px rgba(0,0,0,0.85));
+}
+.ops-wedge-text text {
+    pointer-events: none;
+}
+/* Legacy HTML labels — content moved into SVG wedge halves */
+.ops-label {
+    display: none !important;
 }
 .ops-radial-rim {
     stroke: rgba(255,255,255,0.4);

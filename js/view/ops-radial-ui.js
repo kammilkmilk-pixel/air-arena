@@ -48,6 +48,13 @@
         return `P${p.id} ${w}\n${st}`;
     }
 
+    /** Two-line label for in-wedge text area (e.g. "P4 R2" / "STA"). */
+    function pylonWedgeLines(p) {
+        if (!p) return ['—', ''];
+        const raw = pylonShortLabel(p).split('\n');
+        return [raw[0] || '—', raw[1] || ''];
+    }
+
     function setClassicCollapsed(collapsed) {
         const wrap = $('ui-wrapper');
         const btn = $('btn-ops-panel-toggle');
@@ -553,17 +560,24 @@
         return 'fox2';
     }
 
-    /** Place white silhouette logo at wedge mid-arc (pointer-events none). */
-    function appendWeaponIcon(parent, kind, a0, a1) {
+    /**
+     * Place content at an angular fraction of the wedge mid-radius.
+     * frac 0→a0 side, 1→a1 side. No divider — both sit in the same fill.
+     */
+    function wedgeContentPoint(a0, a1, frac) {
+        const ang = a0 + (a1 - a0) * frac;
+        return { ang, pt: polar(SVG_CX, SVG_CX, WEDGE_ICON_R, ang) };
+    }
+
+    /** White silhouette logo (pointer-events none). */
+    function appendWeaponIcon(parent, kind, a0, a1, frac) {
         const NS = 'http://www.w3.org/2000/svg';
-        const mid = (a0 + a1) * 0.5;
-        const pt = polar(SVG_CX, SVG_CX, WEDGE_ICON_R, mid);
+        const { pt } = wedgeContentPoint(a0, a1, frac != null ? frac : 0.72);
         const ig = document.createElementNS(NS, 'g');
         ig.setAttribute('class', 'ops-wedge-icon');
         ig.setAttribute('transform', `translate(${pt.x.toFixed(2)} ${pt.y.toFixed(2)})`);
         ig.style.pointerEvents = 'none';
         const use = document.createElementNS(NS, 'use');
-        // Prefer href; keep xlink for older SVG engines (Three r128 era browsers).
         use.setAttribute('href', `#ops-icon-${kind}`);
         use.setAttributeNS('http://www.w3.org/1999/xlink', 'xlink:href', `#ops-icon-${kind}`);
         use.setAttribute('x', '-11');
@@ -574,12 +588,39 @@
         parent.appendChild(ig);
     }
 
+    /** Multi-line white text for the text half of a wedge (pointer-events none). */
+    function appendWedgeText(parent, lines, a0, a1, frac) {
+        const NS = 'http://www.w3.org/2000/svg';
+        const { pt } = wedgeContentPoint(a0, a1, frac != null ? frac : 0.28);
+        const tg = document.createElementNS(NS, 'g');
+        tg.setAttribute('class', 'ops-wedge-text');
+        tg.setAttribute('transform', `translate(${pt.x.toFixed(2)} ${pt.y.toFixed(2)})`);
+        tg.style.pointerEvents = 'none';
+        const rows = (lines || []).filter((s) => s != null && String(s).length);
+        rows.forEach((line, i) => {
+            const text = document.createElementNS(NS, 'text');
+            text.setAttribute('text-anchor', 'middle');
+            text.setAttribute('dominant-baseline', 'middle');
+            text.setAttribute('x', '0');
+            text.setAttribute('y', String((i - (rows.length - 1) * 0.5) * 9));
+            text.setAttribute('fill', '#ffffff');
+            text.setAttribute('font-family', 'Courier New, monospace');
+            text.setAttribute('font-size', '8');
+            text.setAttribute('font-weight', 'bold');
+            text.style.pointerEvents = 'none';
+            text.textContent = String(line);
+            tg.appendChild(text);
+        });
+        parent.appendChild(tg);
+    }
+
     function rebuildWedges(team) {
         const g = $('ops-radial-wedges');
         if (!g) return;
         while (g.firstChild) g.removeChild(g.firstChild);
         const NS = 'http://www.w3.org/2000/svg';
-        const mk = (a0, a1, fill, id, selected, iconKind) => {
+        // One solid wedge (hit target) + text half + logo half — no divider stroke.
+        const mk = (a0, a1, fill, id, selected, iconKind, textLines) => {
             const path = document.createElementNS(NS, 'path');
             path.setAttribute('d', wedgePath(a0, a1, WEDGE_R0, WEDGE_R1));
             path.setAttribute('fill', fill);
@@ -589,13 +630,18 @@
             path.dataset.ops = id;
             if (selected) path.classList.add('is-selected');
             g.appendChild(path);
-            appendWeaponIcon(g, iconKind || 'fox2', a0, a1);
+            appendWedgeText(g, textLines || [], a0, a1, 0.28);
+            appendWeaponIcon(g, iconKind || 'fox2', a0, a1, 0.72);
         };
-        // Top 90° (−45…+45): flare then chaff. SVG 0° = up via polar helper.
+        // Top 90° (−45…+45): flare then chaff.
         const flareArmed = !!(team && team.flaresArmed);
         const chaffArmed = !!(team && team.chaffArmed);
-        mk(-45, 0, wedgeColor(flareArmed ? 'active' : 'idle'), 'flare', flareArmed, 'flare');
-        mk(0, 45, wedgeColor(chaffArmed ? 'active' : 'idle'), 'chaff', chaffArmed, 'chaff');
+        const flareN = Number(team && team.flareAmmo) || 0;
+        const chaffN = Number(team && team.chaffAmmo) || 0;
+        mk(-45, 0, wedgeColor(flareArmed ? 'active' : 'idle'), 'flare', flareArmed, 'flare',
+            ['FLARE', String(flareN)]);
+        mk(0, 45, wedgeColor(chaffArmed ? 'active' : 'idle'), 'chaff', chaffArmed, 'chaff',
+            ['CHAFF', String(chaffN)]);
         // Bottom 270°: four pylons (45 → 315)
         const pylons = (team && Array.isArray(team.pylons)) ? team.pylons : [];
         const spans = [
@@ -609,7 +655,7 @@
             const st = p && p.state;
             const selected = st === 'armed' || st === 'powering';
             const kind = weaponIconKind(`pylon-${idx + 1}`, team, p);
-            mk(a0, a1, wedgeColor(st), `pylon-${idx + 1}`, selected, kind);
+            mk(a0, a1, wedgeColor(st), `pylon-${idx + 1}`, selected, kind, pylonWedgeLines(p));
         });
     }
 
@@ -620,17 +666,14 @@
 
         rebuildWedges(team);
 
-        const fl = $('ops-label-flare');
-        const ch = $('ops-label-chaff');
-        if (fl) fl.textContent = `FLARE ${Number(team.flareAmmo) || 0}`;
-        if (ch) ch.textContent = `CHAFF ${Number(team.chaffAmmo) || 0}`;
+        // HTML labels retired — text lives inside SVG wedges (text | logo).
+        ['ops-label-flare', 'ops-label-chaff', 'ops-label-p1', 'ops-label-p2', 'ops-label-p3', 'ops-label-p4']
+            .forEach((id) => { const el = $(id); if (el) el.hidden = true; });
 
         const pylons = Array.isArray(team.pylons) ? team.pylons : [];
         [1, 2, 3, 4].forEach((n) => {
-            const el = $(`ops-label-p${n}`);
             const hit = $(`ops-hit-p${n}`);
             const p = pylons[n - 1];
-            if (el) el.textContent = pylonShortLabel(p);
             if (hit) {
                 hit.hidden = !p;
                 hit.classList.toggle('is-empty', !!(p && p.state === 'empty'));
