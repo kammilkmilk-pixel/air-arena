@@ -118,15 +118,17 @@
     };
     /** Nominal roll-ring radius in HUD CSS px (matches SVG r≈62 on 120px box). */
     const ROLL_RING_BASE_PX = 53;
+    /** Inner white nose ring (SVG r=32) in CSS px on the 120×140 HUD mapping. */
+    const ROLL_INNER_STOP_PX = 32 * (120 / 140);
     /** Outward radial drag (px) that maps +1.0 throttle above start. */
     const ROLL_THR_SOFT_PX = 36;
     const ROLL_THR_MIN = 1;
     const ROLL_THR_MAX = 5;
     /** Below this radius, bank is frozen and lastAngle re-baselines (no atan2 spike). */
-    const ROLL_BANK_MIN_PX = 42;
-    /** Never shrink the ring into the nose grab — only expand outward for accel feedback. */
+    const ROLL_BANK_MIN_PX = ROLL_INNER_STOP_PX;
+    /** Expand-only visual: 1 at rest, up to 2× when pulled outward. */
     const ROLL_SCALE_MIN = 1.0;
-    const ROLL_SCALE_MAX = 1.32;
+    const ROLL_SCALE_MAX = 2.0;
 
     /** Commanded bank for HUD: during roll-drag pendingRoll is authoritative (incl. 0). */
     function commandRollRad(t) {
@@ -329,12 +331,18 @@
         const dx = clientX - cx;
         const dy = clientY - cy;
         const ang = Math.atan2(dx, -dy);
-        const radius = Math.hypot(dx, dy);
+        const radiusAbs = Math.hypot(dx, dy);
+        // Project onto the grab ray so crossing the centre never reads as outward on the far side.
+        const ux = Math.sin(GhostSteer.startAngle);
+        const uy = -Math.cos(GhostSteer.startAngle);
+        const signedR = dx * ux + dy * uy;
+        // Stop at the inner white nose ring — no travel through centre.
+        const radiusThr = Math.max(ROLL_INNER_STOP_PX, signedR);
 
         // Bank only from L/R handles. Incremental lastAngle + deadzone re-baseline
         // so inward pulls (and near-center atan2 flips) never spike pendingRoll.
         if (GhostSteer.bankEnabled) {
-            if (radius >= ROLL_BANK_MIN_PX) {
+            if (radiusAbs >= ROLL_BANK_MIN_PX && signedR >= ROLL_INNER_STOP_PX) {
                 let delta = ang - GhostSteer.lastAngle;
                 if (delta > Math.PI) delta -= Math.PI * 2;
                 if (delta < -Math.PI) delta += Math.PI * 2;
@@ -348,23 +356,27 @@
             }
         }
 
-        // Radial throttle: center → min; start ring radius → startThrottle; outward → max.
+        // Radial throttle: white ring → min; start ring → startThrottle; outward → max.
         const baseR = GhostSteer.startRadius > 8 ? GhostSteer.startRadius : ROLL_RING_BASE_PX;
         const startThr = Math.max(ROLL_THR_MIN, Math.min(ROLL_THR_MAX, GhostSteer.startThrottle));
         let nextThr;
-        if (radius <= baseR) {
-            const tNorm = baseR > 1 ? Math.max(0, Math.min(1, radius / baseR)) : 0;
+        if (radiusThr <= baseR) {
+            const span = Math.max(1, baseR - ROLL_INNER_STOP_PX);
+            const tNorm = Math.max(0, Math.min(1, (radiusThr - ROLL_INNER_STOP_PX) / span));
             nextThr = ROLL_THR_MIN + tNorm * (startThr - ROLL_THR_MIN);
         } else {
-            nextThr = Math.min(ROLL_THR_MAX, startThr + (radius - baseR) / ROLL_THR_SOFT_PX);
+            nextThr = Math.min(ROLL_THR_MAX, startThr + (radiusThr - baseR) / ROLL_THR_SOFT_PX);
         }
         if (GameContext.stateMachine && GameContext.stateMachine.setThrottle) {
             GameContext.stateMachine.setThrottle(t.id, nextThr);
         } else {
             t.throttle = nextThr;
         }
-        // Visual scale: expand only (inward must not shrink into nose grab).
-        setRollRingScale(Math.max(1, radius / Math.max(8, ROLL_RING_BASE_PX)));
+        // Visual: expand up to 2× outward only; inward / far-side never enlarges.
+        const scale = radiusThr <= baseR
+            ? 1
+            : Math.min(ROLL_SCALE_MAX, radiusThr / Math.max(8, baseR));
+        setRollRingScale(scale);
         syncGhostSteerMeta(t);
         if (typeof uiRefreshPreview === 'function') uiRefreshPreview(t);
     }
@@ -471,8 +483,8 @@
             GameContext.stateMachine.setRollInput(t.id, GhostSteer.startRoll);
             syncCockpitRoll(GhostSteer.startRoll);
         }
-        // Expand-only visual; inward throttle must not shrink into nose.
-        setRollRingScale(Math.max(1, GhostSteer.startRadius / Math.max(8, ROLL_RING_BASE_PX)));
+        // Start at rest scale; outward pull may grow up to 2×.
+        setRollRingScale(1);
         window.isDraggingGhostSteer = true;
         setOrbitLocked(true);
         bindGhostSteerWindow();
