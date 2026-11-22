@@ -3062,12 +3062,15 @@ document.addEventListener("DOMContentLoaded", () => {
             } else if (t.weapon !== 'missile') {
                 if (!GameContext.stateMachine.setWeaponMode(currentTeam, 'missile')) return;
             }
+            const prevState = p.state;
             const nextState = GameContext.stateMachine.togglePylonPower(currentTeam, pylonId);
             if (slotType === 'bomb') {
                 showSMSAlert(
                     nextState === 'armed'
-                        ? `💣 PYLON ${pylonId} 炸彈就緒｜ENT 投放`
-                        : `ℹ️ PYLON ${pylonId} 炸彈保險`,
+                        ? (prevState === 'armed'
+                            ? `💣 PYLON ${pylonId} 炸彈已就緒`
+                            : `💣 PYLON ${pylonId} 炸彈就緒｜ENT 投放`)
+                        : `ℹ️ PYLON ${pylonId} 炸彈`,
                     nextState === 'armed' ? '#c8e06a' : '#aaa'
                 );
             } else if (slotType === 'rocket') {
@@ -3077,14 +3080,16 @@ document.addEventListener("DOMContentLoaded", () => {
                 const max = p.ammoMax || 9;
                 showSMSAlert(
                     nextState === 'armed'
-                        ? `🚀 PYLON ${pylonId} 火箭巢就緒 ${ammo}/${max}｜ENT 齊射`
-                        : `ℹ️ PYLON ${pylonId} 火箭保險 ${ammo}/${max}`,
+                        ? (prevState === 'armed'
+                            ? `🚀 PYLON ${pylonId} 火箭巢已就緒 ${ammo}/${max}`
+                            : `🚀 PYLON ${pylonId} 火箭巢就緒 ${ammo}/${max}｜ENT 齊射`)
+                        : `ℹ️ PYLON ${pylonId} 火箭 ${ammo}/${max}`,
                     nextState === 'armed' ? '#ff9966' : '#aaa'
                 );
-            } else if (nextState === 'powering') {
+            } else if (nextState === 'powering' && prevState === 'standby') {
                 showSMSAlert(`⚡ PYLON ${pylonId} 開始開機通電`, "#ffbb00");
-            } else if (nextState === 'standby') {
-                showSMSAlert(`ℹ️ PYLON ${pylonId} 電源切斷`, "#aaa");
+            } else if (nextState === 'powering' || nextState === 'armed') {
+                showSMSAlert(`⚡ PYLON ${pylonId} 已通電（不可斷電）`, "#ffbb00");
             }
             updateDashboardUI(t); 
             uiRefreshPreview(t);

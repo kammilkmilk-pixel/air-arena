@@ -815,7 +815,7 @@ html.startup-lock body {
     left: 50%;
     top: 55%;
     bottom: auto;
-    width: 420px;
+    width: 700px;
     transform: translate(-50%, -50%);
     pointer-events: none;
     display: flex;
@@ -826,8 +826,8 @@ html.startup-lock body {
 }
 #ops-radial-ring {
     position: relative;
-    width: 420px;
-    height: 420px;
+    width: 700px;
+    height: 700px;
     /* Hollow center must not steal hits from ghost-steer / 3D behind it */
     pointer-events: none;
 }
@@ -854,6 +854,14 @@ html.startup-lock body {
     pointer-events: none;
     opacity: 0.95;
     filter: drop-shadow(0 1px 2px rgba(0,0,0,0.85));
+}
+.ops-wedge-icon.is-empty,
+.ops-wedge-text.is-empty {
+    opacity: 0.28;
+}
+#ops-radial-wedges path.is-empty {
+    pointer-events: none;
+    cursor: default;
 }
 .ops-wedge-text text {
     pointer-events: none;
@@ -885,24 +893,24 @@ html.startup-lock body {
     fill: rgba(74, 163, 255, 0.28);
     stroke: rgba(74, 163, 255, 0.85);
 }
-/* Horizontal bottom chord of center disc = OK */
+/* Horizontal bottom chord of center disc = OK (HP r=220 on 700px ring) */
 .ops-radial-ok {
     position: absolute;
     left: 50%;
     top: 50%;
-    width: 252px;
-    height: 252px;
+    width: 481px;
+    height: 481px;
     margin: 0;
     transform: translate(-50%, -50%);
     border: 0;
     border-radius: 50%;
     padding: 0;
-    /* Matches SVG horizontal cut at ~bottom fifth (y≈206 in 280 viewBox → ~73.5%) */
-    clip-path: inset(73.5% 8% 0 8% round 0 0 120px 120px);
+    /* Chord ≈60% down the disc radius */
+    clip-path: inset(73.5% 8% 0 8% round 0 0 200px 200px);
     background: transparent;
     color: #ffeb3b;
     font-family: 'Courier New', monospace;
-    font-size: 14px;
+    font-size: 16px;
     font-weight: bold;
     letter-spacing: 1px;
     cursor: pointer;
@@ -911,7 +919,7 @@ html.startup-lock body {
     display: flex;
     align-items: flex-end;
     justify-content: center;
-    padding-bottom: 18px;
+    padding-bottom: 28px;
     box-sizing: border-box;
     text-shadow: 0 1px 3px #000;
 }
@@ -923,10 +931,10 @@ html.startup-lock body {
     position: absolute;
     left: 50%;
     top: 50%;
-    width: 72px;
-    height: 56px;
-    margin-left: -36px;
-    margin-top: -28px;
+    width: 88px;
+    height: 64px;
+    margin-left: -44px;
+    margin-top: -32px;
     border: 0;
     background: transparent;
     color: transparent;
@@ -934,8 +942,94 @@ html.startup-lock body {
     cursor: pointer;
     pointer-events: auto;
     z-index: 5;
-    /* Outer ring mid-radius ≈146.5; 420px / 380 viewBox */
-    transform: rotate(calc(var(--a0) + var(--span) / 2)) translateY(-162px) rotate(calc(-1 * (var(--a0) + var(--span) / 2)));
+    /* Outer ring mid-radius ≈269; 700px / 640 viewBox */
+    transform: rotate(calc(var(--a0) + var(--span) / 2)) translateY(-294px) rotate(calc(-1 * (var(--a0) + var(--span) / 2)));
+}
+.ops-wedge-hit.is-empty {
+    opacity: 0.25;
+    pointer-events: none;
+    cursor: default;
+}
+
+/* Pylon weapon performance detail box */
+.ops-weapon-detail {
+    width: 280px;
+    max-width: 90vw;
+    pointer-events: auto;
+    background: rgba(0, 0, 0, 0.88);
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    border-radius: 8px;
+    padding: 10px 12px 12px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    color: #fff;
+    font-family: 'Courier New', monospace;
+}
+.ops-weapon-detail[hidden] { display: none !important; }
+.ops-wpn-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 8px;
+    font-size: 13px;
+    font-weight: bold;
+    letter-spacing: 0.4px;
+    color: #ffeb3b;
+}
+.ops-wpn-close {
+    border: 0;
+    background: transparent;
+    color: #fff;
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 2px 6px;
+    opacity: 0.75;
+}
+.ops-wpn-close:hover { opacity: 1; }
+.ops-wpn-stats {
+    list-style: none;
+    margin: 0 0 10px;
+    padding: 0;
+    display: grid;
+    gap: 4px;
+    max-height: 180px;
+    overflow-y: auto;
+}
+.ops-wpn-stats li {
+    display: grid;
+    grid-template-columns: 88px 1fr;
+    gap: 6px;
+    font-size: 11px;
+    line-height: 1.35;
+}
+.ops-wpn-k { color: rgba(255,255,255,0.55); }
+.ops-wpn-v { color: #fff; font-weight: bold; }
+.ops-wpn-fire {
+    width: 100%;
+    border: 1px solid rgba(0, 255, 136, 0.55);
+    background: rgba(0, 180, 100, 0.35);
+    color: #b9ffd8;
+    font-family: 'Courier New', monospace;
+    font-size: 13px;
+    font-weight: bold;
+    letter-spacing: 1px;
+    padding: 9px 12px;
+    border-radius: 5px;
+    cursor: pointer;
+}
+.ops-wpn-fire:hover:not(:disabled) {
+    background: rgba(0, 220, 120, 0.5);
+    color: #fff;
+}
+.ops-wpn-fire:disabled {
+    opacity: 0.4;
+    cursor: default;
+    border-color: rgba(255,255,255,0.2);
+    background: rgba(255,255,255,0.06);
+    color: rgba(255,255,255,0.45);
 }
 .ops-label {
     position: absolute;
@@ -1026,18 +1120,19 @@ html.startup-lock body {
 
 @media (max-width: 720px) {
     .ops-panel-toggle { bottom: 168px !important; }
-    #ops-radial-anchor { width: 340px; }
-    #ops-radial-ring { width: 340px; height: 340px; }
-    #ops-tactical-strip { width: 240px; }
-    .ops-wedge-hit {
-        transform: rotate(calc(var(--a0) + var(--span) / 2)) translateY(-131px) rotate(calc(-1 * (var(--a0) + var(--span) / 2)));
+    #ops-radial-anchor { width: min(92vw, 520px); }
+    #ops-radial-ring { width: min(92vw, 520px); height: min(92vw, 520px); }
+    #ops-tactical-strip { width: min(86vw, 280px); }
+    .ops-radial-ok {
+        width: 357px;
+        height: 357px;
+        padding-bottom: 20px;
+        font-size: 14px;
     }
-    .ops-label-flare { transform: rotate(-22.5deg) translateY(-152px) rotate(22.5deg); }
-    .ops-label-chaff { transform: rotate(22.5deg) translateY(-152px) rotate(-22.5deg); }
-    .ops-label-p1 { transform: rotate(78.75deg) translateY(-152px) rotate(-78.75deg); }
-    .ops-label-p2 { transform: rotate(146.25deg) translateY(-152px) rotate(-146.25deg); }
-    .ops-label-p3 { transform: rotate(213.75deg) translateY(-152px) rotate(-213.75deg); }
-    .ops-label-p4 { transform: rotate(281.25deg) translateY(-152px) rotate(-281.25deg); }
+    .ops-wedge-hit {
+        transform: rotate(calc(var(--a0) + var(--span) / 2)) translateY(-218px) rotate(calc(-1 * (var(--a0) + var(--span) / 2)));
+    }
+    .ops-weapon-detail { width: min(92vw, 280px); }
 }
 
 #wingman-order-hud {

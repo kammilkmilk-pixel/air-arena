@@ -3,14 +3,16 @@
 // ============================================================================
 (function () {
     const COLLAPSE_KEY = 'airarena.opsPanelCollapsed';
-    /** SVG layout (viewBox 280², center 140). Center HP disc ≈2× prior r=58. */
-    const SVG_CX = 140;
-    const HP_R = 110;
+    /** SVG layout — center HP disc doubled again (was r=110 → 220). */
+    const SVG_CX = 280;
+    const HP_R = 220;
     const HP_CIRC = 2 * Math.PI * HP_R;
-    // Outer pylon/CM ring: ~2× prior annulus area (was r 114–150 → 114–179).
-    const WEDGE_R0 = 114;
-    const WEDGE_R1 = 179;
-    const WEDGE_ICON_R = (WEDGE_R0 + WEDGE_R1) * 0.5;
+    // Outer pylon/CM ring outside the larger center disc (logo-above-text stack needs height).
+    const WEDGE_R0 = 228;
+    const WEDGE_R1 = 310;
+    const WEDGE_ICON_R = WEDGE_R0 + (WEDGE_R1 - WEDGE_R0) * 0.72; // outer = logo
+    const WEDGE_TEXT_R = WEDGE_R0 + (WEDGE_R1 - WEDGE_R0) * 0.32; // inner = text
+    const OpsDetail = { pylonId: null };
 
     const OpsRadial = {
         open: false,
@@ -528,6 +530,7 @@
             startTrack();
         } else {
             stopTrack();
+            hideWeaponDetail();
             const o = OpsRadial._3d;
             if (o && o.gizmo) o.gizmo.visible = false;
             const hud = $('ghost-steer-hud');
@@ -555,10 +558,10 @@
     }
 
     function wedgeColor(state) {
-        // Idle = translucent black; selected/armed/powering = fully opaque.
+        // Idle = translucent black; selected/armed/powering = fully opaque; empty = transparent.
         if (state === 'armed') return 'rgb(0, 120, 72)';
         if (state === 'powering') return 'rgb(180, 110, 0)';
-        if (state === 'empty') return 'rgb(140, 0, 30)';
+        if (state === 'empty') return 'rgba(255, 255, 255, 0.04)';
         if (state === 'active') return 'rgb(40, 40, 40)';
         return 'rgba(0, 0, 0, 0.55)';
     }
@@ -590,39 +593,39 @@
     }
 
     /**
-     * Place content at an angular fraction of the wedge mid-radius.
-     * frac 0→a0 side, 1→a1 side. No divider — both sit in the same fill.
+     * Grid cell inside a wedge: logo (outer / above) + text (inner / below),
+     * both on the wedge mid-angle. No divider.
      */
-    function wedgeContentPoint(a0, a1, frac) {
-        const ang = a0 + (a1 - a0) * frac;
-        return { ang, pt: polar(SVG_CX, SVG_CX, WEDGE_ICON_R, ang) };
+    function wedgeStackPoint(a0, a1, radius) {
+        const ang = a0 + (a1 - a0) * 0.5;
+        return { ang, pt: polar(SVG_CX, SVG_CX, radius, ang) };
     }
 
-    /** White silhouette logo (pointer-events none). */
-    function appendWeaponIcon(parent, kind, a0, a1, frac) {
+    /** White silhouette logo — outer row of the wedge cell. */
+    function appendWeaponIcon(parent, kind, a0, a1, empty) {
         const NS = 'http://www.w3.org/2000/svg';
-        const { pt } = wedgeContentPoint(a0, a1, frac != null ? frac : 0.72);
+        const { pt } = wedgeStackPoint(a0, a1, WEDGE_ICON_R);
         const ig = document.createElementNS(NS, 'g');
-        ig.setAttribute('class', 'ops-wedge-icon');
+        ig.setAttribute('class', empty ? 'ops-wedge-icon is-empty' : 'ops-wedge-icon');
         ig.setAttribute('transform', `translate(${pt.x.toFixed(2)} ${pt.y.toFixed(2)})`);
         ig.style.pointerEvents = 'none';
         const use = document.createElementNS(NS, 'use');
         use.setAttribute('href', `#ops-icon-${kind}`);
         use.setAttributeNS('http://www.w3.org/1999/xlink', 'xlink:href', `#ops-icon-${kind}`);
-        use.setAttribute('x', '-11');
-        use.setAttribute('y', '-11');
-        use.setAttribute('width', '22');
-        use.setAttribute('height', '22');
+        use.setAttribute('x', '-12');
+        use.setAttribute('y', '-12');
+        use.setAttribute('width', '24');
+        use.setAttribute('height', '24');
         ig.appendChild(use);
         parent.appendChild(ig);
     }
 
-    /** Multi-line white text for the text half of a wedge (pointer-events none). */
-    function appendWedgeText(parent, lines, a0, a1, frac) {
+    /** Multi-line text — inner row of the wedge cell (under the logo). */
+    function appendWedgeText(parent, lines, a0, a1, empty) {
         const NS = 'http://www.w3.org/2000/svg';
-        const { pt } = wedgeContentPoint(a0, a1, frac != null ? frac : 0.28);
+        const { pt } = wedgeStackPoint(a0, a1, WEDGE_TEXT_R);
         const tg = document.createElementNS(NS, 'g');
-        tg.setAttribute('class', 'ops-wedge-text');
+        tg.setAttribute('class', empty ? 'ops-wedge-text is-empty' : 'ops-wedge-text');
         tg.setAttribute('transform', `translate(${pt.x.toFixed(2)} ${pt.y.toFixed(2)})`);
         tg.style.pointerEvents = 'none';
         const rows = (lines || []).filter((s) => s != null && String(s).length);
@@ -631,10 +634,10 @@
             text.setAttribute('text-anchor', 'middle');
             text.setAttribute('dominant-baseline', 'middle');
             text.setAttribute('x', '0');
-            text.setAttribute('y', String((i - (rows.length - 1) * 0.5) * 9));
-            text.setAttribute('fill', '#ffffff');
+            text.setAttribute('y', String((i - (rows.length - 1) * 0.5) * 10));
+            text.setAttribute('fill', empty ? 'rgba(255,255,255,0.35)' : '#ffffff');
             text.setAttribute('font-family', 'Courier New, monospace');
-            text.setAttribute('font-size', '8');
+            text.setAttribute('font-size', '9');
             text.setAttribute('font-weight', 'bold');
             text.style.pointerEvents = 'none';
             text.textContent = String(line);
@@ -648,30 +651,32 @@
         if (!g) return;
         while (g.firstChild) g.removeChild(g.firstChild);
         const NS = 'http://www.w3.org/2000/svg';
-        // One solid wedge (hit target) + text half + logo half — no divider stroke.
-        const mk = (a0, a1, fill, id, selected, iconKind, textLines) => {
+        // One fill wedge + logo-above-text grid cell (no divider).
+        const mk = (a0, a1, fill, id, selected, iconKind, textLines, empty) => {
             const path = document.createElementNS(NS, 'path');
             path.setAttribute('d', wedgePath(a0, a1, WEDGE_R0, WEDGE_R1));
             path.setAttribute('fill', fill);
-            path.setAttribute('stroke', selected ? 'rgba(255,255,255,0.85)' : 'rgba(255,255,255,0.28)');
-            path.setAttribute('stroke-width', selected ? '1.5' : '1');
-            path.style.pointerEvents = 'fill';
+            path.setAttribute('stroke', empty
+                ? 'rgba(255,255,255,0.12)'
+                : (selected ? 'rgba(255,255,255,0.85)' : 'rgba(255,255,255,0.28)'));
+            path.setAttribute('stroke-width', selected && !empty ? '1.5' : '1');
+            path.style.pointerEvents = empty ? 'none' : 'fill';
             path.dataset.ops = id;
             if (selected) path.classList.add('is-selected');
+            if (empty) path.classList.add('is-empty');
             g.appendChild(path);
-            // Two zones along the arc: text then logo — no divider stroke between them.
-            appendWedgeText(g, textLines || [], a0, a1, 0.34);
-            appendWeaponIcon(g, iconKind || 'fox2', a0, a1, 0.68);
+            appendWeaponIcon(g, iconKind || 'fox2', a0, a1, empty);
+            appendWedgeText(g, textLines || [], a0, a1, empty);
         };
         // Top 90° (−45…+45): flare then chaff.
         const flareArmed = !!(team && team.flaresArmed);
         const chaffArmed = !!(team && team.chaffArmed);
         const flareN = Number(team && team.flareAmmo) || 0;
         const chaffN = Number(team && team.chaffAmmo) || 0;
-        mk(-45, 0, wedgeColor(flareArmed ? 'active' : 'idle'), 'flare', flareArmed, 'flare',
-            ['FLARE', String(flareN)]);
-        mk(0, 45, wedgeColor(chaffArmed ? 'active' : 'idle'), 'chaff', chaffArmed, 'chaff',
-            ['CHAFF', String(chaffN)]);
+        mk(-45, 0, wedgeColor(flareN <= 0 ? 'empty' : (flareArmed ? 'active' : 'idle')), 'flare', flareArmed, 'flare',
+            ['FLARE', String(flareN)], flareN <= 0);
+        mk(0, 45, wedgeColor(chaffN <= 0 ? 'empty' : (chaffArmed ? 'active' : 'idle')), 'chaff', chaffArmed, 'chaff',
+            ['CHAFF', String(chaffN)], chaffN <= 0);
         // Bottom 270°: four pylons (45 → 315)
         const pylons = (team && Array.isArray(team.pylons)) ? team.pylons : [];
         const spans = [
@@ -683,9 +688,10 @@
         spans.forEach(([a0, a1, idx]) => {
             const p = pylons[idx];
             const st = p && p.state;
-            const selected = st === 'armed' || st === 'powering';
+            const empty = !p || st === 'empty';
+            const selected = !empty && (st === 'armed' || st === 'powering');
             const kind = weaponIconKind(`pylon-${idx + 1}`, team, p);
-            mk(a0, a1, wedgeColor(st), `pylon-${idx + 1}`, selected, kind, pylonWedgeLines(p));
+            mk(a0, a1, wedgeColor(empty ? 'empty' : st), `pylon-${idx + 1}`, selected, kind, pylonWedgeLines(p), empty);
         });
     }
 
@@ -763,6 +769,7 @@
             }
         }
 
+        if (OpsDetail.pylonId != null) syncWeaponDetail(team);
         sync3dOverlays(team);
         paintGhostThrottle(team);
         layoutAnchor(team);
@@ -787,7 +794,7 @@
         const t = team || (teams && teams[OpsRadial.teamId]);
         const world = (t && t.wrapper) ? t.wrapper.position : null;
         const scr = projectWorldToScreen(world);
-        const half = 210; // ~half of 420px ring
+        const half = 350; // ~half of 700px ring
         if (!scr) {
             anchor.style.left = '50%';
             anchor.style.top = '55%';
@@ -834,6 +841,102 @@
         if (stick) stick.click();
     }
 
+    function weaponCfgForPylon(p) {
+        const wt = (typeof pylonWeaponType === 'function')
+            ? pylonWeaponType(p)
+            : (p && (p.weaponType || p.weapon)) || 'fox2';
+        const table = (typeof CONFIG !== 'undefined' && CONFIG.weapons) ? CONFIG.weapons : {};
+        return { wt, cfg: table[wt] || table.fox2 || {} };
+    }
+
+    function buildWeaponStatRows(p, wt, cfg) {
+        const rows = [];
+        const st = (p && p.state) || '—';
+        rows.push(['掛架', `P${p && p.id != null ? p.id : '—'} · ${String(st).toUpperCase()}`]);
+        rows.push(['武器', cfg.name || wt || '—']);
+        if (cfg.damage != null) rows.push(['傷害', String(cfg.damage)]);
+        if (wt === 'fox1' || wt === 'fox2') {
+            if (cfg.seekerRange != null) rows.push(['尋標距離', `${cfg.seekerRange} m`]);
+            if (cfg.maxFlightRange != null) rows.push(['最大射程', `${cfg.maxFlightRange} m`]);
+            if (cfg.minArmingRange != null) rows.push(['最短解鎖', `${cfg.minArmingRange} m`]);
+            if (cfg.fuseRange != null) rows.push(['引信半徑', `${cfg.fuseRange} m`]);
+            if (cfg.guidance) rows.push(['導引', String(cfg.guidance).toUpperCase()]);
+            if (cfg.speed != null) rows.push(['速度', String(cfg.speed)]);
+            if (cfg.turnRate != null) rows.push(['轉率', String(cfg.turnRate)]);
+        } else if (wt === 'rocket') {
+            const ammo = (typeof AirArenaRocket !== 'undefined')
+                ? AirArenaRocket.ensurePodAmmo(p)
+                : (Number(p && p.ammo) || 0);
+            const max = Number(p && p.ammoMax) || cfg.roundsPerPod || 9;
+            rows.push(['彈藥', `${ammo} / ${max}`]);
+            if (cfg.salvoPerTurn != null) rows.push(['齊射', `${cfg.salvoPerTurn} / 回`]);
+            if (cfg.range != null) rows.push(['射程', `${cfg.range} m`]);
+            if (cfg.vtRadius != null) rows.push(['VT 引信', `${cfg.vtRadius} m`]);
+            if (cfg.blastRadius != null) rows.push(['爆震半徑', `${cfg.blastRadius} m`]);
+        } else if (wt === 'bomb') {
+            if (cfg.damage != null) rows.push(['傷害', String(cfg.damage)]);
+            if (cfg.blastRadius != null) rows.push(['爆震半徑', `${cfg.blastRadius} m`]);
+            rows.push(['模式', 'CCIP']);
+        }
+        return rows;
+    }
+
+    function hideWeaponDetail() {
+        OpsDetail.pylonId = null;
+        const panel = $('ops-weapon-detail');
+        if (panel) {
+            panel.hidden = true;
+            panel.setAttribute('aria-hidden', 'true');
+        }
+    }
+
+    function syncWeaponDetail(team) {
+        const panel = $('ops-weapon-detail');
+        if (!panel || OpsDetail.pylonId == null) return;
+        const t = team || (teams && teams[OpsRadial.teamId]);
+        const p = t && Array.isArray(t.pylons)
+            ? t.pylons.find((x) => x && x.id === OpsDetail.pylonId)
+            : null;
+        if (!p || p.state === 'empty') {
+            hideWeaponDetail();
+            return;
+        }
+        const { wt, cfg } = weaponCfgForPylon(p);
+        const title = $('ops-wpn-title');
+        if (title) title.textContent = `P${p.id} · ${cfg.name || wt}`;
+        const list = $('ops-wpn-stats');
+        if (list) {
+            list.innerHTML = '';
+            buildWeaponStatRows(p, wt, cfg).forEach(([k, v]) => {
+                const li = document.createElement('li');
+                li.innerHTML = `<span class="ops-wpn-k">${k}</span><span class="ops-wpn-v">${v}</span>`;
+                list.appendChild(li);
+            });
+        }
+        const fire = $('ops-wpn-fire');
+        if (fire) {
+            const canFire = p.state === 'armed';
+            fire.disabled = !canFire;
+            fire.textContent = wt === 'bomb' ? '投放 ENT' : (wt === 'rocket' ? '齊射 ENT' : '發射 ENT');
+            fire.title = canFire ? '排程發射／投放' : (p.state === 'powering' ? '尋標頭開機中' : '需先通電就緒');
+        }
+        panel.hidden = false;
+        panel.setAttribute('aria-hidden', 'false');
+    }
+
+    function openWeaponDetail(pylonId) {
+        OpsDetail.pylonId = pylonId;
+        const teamId = OpsRadial.teamId;
+        if (teamId && typeof selectTeam === 'function') {
+            try { selectTeam(teamId); } catch (_) { /* ignore */ }
+        }
+        // One-way power-up via classic pylon path (SMS alerts + mode switch).
+        clickPylon(pylonId);
+        const t = teams && teams[teamId];
+        syncWeaponDetail(t);
+        refresh(t);
+    }
+
     let _lastOpsAt = 0;
     function handleOpsAction(opsId) {
         if (!opsId) return;
@@ -846,12 +949,15 @@
             try { selectTeam(teamId); } catch (_) { /* ignore */ }
         }
         if (opsId === 'flare') {
+            hideWeaponDetail();
             const b = $('btn-flare'); if (b) b.click();
         } else if (opsId === 'chaff') {
+            hideWeaponDetail();
             const b = $('btn-chaff'); if (b) b.click();
         } else if (opsId.indexOf('pylon-') === 0) {
             const n = parseInt(opsId.slice(6), 10);
-            if (n >= 1 && n <= 4) clickPylon(n);
+            if (n >= 1 && n <= 4) openWeaponDetail(n);
+            return;
         }
         refresh();
     }
@@ -875,6 +981,24 @@
                 refresh();
             });
         }
+
+        const wpnClose = $('ops-wpn-close');
+        if (wpnClose) wpnClose.addEventListener('click', (e) => {
+            e.preventDefault(); e.stopPropagation();
+            hideWeaponDetail();
+        });
+        const wpnFire = $('ops-wpn-fire');
+        if (wpnFire) wpnFire.addEventListener('click', (e) => {
+            e.preventDefault(); e.stopPropagation();
+            const teamId = OpsRadial.teamId;
+            if (teamId && typeof selectTeam === 'function') {
+                try { selectTeam(teamId); } catch (_) { /* ignore */ }
+            }
+            if (typeof uiToggleWeaponFireQueue === 'function') uiToggleWeaponFireQueue(teamId);
+            const t = teams && teams[teamId];
+            syncWeaponDetail(t);
+            refresh(t);
+        });
 
         // Full SVG annulus wedges (paths are rebuilt often — delegate on stable <g>).
         const wedges = $('ops-radial-wedges');

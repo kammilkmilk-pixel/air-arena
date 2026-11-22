@@ -1017,13 +1017,17 @@ GameContext.stateMachine = {
         return true;
     },
 
+    /**
+     * One-way pylon power: standby → powering/armed. Never powers off on a second press.
+     * (Empty stays empty; armed/powering are no-ops that return current state.)
+     */
     togglePylonPower(teamId, pylonId) {
         const t = this.getTeamOrNull(teamId);
         if (!t || !t.pylons || t.isDestroyed || GameContext.isAnimating() || GameContext.isReplayMode() || t.ready) return null;
         const p = t.pylons.find(item => item.id === pylonId);
         if (!p || p.state === 'empty') return null;
         const wType = typeof pylonWeaponType === 'function' ? pylonWeaponType(p) : (p.weaponType || 'fox2');
-        // Bombs / rockets: standby ↔ armed (no seeker warm-up).
+        // Bombs / rockets: standby|powering → armed (no seeker warm-up); armed stays armed.
         if (wType === 'bomb' || wType === 'rocket') {
             if (wType === 'rocket' && typeof AirArenaRocket !== 'undefined') {
                 AirArenaRocket.ensurePodAmmo(p);
@@ -1035,9 +1039,6 @@ GameContext.stateMachine = {
             if (p.state === 'standby' || p.state === 'powering') {
                 p.state = 'armed';
                 if (t.weapon !== wType) this.setWeaponMode(teamId, wType);
-            } else if (p.state === 'armed') {
-                p.state = 'standby';
-                if (t.queuedAction === wType) this.clearQueuedAction(teamId);
             }
             return p.state;
         }
@@ -1047,10 +1048,8 @@ GameContext.stateMachine = {
                 : 0;
             p.state = 'powering';
             if (dropped > 0 && t.wpnQueued && t.queuedAction === 'missile') this.clearQueuedAction(teamId);
-        } else if (p.state === 'powering' || p.state === 'armed') {
-            p.state = 'standby';
-            if (!t.pylons.some(item => item.state === 'armed')) this.clearQueuedAction(teamId);
         }
+        // powering | armed: keep powered — second press does not cut power.
         return p.state;
     },
 
