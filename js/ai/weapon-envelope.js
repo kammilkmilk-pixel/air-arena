@@ -158,7 +158,7 @@
      */
     function inferTeamMissileType(team, opts = {}) {
         if (!team) return 'fox2';
-        // CONFIG.weapons.rocket is a stub (aiEnabled:false). Never infer missileType from it.
+        // Rocket/bomb are A2G/A2A stores — never infer fox missileType from them.
         if (opts.missileType === 'fox1' || opts.missileType === 'fox2') {
             return opts.missileType;
         }
@@ -259,6 +259,32 @@
         };
     }
 
+    /** Combat snapshot for rocket / bomb stores (AI soft overlay). */
+    function getStoreCombatEnvelope(kind) {
+        refreshFromConfig();
+        const cfg = readConfigObject();
+        const k = kind === 'bomb' ? 'bomb' : 'rocket';
+        const row = cfg && cfg.weapons && cfg.weapons[k];
+        if (k === 'bomb') {
+            return {
+                kind: 'bomb',
+                aiEnabled: !!(row && row.aiEnabled),
+                blastRadius: Number(row && row.blastRadius) || 10,
+                damage: Number(row && row.damage) || 80
+            };
+        }
+        return {
+            kind: 'rocket',
+            aiEnabled: !!(row && row.aiEnabled),
+            dualRole: !!(row && row.dualRole),
+            range: Number(row && row.range) || 120,
+            vtRadius: Number(row && row.vtRadius) || 6,
+            blastRadius: Number(row && row.blastRadius) || 8,
+            damage: Number(row && row.damage) || 45,
+            salvoPerTurn: Number(row && row.salvoPerTurn) || 3
+        };
+    }
+
     function assertMatchesConfig(config) {
         const cfg = config || readConfigObject();
         if (!cfg || !cfg.weapons) return { ok: true, skipped: true };
@@ -297,6 +323,7 @@
         peekNextMissileType,
         inferThreatMissileType,
         getAiEnvelopeFields,
+        getStoreCombatEnvelope,
         assertMatchesConfig
     };
 });

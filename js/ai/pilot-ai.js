@@ -561,6 +561,16 @@ window.AirArenaAI = {
         const table = (typeof CONFIG !== 'undefined' && CONFIG.doctrine && CONFIG.doctrine.munition)
             ? CONFIG.doctrine.munition
             : null;
+        if (missileType === 'rocket' || missileType === 'rocketVt' || missileType === 'rocketImpact') {
+            if (typeof AirArenaA2GStoresDoctrine !== 'undefined' && AirArenaA2GStoresDoctrine.getRocketDoctrine) {
+                return AirArenaA2GStoresDoctrine.getRocketDoctrine();
+            }
+        }
+        if (missileType === 'bomb') {
+            if (typeof AirArenaA2GStoresDoctrine !== 'undefined' && AirArenaA2GStoresDoctrine.getBombDoctrine) {
+                return AirArenaA2GStoresDoctrine.getBombDoctrine();
+            }
+        }
         const key = missileType === 'fox1' ? 'fox1' : (missileType === 'gun' ? 'gun' : 'fox2');
         const row = table && table[key] ? table[key] : null;
         if (key === 'fox1') {
@@ -13312,6 +13322,8 @@ window.AirArenaAI = {
         if (action.state === 'gunAttack' && action.queueAction === 'gun') return true;
         if (action.state === 'missileAttack' && action.queueAction === 'missile') return true;
         if (action.state === 'missilePrep' && (action.powerPylons || action.queueAction === 'missile')) return true;
+        if (action.state === 'rocketAttack' && action.queueAction === 'rocket') return true;
+        if (action.state === 'bombAttack' && action.queueAction === 'bomb') return true;
         return false;
     },
 
@@ -23693,6 +23705,16 @@ altitude,
             score += gunSweetSpot ? (urbanPressure ? 42 : 58) : -18;
             if (distance < gunR * 0.5 && angleDeg < 22) score += 12;
         }
+        if (action.queueAction === 'rocket') {
+            const fuze = action.rocketFuze === 'impact' ? 'impact' : 'vt';
+            if (fuze === 'vt' && distance > 18 && distance < 110 && angleDeg < 24) score += urbanPressure ? 38 : 48;
+            else if (fuze === 'impact' && Number(enemy.altitude != null ? enemy.altitude : enemy.y) <= 12) score += 36;
+            else score -= 20;
+        }
+        if (action.queueAction === 'bomb') {
+            const eAlt = Number(enemy.altitude != null ? enemy.altitude : (enemy.position && enemy.position.y));
+            score += (Number.isFinite(eAlt) && eAlt <= 10) ? 34 : -24;
+        }
         if (!gunSweetSpot && distance < mslMax * 0.92 && angleDeg < 45 && (action.queueAction === 'none' || !action.queueAction)) {
             score -= 10 * openSkyBonus;
         }
@@ -24462,12 +24484,75 @@ altitude,
             }
         }
 
+        // Rocket VT / Impact + bomb — soft overlay after FOX-1; never rewrites stick geometry.
+        if (safeAction && team && typeof AirArenaA2GStoresDoctrine !== 'undefined') {
+            this.applyStoresDoctrineOverlay(safeAction, teamId, team);
+        }
+
         // Late headroom / combat-band seals must not undo soft nest |jx|/thr (T150).
         if (safeAction) this.clampSoftUrbanStick(safeAction);
         if (safeAction) this.applyBankTarget(teamId, safeAction);
 
         GameContext.stateMachine.applyPilotAction(teamId, safeAction);
         return safeAction;
+    },
+
+    /**
+     * Late stores employment (rocket VT/Impact, bomb CCIP). Stick geometry stays;
+     * only weapon / queue / fuze / state labels change when a true window exists.
+     */
+    applyStoresDoctrineOverlay(action, teamId, team) {
+        if (!action || !team || typeof AirArenaA2GStoresDoctrine === 'undefined') return action;
+        const Doc = AirArenaA2GStoresDoctrine;
+        if (!Doc.weaponAiEnabled('rocket') && !Doc.weaponAiEnabled('bomb')) return action;
+
+        const foeId = this.getEnemyId(teamId);
+        const foe = (typeof GameContext !== 'undefined' && GameContext.getTeam)
+            ? GameContext.getTeam(foeId)
+            : null;
+        const dbg = action.debug || {};
+        const tuning = this.getTuning();
+        const selfPos = team.wrapper && team.wrapper.position;
+        const foePos = foe && foe.wrapper && foe.wrapper.position;
+        let dist = Number(dbg.distance);
+        if (!Number.isFinite(dist) && selfPos && foePos) dist = selfPos.distanceTo(foePos);
+        let ang = Number(dbg.angleDeg);
+        let localZ = Number(dbg.targetLocalZ);
+        if ((!Number.isFinite(ang) || !Number.isFinite(localZ)) && selfPos && foePos && team.wrapper) {
+            const to = foePos.clone().sub(selfPos);
+            if (to.lengthSq() > 1e-8) {
+                const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(team.wrapper.quaternion).normalize();
+                ang = fwd.angleTo(to.clone().normalize()) * 180 / Math.PI;
+                const local = to.clone().normalize()
+                    .applyQuaternion(team.wrapper.quaternion.clone().invert());
+                localZ = local.z;
+            }
+        }
+        const gunR = this.gunRangeOr(tuning);
+        const gunA = Number(tuning.gunAngle) || 22;
+        const gunSweetSpot = Number.isFinite(dist) && Number.isFinite(ang)
+            && dist <= gunR * 0.85 && ang <= gunA * 1.1;
+        const fox1Hold = !!(this.fox1SequelByTeam && this.fox1SequelByTeam[teamId]
+            && this.fox1SequelByTeam[teamId].active)
+            || this.hasOwnFox1InFlight(team);
+
+        const commit = Doc.pickStoresCommit(action, team, foe, {
+            distance: dist,
+            angleDeg: ang,
+            localZ,
+            lineOfSightBlocked: !!dbg.losBlocked,
+            missileMinRange: this.missileMinOr(tuning),
+            missileMaxRange: this.missileMaxOr(tuning),
+            missileAngleDeg: Number(tuning.missileAngle) || 27,
+            gunSweetSpot,
+            aiMissileType: (action.missileType || dbg.aiMissileType || null),
+            fox1IlluminateHold: fox1Hold,
+            actualMissileThreat: !!dbg.actualMissileThreat,
+            shouldFlareNow: !!dbg.shouldFlareNow,
+            shouldChaffNow: !!dbg.shouldChaffNow
+        });
+        if (!commit) return action;
+        return Doc.applyStoresCommit(action, commit);
     }
 };
 

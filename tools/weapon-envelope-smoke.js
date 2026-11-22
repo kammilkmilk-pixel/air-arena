@@ -28,6 +28,12 @@ function main() {
     assert.strictEqual(fieldsFox2.missileType, 'fox2');
     assert.strictEqual(fieldsFox1.missileType, 'fox1');
 
+    const storeRkt = env.getStoreCombatEnvelope('rocket');
+    const storeBomb = env.getStoreCombatEnvelope('bomb');
+    assert.strictEqual(storeRkt.aiEnabled, !!CONFIG.weapons.rocket.aiEnabled);
+    assert.strictEqual(storeRkt.range, CONFIG.weapons.rocket.range);
+    assert.strictEqual(storeBomb.blastRadius, CONFIG.weapons.bomb.blastRadius);
+
     // Default (no arg) stays fox2 for legacy AIR_ARENA_AI_DEFAULTS
     const defaults = env.getAiEnvelopeFields();
     assert.strictEqual(defaults.missileType, 'fox2');

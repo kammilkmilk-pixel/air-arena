@@ -752,6 +752,9 @@ GameContext.stateMachine = {
         }
         if (typeof action.roll === 'number') this.setRollInput(teamId, action.roll);
         if (action.weapon) this.setWeaponMode(teamId, action.weapon);
+        if (action.rocketFuze && typeof this.setRocketFuze === 'function') {
+            this.setRocketFuze(teamId, action.rocketFuze);
+        }
         t.singleMissileShot = !!action.singleMissile;
 
         if (action.powerPylons && t.pylons) {
@@ -784,6 +787,18 @@ GameContext.stateMachine = {
             }
             else if (action.queueAction === 'missile') {
                 if (!this.queueMissileFromPilot(teamId, action)) this.clearQueuedAction(teamId);
+            }
+            else if (action.queueAction === 'bomb') {
+                // Do not use toggleBombQueue — toggle would clear an already-queued bomb.
+                if (t.weapon !== 'bomb') this.setWeaponMode(teamId, 'bomb');
+                if (!this.queueAction(teamId, 'bomb')) this.clearQueuedAction(teamId);
+            }
+            else if (action.queueAction === 'rocket') {
+                if (action.rocketFuze && typeof this.setRocketFuze === 'function') {
+                    this.setRocketFuze(teamId, action.rocketFuze);
+                }
+                if (t.weapon !== 'rocket') this.setWeaponMode(teamId, 'rocket');
+                if (!this.queueAction(teamId, 'rocket')) this.clearQueuedAction(teamId);
             }
             else if (action.queueAction === 'flare') {
                 if (!t.flaresArmed && t.flareAmmo > 0 && this.queueAction(teamId, 'flare')) {

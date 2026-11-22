@@ -199,13 +199,14 @@ const CONFIG = {
             }
         },
         /**
-         * Rocket pod — human SMS path (salvo + VT fuse). AI decide still off.
+         * Rocket pod — dual-role: VT airburst (A2A) + Impact (A2G / low air).
+         * AI decide uses doctrine.munition.rocket when aiEnabled.
          * 9 rounds/pod; 3 per turn; ~1s spacing (intervalSteps ≈ turn/3).
          */
         'rocket': {
             id: 'rocket',
             name: '火箭巢',
-            aiEnabled: false,
+            aiEnabled: true,
             dualRole: true,
             damage: 45,
             range: 120,
@@ -281,13 +282,13 @@ const CONFIG = {
             }
         },
         /**
-         * Unguided bomb — Phase B human SMS path (ballistic + CCIP UI).
-         * AI decide still disabled (aiEnabled:false).
+         * Unguided bomb — ballistic + CCIP. AI uses against dirt-skimming foes
+         * until map ground-target schema (Phase B) lands.
          */
         'bomb': {
             id: 'bomb',
             name: '炸彈',
-            aiEnabled: false,
+            aiEnabled: true,
             dualRole: false,
             damage: 80,
             /** Ballistic (game units ≈ m; step = 1/stepsPerTurn of a turn). */
@@ -408,6 +409,30 @@ const CONFIG = {
                 reattackPredictTurns: 3,
                 reattackStandoffMin: 95,
                 reattackStandoffIdeal: 130
+            },
+            /**
+             * Rocket pod — VT (A2A proximity) / Impact (surface or dirt-skimming).
+             * Soft decide overlay only; does not rewrite stick geometry.
+             */
+            rocket: {
+                vtMaxLaunchAngleDeg: 22,
+                vtMinRange: 18,
+                vtMaxRange: 110,
+                /** Fire VT when FOX dry, out of FOX envelope, or soft hold with a true VT window. */
+                vtWhenMissileDry: true,
+                vtWhenOutOfMissileEnvelope: true,
+                vtFillSoftHold: true,
+                /** Impact / blast vs very low air targets (Phase B ground schema still pending). */
+                impactEnemyAltMax: 12,
+                impactMissMaxFrac: 0.9,
+                impactMinSlant: 12,
+                impactMaxSlant: 140
+            },
+            bomb: {
+                enemyAltMax: 10,
+                missMaxFrac: 0.85,
+                minSlant: 10,
+                maxSlant: 160
             }
         }
     },

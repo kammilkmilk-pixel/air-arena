@@ -53,7 +53,7 @@
 | 結算卡頓 | **Partial** | hitch marks（decide／paths／resolve）；火花改 seed 不進 log |
 | 序列化 B / 房主權威 | **Landed** | turn-log + transports（WS／BC／Supabase BaaS）；LAN `npm start`；雲端可選 |
 | 音訊 mixer | **Landed stub** | master／music／sfx／voice；BGM 尚未掛檔 |
-| 炸彈 / 火箭巢（A2G stores） | **Human SMS landed** | CCIP 自由落體炸彈＋9 發火箭巢（3 連發／回、VT 引信 6m、爆震 8m、傷害 45）＋3D 尾焰煙帶＋半透明武器環＋連線同步已上線；AI `decide` 與地面目標留待後續 |
+| 炸彈 / 火箭巢（A2G stores） | **Human SMS + AI soft overlay** | CCIP 炸彈＋火箭巢（VT／Impact）人類 SMS 已上線；AI `a2g-stores-doctrine` 後期覆蓋層可在命中窗內排程 VT／Impact／炸彈（不改 stick）；地圖地面目標 schema（階段 B）仍待開，Impact／炸彈暫打貼地空中目標 |
 | Freeze / tag backup | **You are here** | 2026-08-25 下一波軌道落地 |
 
 ---
