@@ -467,14 +467,22 @@ const CONFIG = {
          */
         condensation: {
             enabled: true,
-            vortexPts: 40,
+            /** Ribbon segments kept in GPU buffer (covers ~2 turns of samples). */
+            vortexPts: 96,
             vortexBaseWidth: 0.035,
-            vortexGrow: 0.55,
+            vortexGrow: 0.7,
             /** Soft trail when flying; boosted by turn / AoA. */
             vortexIdle: 0.12,
             vortexTurnBoost: 1.35,
             vortexAoaBoost: 0.9,
             vortexMinSpeed: 0.08,
+            /**
+             * How long wingtip vapor lingers (wall-clock).
+             * Combat/replay ≈ 1.5s per turn → 1.75 turns ≈ 2600ms.
+             */
+            trailPersistMs: 2800,
+            /** Min wingtip travel (m) before accepting a new sample — keeps long trails smooth. */
+            sampleMinDist: 0.35,
             /** Radians — LE fog starts / full. */
             aoaFogStart: 0.18,
             aoaFogFull: 0.42,

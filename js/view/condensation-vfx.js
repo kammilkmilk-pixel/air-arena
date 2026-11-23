@@ -25,13 +25,15 @@
             : {};
         return {
             enabled: v.enabled !== false,
-            vortexPts: Math.max(8, Math.min(64, Number(v.vortexPts) || 40)),
+            vortexPts: Math.max(16, Math.min(160, Number(v.vortexPts) || 96)),
             vortexBaseWidth: Number(v.vortexBaseWidth) || 0.035,
-            vortexGrow: Number(v.vortexGrow) || 0.55,
+            vortexGrow: Number(v.vortexGrow) || 0.7,
             vortexIdle: Number(v.vortexIdle) || 0.12,
             vortexTurnBoost: Number(v.vortexTurnBoost) || 1.35,
             vortexAoaBoost: Number(v.vortexAoaBoost) || 0.9,
             vortexMinSpeed: Number(v.vortexMinSpeed) || 0.08,
+            trailPersistMs: Math.max(800, Number(v.trailPersistMs) || 2800),
+            sampleMinDist: Math.max(0.05, Number(v.sampleMinDist) || 0.35),
             aoaFogStart: Number(v.aoaFogStart) || 0.18,
             aoaFogFull: Number(v.aoaFogFull) || 0.42,
             leFogMaxOpacity: Number(v.leFogMaxOpacity) || 0.55,
@@ -129,13 +131,38 @@
         return mesh;
     }
 
+    function disposeRibbonPair(fx) {
+        if (!fx) return;
+        [fx.left, fx.right].forEach((m) => {
+            if (!m) return;
+            if (m.parent) m.parent.remove(m);
+            else if (typeof scene !== 'undefined' && scene) scene.remove(m);
+            if (m.geometry) m.geometry.dispose();
+            if (m.material) m.material.dispose();
+        });
+        fx.left = null;
+        fx.right = null;
+    }
+
     function ensureFx(team) {
         if (!team || !team.wrapper) return null;
-        if (team.wrapper.userData.condensation) return team.wrapper.userData.condensation;
         if (typeof scene === 'undefined' || !scene) return null;
         ensureSharedMats();
         const c = cfg();
         const vis = aircraftVisuals(team);
+        let fx = team.wrapper.userData.condensation;
+
+        // Rebuild ribbon buffers if capacity grew (e.g. longer persist).
+        if (fx && fx.capPts !== c.vortexPts) {
+            disposeRibbonPair(fx);
+            fx.left = makeRibbon(c.vortexPts);
+            fx.right = makeRibbon(c.vortexPts);
+            scene.add(fx.left);
+            scene.add(fx.right);
+            fx.capPts = c.vortexPts;
+        }
+
+        if (fx) return fx;
 
         const left = makeRibbon(c.vortexPts);
         const right = makeRibbon(c.vortexPts);
@@ -157,13 +184,14 @@
         });
         team.wrapper.add(fogGroup);
 
-        const fx = {
+        fx = {
             left,
             right,
             fogGroup,
             fogSprites,
             histL: [],
             histR: [],
+            capPts: c.vortexPts,
             prevPos: null,
             prevQuat: null,
             intensity: 0,
@@ -171,6 +199,26 @@
         };
         team.wrapper.userData.condensation = fx;
         return fx;
+    }
+
+    function pushTipSample(hist, worldPos, now, c) {
+        const newest = hist[0];
+        if (newest && newest.p.distanceToSquared(worldPos) < c.sampleMinDist * c.sampleMinDist) {
+            // Refresh tip timestamp / position without adding density.
+            newest.p.copy(worldPos);
+            newest.t = now;
+            return;
+        }
+        hist.unshift({ p: worldPos.clone(), t: now });
+        while (hist.length > c.vortexPts) hist.pop();
+        const cutoff = now - c.trailPersistMs;
+        while (hist.length && hist[hist.length - 1].t < cutoff) hist.pop();
+    }
+
+    function pruneHist(hist, now, c) {
+        const cutoff = now - c.trailPersistMs;
+        while (hist.length && hist[hist.length - 1].t < cutoff) hist.pop();
+        while (hist.length > c.vortexPts) hist.pop();
     }
 
     function hideFx(fx) {
@@ -241,12 +289,15 @@
         return Math.max(0, Math.min(1.5, turn));
     }
 
-    function writeRibbon(mesh, hist, intensity, c) {
-        if (!mesh || !hist || hist.length < 2 || intensity < 0.02) {
+    function writeRibbon(mesh, hist, intensity, c, now) {
+        if (!mesh || !hist || hist.length < 2) {
             if (mesh) mesh.visible = false;
             return;
         }
+        // Even if current tip intensity is low, keep fading the persisted wake.
+        const drawIntensity = Math.max(intensity, 0.18);
         const maxPts = c.vortexPts;
+        const persist = Math.max(1, c.trailPersistMs);
         const posArr = mesh.geometry.attributes.position.array;
         const colArr = mesh.geometry.attributes.color.array;
         const uvArr = mesh.geometry.attributes.uv.array;
@@ -254,20 +305,23 @@
         let valid = 0;
 
         for (let h = 0; h < hist.length && h < maxPts; h++) {
-            const pt = hist[h];
-            if (!pt) continue;
-            const life = h / Math.max(1, maxPts - 1);
-            const width = (c.vortexBaseWidth + life * c.vortexGrow) * (0.55 + 0.7 * intensity);
-            _tmpWorld.copy(pt);
+            const sample = hist[h];
+            if (!sample || !sample.p) continue;
+            const age = Math.max(0, (now - sample.t) / persist);
+            if (age >= 1) continue;
+            const life = age; // 0 at tip → 1 at oldest (time-based, not index-based)
+            const width = (c.vortexBaseWidth + life * c.vortexGrow) * (0.55 + 0.7 * drawIntensity);
+            _tmpWorld.copy(sample.p);
             if (cam) {
                 _tmpCam.subVectors(cam.position, _tmpWorld).normalize();
             } else {
                 _tmpCam.set(0, 1, 0);
             }
-            // Ribbon sideways: prefer vertical × trail tangent so vortex reads as a thin sheet.
             const next = hist[Math.min(h + 1, hist.length - 1)];
-            _tmpA.subVectors(_tmpWorld, next).normalize();
-            if (_tmpA.lengthSq() < 1e-6) _tmpA.set(0, 0, 1);
+            const nextP = (next && next.p) ? next.p : sample.p;
+            _tmpA.subVectors(_tmpWorld, nextP);
+            if (_tmpA.lengthSq() < 1e-8) _tmpA.set(0, 0, 1);
+            else _tmpA.normalize();
             _tmpRight.crossVectors(_tmpA, _tmpCam);
             if (_tmpRight.lengthSq() < 1e-6) {
                 _tmpUp.set(0, 1, 0);
@@ -283,7 +337,8 @@
             posArr[idx * 3 + 4] = _tmpWorld.y - _tmpRight.y;
             posArr[idx * 3 + 5] = _tmpWorld.z - _tmpRight.z;
 
-            const fade = Math.pow(1 - life, 1.35) * intensity;
+            // Gentler falloff so the wake stays readable across ~2 turns.
+            const fade = Math.pow(1 - life, 1.05) * drawIntensity * (0.55 + 0.45 * intensity);
             const r = 0.78 * fade;
             const g = 0.88 * fade;
             const b = 1.0 * fade;
@@ -300,7 +355,7 @@
             mesh.geometry.attributes.color.needsUpdate = true;
             mesh.geometry.attributes.uv.needsUpdate = true;
             mesh.visible = true;
-            if (mesh.material) mesh.material.opacity = Math.min(1, 0.35 + intensity * 0.75);
+            if (mesh.material) mesh.material.opacity = Math.min(1, 0.3 + drawIntensity * 0.7);
         } else {
             mesh.visible = false;
         }
@@ -381,22 +436,19 @@
             intensity = Math.max(0, Math.min(1.85, intensity));
             fx.intensity = intensity;
 
-            // Sample wing tips into history (newest first, matching missile trail convention).
+            // Sample wing tips (distance-gated) and age out beyond ~1.5–2 turns.
             localToWorld(team.wrapper, vis.wingTipL, _tmpA);
             localToWorld(team.wrapper, vis.wingTipR, _tmpB);
-            fx.histL.unshift(_tmpA.clone());
-            fx.histR.unshift(_tmpB.clone());
-            while (fx.histL.length > c.vortexPts) fx.histL.pop();
-            while (fx.histR.length > c.vortexPts) fx.histR.pop();
-
-            // When barely moving / idle on deck, decay trails instead of painting a blob.
-            if (intensity < 0.08) {
-                if (fx.histL.length > 2) fx.histL.length = Math.max(0, fx.histL.length - 2);
-                if (fx.histR.length > 2) fx.histR.length = Math.max(0, fx.histR.length - 2);
+            if (intensity >= 0.06 && speedGate > 0.2) {
+                pushTipSample(fx.histL, _tmpA, now, c);
+                pushTipSample(fx.histR, _tmpB, now, c);
+            } else {
+                pruneHist(fx.histL, now, c);
+                pruneHist(fx.histR, now, c);
             }
 
-            writeRibbon(fx.left, fx.histL, intensity, c);
-            writeRibbon(fx.right, fx.histR, intensity, c);
+            writeRibbon(fx.left, fx.histL, intensity, c, now);
+            writeRibbon(fx.right, fx.histR, intensity, c, now);
             updateLeFog(fx, aoa, c, now);
 
             if (!fx.prevPos) fx.prevPos = team.wrapper.position.clone();
