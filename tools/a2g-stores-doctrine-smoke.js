@@ -76,13 +76,13 @@ global.AirArenaRocket = {
         const fuze = team.rocketFuze === 'impact' ? 'impact' : 'vt';
         if (fuze === 'vt') {
             return {
-                fuze: 'vt', anyVtHit: true, bestCpaDist: 3.2, vtRadius: 6,
+                fuze: 'vt', anyVtHit: true, bestCpaDist: 3.2, vtRadius: 4.5,
                 aimWorld: { x: 0, y: 34, z: 48 }, slantDist: 50
             };
         }
         const e = enemy.wrapper.position;
         return {
-            fuze: 'impact', grounded: true, blastRadius: 8,
+            fuze: 'impact', grounded: true, blastRadius: 6,
             aimWorld: { x: e.x, y: 0, z: e.z },
             slantDist: 45
         };

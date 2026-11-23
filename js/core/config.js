@@ -208,7 +208,7 @@ const CONFIG = {
             name: '火箭巢',
             aiEnabled: true,
             dualRole: true,
-            damage: 45,
+            damage: 22,
             range: 120,
             /** Ammo in one pod. */
             roundsPerPod: 9,
@@ -236,14 +236,14 @@ const CONFIG = {
             groundY: 0,
             /** Default fuze mode: 'vt' (airburst proximity) | 'impact' (surface/direct hit). */
             defaultFuze: 'vt',
-            /** VT proximity fuse radius (m). */
-            vtRadius: 6,
+            /** VT proximity fuse radius (m). Pre-5a0bd77 defaults (22 / 4.5 / 6). */
+            vtRadius: 4.5,
             /** Also VT-trigger when altitude below this (airburst near ground). */
             vtGroundHeight: 3.5,
             /** Direct airframe collision radius (m) when fuze is 'impact'. */
             impactDirectRadius: 1.8,
             fuseDelaySteps: 4,
-            blastRadius: 8,
+            blastRadius: 6,
             explosionScale: 1.6,
             flashScale: 2.0,
             puffScale: 1.4,

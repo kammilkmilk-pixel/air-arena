@@ -82,7 +82,7 @@ global.AirArenaRocket = {
     ensurePodAmmo: (p) => Math.max(0, Number(p.ammo) || 0),
     setTeamFuzeMode: (t, f) => { t.rocketFuze = f; return f; },
     computeRocketAimSolution: () => ({
-        fuze: 'impact', grounded: true, blastRadius: 8,
+        fuze: 'impact', grounded: true, blastRadius: 6,
         aimWorld: { x: gt.x, y: 0, z: gt.z }, slantDist: 45
     })
 };

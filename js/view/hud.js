@@ -1652,10 +1652,10 @@ window.updateDynamicHUD = function() {
             lcosPipper.style.left = `${window.lcosLastPos.x}px`;
             lcosPipper.style.top = `${window.lcosLastPos.y}px`;
 
-            // Scale pipper diameter to physical VT (6m) or Blast (8m) radius at aim point!
+            // Scale pipper diameter to physical VT / blast radius at aim point.
             const physRadius = fuze === 'impact'
-                ? ((sol && sol.blastRadius) || 8)
-                : ((sol && sol.vtRadius) || 6);
+                ? ((sol && sol.blastRadius) || 6)
+                : ((sol && sol.vtRadius) || 4.5);
             const camDist = Math.max(12, camera.position.distanceTo(aimWorld));
             const focal = Math.max(window.innerHeight || 600, 480) * 0.72;
             const rawDiamPx = 2 * (physRadius / camDist) * focal;

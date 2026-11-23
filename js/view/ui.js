@@ -3795,7 +3795,7 @@ function uiToggleRocketFuze(teamId = null, explicitMode = null) {
     showSMSAlert(
         next === 'impact'
             ? '💥 火箭引信：IMPACT 撞擊對地（觸地／建築引爆，瞄準環鎖定落點中心）'
-            : '🎯 火箭引信：VT 對空近發（6m 空爆，瞄準環套住預估框即命中）',
+            : '🎯 火箭引信：VT 對空近發（空爆半徑套住預估框即命中）',
         next === 'impact' ? '#ff9966' : '#4dd0e1'
     );
     updateDashboardUI(t);

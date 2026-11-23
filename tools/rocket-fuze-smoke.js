@@ -142,7 +142,7 @@ R.setTeamFuzeMode(redVt, 'vt');
 const solVt = R.computeRocketAimSolution(redVt, blueHeadOn);
 assert(solVt && solVt.fuze === 'vt', 'VT solution missing');
 assert.strictEqual(solVt.anyVtHit, true, 'Expected head-on VT salvo to register anyVtHit');
-assert(solVt.bestCpaDist <= 6.0, 'Expected CPA <= 6m VT radius, got ' + solVt.bestCpaDist);
+assert(solVt.bestCpaDist <= 4.5, 'Expected CPA <= 4.5m VT radius, got ' + solVt.bestCpaDist);
 assert(solVt.targetEstWorld && solVt.aimWorld, 'Expected targetEstWorld and aimWorld in VT mode');
 
 // 3. Impact aim solver: -28 deg dive hits ground (y ~ 0), while +45 deg climb reports ungrounded

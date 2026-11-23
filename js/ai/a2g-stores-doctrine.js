@@ -85,8 +85,8 @@
             impactMissMaxFrac: Number(row && row.impactMissMaxFrac) || 0.9,
             impactMinSlant: Number(row && row.impactMinSlant) || 12,
             impactMaxSlant: Number(row && row.impactMaxSlant) || 140,
-            vtRadius: Number(wpn && wpn.vtRadius) || 6,
-            blastRadius: Number(wpn && wpn.blastRadius) || 8
+            vtRadius: Number(wpn && wpn.vtRadius) || 4.5,
+            blastRadius: Number(wpn && wpn.blastRadius) || 6
         };
     }
 

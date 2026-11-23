@@ -385,7 +385,7 @@
 
     /**
      * Shared aim solver for both 3D preview and 2D LCOS pipper.
-     * - 'vt': simulates airburst corridor against enemy trajectory, CPA, and 6m VT trigger.
+     * - 'vt': simulates airburst corridor against enemy trajectory, CPA, and VT trigger.
      * - 'impact': simulates surface/building impact points and salvo impact centroid.
      */
     function computeRocketAimSolution(team, enemy) {
@@ -401,8 +401,8 @@
         const cfg = rocketConfig();
         const knobs = ballisticKnobs();
         const stepsPerTurn = knobs.stepsPerTurn;
-        const vtR = cfg.vtRadius != null ? Number(cfg.vtRadius) : 6;
-        const blastR = cfg.blastRadius != null ? Number(cfg.blastRadius) : 8;
+        const vtR = cfg.vtRadius != null ? Number(cfg.vtRadius) : 4.5;
+        const blastR = cfg.blastRadius != null ? Number(cfg.blastRadius) : 6;
         const airRange = cfg.range != null ? Number(cfg.range) : 120;
         const fuseDelay = cfg.fuseDelaySteps != null ? Number(cfg.fuseDelaySteps) : 4;
         const liveEnemy = (enemy && enemy.wrapper && !enemy.isDestroyed) ? enemy : null;
@@ -759,7 +759,7 @@
         if (rocket.launchStep >= 0 && step < rocket.launchStep + fuseDelay) return null;
         if (rocket.launchStep < 0 && (Number(rocket.ageSteps) || 0) < fuseDelay) return null;
 
-        const vtR = cfg.vtRadius != null ? Number(cfg.vtRadius) : 6;
+        const vtR = cfg.vtRadius != null ? Number(cfg.vtRadius) : 4.5;
         const vtGround = cfg.vtGroundHeight != null ? Number(cfg.vtGroundHeight) : 3.5;
 
         // Airburst near ground.
@@ -792,8 +792,8 @@
     function resolveRocketsForStep(step, ratio, ctx) {
         if (!ctx || !ctx.log) return;
         const cfg = rocketConfig();
-        const blastR = cfg.blastRadius != null ? Number(cfg.blastRadius) : 8;
-        const damage = cfg.damage != null ? Number(cfg.damage) : 45;
+        const blastR = cfg.blastRadius != null ? Number(cfg.blastRadius) : 6;
+        const damage = cfg.damage != null ? Number(cfg.damage) : 22;
         const maxFlight = cfg.maxFlightSteps != null ? Number(cfg.maxFlightSteps) : 220;
         const knobs = ballisticKnobs();
         const ids = (typeof combatActiveIds === 'function')
@@ -1290,7 +1290,7 @@
                 new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.78 })
             );
             line.frustumCulled = false;
-            // Unit-radius translucent disc in XY plane (+Z normal) — scaled to vtRadius (6m) or blastRadius (8m).
+            // Unit-radius translucent disc in XY plane (+Z normal) — scaled to vtRadius / blastRadius.
             const ring = new THREE.Mesh(
                 Rocket._aimDiscGeo,
                 new THREE.MeshBasicMaterial({
@@ -1323,8 +1323,8 @@
 
     /**
      * Dual-fuze 3D preview:
-     * - VT (air-to-air): cyan/red airburst trajectories + upright 6m VT proximity rings.
-     * - IMPACT (surface): orange trajectories to ground/buildings + 8m surface blast rings & crosses.
+     * - VT (air-to-air): cyan/red airburst trajectories + upright VT proximity discs.
+     * - IMPACT (surface): orange trajectories to ground/buildings + surface blast discs & crosses.
      */
     function updateRocketAimPreview(team) {
         if (!team || team.weapon !== 'rocket' || team.isDestroyed) {

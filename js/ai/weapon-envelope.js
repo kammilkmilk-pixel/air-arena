@@ -278,9 +278,9 @@
             aiEnabled: !!(row && row.aiEnabled),
             dualRole: !!(row && row.dualRole),
             range: Number(row && row.range) || 120,
-            vtRadius: Number(row && row.vtRadius) || 6,
-            blastRadius: Number(row && row.blastRadius) || 8,
-            damage: Number(row && row.damage) || 45,
+            vtRadius: Number(row && row.vtRadius) || 4.5,
+            blastRadius: Number(row && row.blastRadius) || 6,
+            damage: Number(row && row.damage) || 22,
             salvoPerTurn: Number(row && row.salvoPerTurn) || 3
         };
     }
