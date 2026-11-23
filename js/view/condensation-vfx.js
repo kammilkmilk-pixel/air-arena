@@ -27,8 +27,8 @@
             enabled: v.enabled !== false,
             onlyDuringFlightAnim: v.onlyDuringFlightAnim !== false,
             vortexPts: Math.max(16, Math.min(160, Number(v.vortexPts) || 96)),
-            vortexBaseWidth: Number(v.vortexBaseWidth) || 0.09,
-            vortexGrow: Number(v.vortexGrow) || 1.35,
+            vortexBaseWidth: Number(v.vortexBaseWidth) || 0.03,
+            vortexGrow: Number(v.vortexGrow) || 0.22,
             vortexIdle: Number(v.vortexIdle) || 0.35,
             vortexTurnBoost: Number(v.vortexTurnBoost) || 1.1,
             vortexAoaBoost: Number(v.vortexAoaBoost) || 0.85,
@@ -81,15 +81,15 @@
             vaporTex.needsUpdate = true;
         }
         if (!vortexMat) {
+            // Additive: black texture edges / faded tail vanish instead of drawing dark sheets.
             const map = (typeof window !== 'undefined' && window.ribbonTexShared)
                 ? window.ribbonTexShared
                 : vaporTex;
-            // NormalBlending reads better against bright sky than additive washout.
             vortexMat = new THREE.MeshBasicMaterial({
                 map,
                 transparent: true,
                 opacity: 1,
-                blending: THREE.NormalBlending,
+                blending: THREE.AdditiveBlending,
                 depthWrite: false,
                 side: THREE.DoubleSide,
                 vertexColors: true,
@@ -211,15 +211,21 @@
         return fx;
     }
 
+    /** hist[0] is a live head glued to the tip; hist[1..] are committed wake samples. */
     function pushTipSample(hist, worldPos, now, c) {
-        const newest = hist[0];
-        if (newest && newest.p.distanceToSquared(worldPos) < c.sampleMinDist * c.sampleMinDist) {
-            // Refresh tip timestamp / position without adding density.
-            newest.p.copy(worldPos);
-            newest.t = now;
+        if (!hist.length) {
+            hist.push({ p: worldPos.clone(), t: now });
+            hist.push({ p: worldPos.clone(), t: now });
             return;
         }
-        hist.unshift({ p: worldPos.clone(), t: now });
+        const head = hist[0];
+        head.p.copy(worldPos);
+        head.t = now;
+        const lastCommitted = hist[1];
+        if (lastCommitted && lastCommitted.p.distanceToSquared(worldPos) < c.sampleMinDist * c.sampleMinDist) {
+            return;
+        }
+        hist.splice(1, 0, { p: worldPos.clone(), t: now });
         while (hist.length > c.vortexPts) hist.pop();
         const cutoff = now - c.trailPersistMs;
         while (hist.length && hist[hist.length - 1].t < cutoff) hist.pop();
@@ -338,9 +344,9 @@
             posArr[idx * 3 + 5] = _tmpWorld.z - _tmpRight.z;
 
             // Gentler falloff so the wake stays readable across ~2 turns.
-            const fade = Math.pow(1 - life, 0.95) * Math.min(1.4, drawIntensity * 1.15);
-            const r = 0.86 * fade;
-            const g = 0.92 * fade;
+            const fade = Math.pow(1 - life, 1.1) * Math.min(1, 0.45 + drawIntensity * 0.4);
+            const r = 0.95 * fade;
+            const g = 0.97 * fade;
             const b = 1.0 * fade;
             colArr[idx * 3 + 0] = r; colArr[idx * 3 + 1] = g; colArr[idx * 3 + 2] = b;
             colArr[idx * 3 + 3] = r; colArr[idx * 3 + 4] = g; colArr[idx * 3 + 5] = b;
@@ -355,7 +361,7 @@
             mesh.geometry.attributes.color.needsUpdate = true;
             mesh.geometry.attributes.uv.needsUpdate = true;
             mesh.visible = true;
-            if (mesh.material) mesh.material.opacity = Math.min(0.95, 0.45 + drawIntensity * 0.5);
+            if (mesh.material) mesh.material.opacity = 1;
         } else {
             mesh.visible = false;
         }

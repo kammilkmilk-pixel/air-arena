@@ -471,8 +471,8 @@ const CONFIG = {
             onlyDuringFlightAnim: true,
             /** Ribbon segments kept in GPU buffer (covers ~2 turns of samples). */
             vortexPts: 96,
-            vortexBaseWidth: 0.09,
-            vortexGrow: 1.35,
+            vortexBaseWidth: 0.03,
+            vortexGrow: 0.22,
             /** Soft trail when flying; boosted by turn / AoA. */
             vortexIdle: 0.35,
             vortexTurnBoost: 1.1,
