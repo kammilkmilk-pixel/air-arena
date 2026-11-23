@@ -32,6 +32,14 @@
             tipWakeTurns: Math.max(0.08, Math.min(2.5, Number(v.tipWakeTurns) || 0.55)),
             tipWakeWidth: Math.max(0.015, Number(v.tipWakeWidth) || 0.085),
             tipWakeOpacity: Math.max(0.05, Math.min(1, Number(v.tipWakeOpacity) || 0.92)),
+            tipPullStartRad: Number.isFinite(Number(v.tipPullStartRad)) ? Number(v.tipPullStartRad) : 0.24,
+            tipPullFullRad: Number.isFinite(Number(v.tipPullFullRad)) ? Number(v.tipPullFullRad) : 0.58,
+            tipClimbStartDeg: Number.isFinite(Number(v.tipClimbStartDeg)) ? Number(v.tipClimbStartDeg) : 22,
+            tipClimbFullDeg: Number.isFinite(Number(v.tipClimbFullDeg)) ? Number(v.tipClimbFullDeg) : 42,
+            tipRollStartRad: Number.isFinite(Number(v.tipRollStartRad)) ? Number(v.tipRollStartRad) : 0.26,
+            tipRollFullRad: Number.isFinite(Number(v.tipRollFullRad)) ? Number(v.tipRollFullRad) : 0.62,
+            tipTurnStartRad: Number.isFinite(Number(v.tipTurnStartRad)) ? Number(v.tipTurnStartRad) : 0.34,
+            tipTurnFullRad: Number.isFinite(Number(v.tipTurnFullRad)) ? Number(v.tipTurnFullRad) : 0.65,
             vortexPts: Math.max(24, Math.min(180, Number(v.vortexPts) || 96)),
             trailPersistMs: Math.max(800, Number(v.trailPersistMs) || 2800),
             aoaFogStart: Number(v.aoaFogStart) || 0.55,
@@ -300,17 +308,92 @@
 
     const _samplePos = new THREE.Vector3();
     const _sampleQuat = new THREE.Quaternion();
+    const _samplePosA = new THREE.Vector3();
+    const _sampleQuatA = new THREE.Quaternion();
+    const _samplePosB = new THREE.Vector3();
+    const _sampleQuatB = new THREE.Quaternion();
+    const _noseA = new THREE.Vector3();
+    const _noseB = new THREE.Vector3();
+    const _upA = new THREE.Vector3();
+    const _wingA = new THREE.Vector3();
+    const _wingB = new THREE.Vector3();
     const _prevCenter = new THREE.Vector3();
     const _tangent = new THREE.Vector3();
     const _toCam = new THREE.Vector3();
     const _camSide = new THREE.Vector3();
 
+    function smooth01(e0, e1, x) {
+        const t = Math.max(0, Math.min(1, (x - e0) / Math.max(1e-4, e1 - e0)));
+        return t * t * (3 - 2 * t);
+    }
+
+    /**
+     * Evaluate wingtip condensation intensity in [0, 1] from aerodynamic maneuver metrics.
+     * Triggers on:
+     *   - Positive-G pull-ups (high pitch-up rate)
+     *   - Steep climb attitude (while maintaining climb, not hard push-over)
+     *   - Rolling maneuvers (high roll rate around nose axis)
+     *   - Hard banked turns (high turn rate combined with bank angle)
+     * Suppressed during straight/level cruise, gentle maneuvers, or stall/near-zero speed.
+     */
+    function tipCondensationIntensity(metrics, c) {
+        const m = metrics || {};
+        const k = c || cfg();
+        const speed = Number(m.speed);
+        const speedFactor = Number.isFinite(speed) ? smooth01(1.5, 4.5, speed) : 1.0;
+        if (speedFactor <= 1e-4) return 0;
+
+        const pullRate = Number(m.pullRate) || 0;      // rad/turn (+ = pull-up, - = push-over)
+        const rollRate = Math.abs(Number(m.rollRate) || 0); // rad/turn
+        const turnRate = Math.abs(Number(m.turnRate) || 0); // rad/turn
+        const climbDeg = Number(m.climbDeg) || 0;      // deg (+ = nose above horizon)
+        const bankDeg = Math.abs(Number(m.bankDeg) || 0);   // deg
+
+        const pullScore = smooth01(k.tipPullStartRad, k.tipPullFullRad, pullRate);
+        const climbGate = pullRate > -0.25 ? 1.0 : 0.35;
+        const climbScore = smooth01(k.tipClimbStartDeg, k.tipClimbFullDeg, climbDeg) * climbGate;
+        const rollScore = smooth01(k.tipRollStartRad, k.tipRollFullRad, rollRate);
+        const bankTurnScore = smooth01(k.tipTurnStartRad, k.tipTurnFullRad, turnRate)
+            * smooth01(15, 32, bankDeg);
+
+        return Math.max(0, Math.min(1, Math.max(pullScore, climbScore, rollScore, bankTurnScore) * speedFactor));
+    }
+
+    /** Sample local aerodynamic maneuver intensity at timeline cursor `u` from battleLog poses. */
+    function sampleTipIntensityAtU(id, u, c) {
+        if (!Array.isArray(battleLog) || !battleLog.length) return 0;
+        const maxU = battleLog.length;
+        const halfDu = 0.025;
+        const u0 = Math.max(0, u - halfDu);
+        const u1 = Math.min(maxU, u + halfDu);
+        const du = u1 - u0;
+        if (du < 1e-4) return 0;
+        if (!samplePoseAtU(id, u0, _samplePosA, _sampleQuatA)) return 0;
+        if (!samplePoseAtU(id, u1, _samplePosB, _sampleQuatB)) return 0;
+
+        _noseA.set(0, 0, 1).applyQuaternion(_sampleQuatA).normalize();
+        _noseB.set(0, 0, 1).applyQuaternion(_sampleQuatB).normalize();
+        _upA.set(0, 1, 0).applyQuaternion(_sampleQuatA).normalize();
+        _wingA.set(1, 0, 0).applyQuaternion(_sampleQuatA).normalize();
+        _wingB.set(1, 0, 0).applyQuaternion(_sampleQuatB).normalize();
+
+        const pullRate = Math.atan2(_noseB.dot(_upA), Math.max(1e-4, _noseB.dot(_noseA))) / du;
+        const rollRate = Math.abs(Math.atan2(_wingB.dot(_upA), Math.max(1e-4, _wingB.dot(_wingA)))) / du;
+        const turnRate = Math.abs(Math.atan2(_noseB.dot(_wingA), Math.max(1e-4, _noseB.dot(_noseA)))) / du;
+        const climbDeg = Math.asin(Math.max(-1, Math.min(1, _noseB.y))) * (180 / Math.PI);
+        const bankDeg = Math.abs(Math.asin(Math.max(-1, Math.min(1, _wingB.y)))) * (180 / Math.PI);
+        const speed = _samplePosB.distanceTo(_samplePosA) / du; // world units per turn (~10-40 normal flight)
+
+        return tipCondensationIntensity({ pullRate, rollRate, turnRate, climbDeg, bankDeg, speed }, c);
+    }
+
     /**
      * Build a white vapor ribbon from `uNow` backward over `spanTurns`,
      * emitted at `localOffset` ([x, y, z] in wrapper-local coordinates).
      * Uses billboard-assisted width so ribbons stay visible from top-down AND edge-on bank angles.
+     * Optional `intensityFn(u)` modulates per-segment visibility/width for maneuver-gated wingtip trails.
      */
-    function buildHistoryRibbon(mesh, id, uNow, spanTurns, maxPts, localOffset, halfWidth, baseOpacity, fadePow) {
+    function buildHistoryRibbon(mesh, id, uNow, spanTurns, maxPts, localOffset, halfWidth, baseOpacity, fadePow, intensityFn) {
         if (!mesh || uNow <= 0.005 || spanTurns <= 0.01) {
             if (mesh) mesh.visible = false;
             return;
@@ -327,6 +410,7 @@
         const uvArr = mesh.geometry.attributes.uv.array;
         const cam = (typeof camera !== 'undefined') ? camera : null;
         let valid = 0;
+        let maxIntensity = 0;
 
         for (let i = 0; i <= segs; i++) {
             const frac = i / segs; // 0 at aircraft (newest) → 1 at oldest tail end
@@ -334,6 +418,9 @@
             if (!samplePoseAtU(id, u, _samplePos, _sampleQuat)) break;
 
             const age = Math.min(1, Math.max(0, (uNow - u) / spanTurns));
+            const intensity = intensityFn ? Math.max(0, Math.min(1, intensityFn(u))) : 1.0;
+            if (intensity > maxIntensity) maxIntensity = intensity;
+
             _tmpLocal.set(Number(localOffset[0]) || 0, Number(localOffset[1]) || 0, Number(localOffset[2]) || 0);
             _tmpCenter.copy(_tmpLocal).applyQuaternion(_sampleQuat).add(_samplePos);
 
@@ -356,7 +443,8 @@
                 }
             }
             _prevCenter.copy(_tmpCenter);
-            const w = halfWidth * (1.0 + age * 0.35);
+            const widthScale = intensityFn ? (0.35 + 0.65 * intensity) : 1.0;
+            const w = halfWidth * widthScale * (1.0 + age * 0.35);
             _tmpWing.multiplyScalar(w);
 
             const idx = valid * 2;
@@ -368,7 +456,8 @@
             posArr[idx * 3 + 5] = _tmpCenter.z - _tmpWing.z;
 
             // CanvasTexture flipY=true in Three r128: UV v=1 samples canvas top (y=0, full alpha), v=0 samples bottom (y=127, transparent).
-            const vCoord = Math.pow(1 - age, fadePow);
+            // Modulating vCoord by maneuver intensity fades wingtip trails in/out smoothly without RGBA vertex colors.
+            const vCoord = Math.pow(1 - age, fadePow) * intensity;
             uvArr[idx * 2 + 0] = 0;
             uvArr[idx * 2 + 1] = vCoord;
             uvArr[idx * 2 + 2] = 1;
@@ -376,7 +465,7 @@
             valid++;
         }
 
-        if (valid > 1) {
+        if (valid > 1 && maxIntensity > 0.03) {
             mesh.geometry.setDrawRange(0, (valid - 1) * 6);
             mesh.geometry.attributes.position.needsUpdate = true;
             mesh.geometry.attributes.uv.needsUpdate = true;
@@ -477,20 +566,21 @@
                 if (fx.right) fx.right.visible = false;
             } else {
                 const centerEmitter = [0, vis.engineOffsetY, 0];
+                const tipIntensityFn = (u) => sampleTipIntensityAtU(id, u, c);
                 buildHistoryRibbon(
                     fx.center, id, uNow,
                     c.centerWakeTurns, c.vortexPts,
-                    centerEmitter, c.centerWakeWidth * 0.5, c.centerWakeOpacity, 1.15
+                    centerEmitter, c.centerWakeWidth * 0.5, c.centerWakeOpacity, 1.15, null
                 );
                 buildHistoryRibbon(
                     fx.left, id, uNow,
                     c.tipWakeTurns, c.vortexPts,
-                    vis.wingTipL, c.tipWakeWidth * 0.5, c.tipWakeOpacity, 0.95
+                    vis.wingTipL, c.tipWakeWidth * 0.5, c.tipWakeOpacity, 0.95, tipIntensityFn
                 );
                 buildHistoryRibbon(
                     fx.right, id, uNow,
                     c.tipWakeTurns, c.vortexPts,
-                    vis.wingTipR, c.tipWakeWidth * 0.5, c.tipWakeOpacity, 0.95
+                    vis.wingTipR, c.tipWakeWidth * 0.5, c.tipWakeOpacity, 0.95, tipIntensityFn
                 );
             }
 
@@ -550,6 +640,7 @@
             t = Math.max(0, Math.min(1, t));
             return t * t * (3 - 2 * t);
         },
+        tipCondensationIntensity,
         cfg
     };
 })(typeof window !== 'undefined' ? window : globalThis);

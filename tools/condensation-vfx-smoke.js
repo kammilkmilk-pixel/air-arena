@@ -81,4 +81,23 @@ assert(knobs.trailPersistMs >= 2000, 'trailPersistMs should cover ~1–2 turns, 
 assert(knobs.vortexPts >= 64, 'vortexPts buffer for long wake, got ' + knobs.vortexPts);
 assert(knobs.centerWakeTurns > knobs.tipWakeTurns, 'centerWakeTurns (' + knobs.centerWakeTurns + ') must exceed shorter tipWakeTurns (' + knobs.tipWakeTurns + ')');
 
+// Wingtip condensation maneuver gating checks
+assert(typeof C.tipCondensationIntensity === 'function', 'tipCondensationIntensity exported');
+assert(C.tipCondensationIntensity({ pullRate: 0, rollRate: 0, turnRate: 0, climbDeg: 0, bankDeg: 0, speed: 20 }) === 0,
+    'straight & level cruise must have 0 wingtip condensation');
+assert(C.tipCondensationIntensity({ pullRate: 0.12, rollRate: 0.10, turnRate: 0.10, climbDeg: 8, bankDeg: 10, speed: 20 }) === 0,
+    'gentle climb/turn must have 0 wingtip condensation');
+assert(C.tipCondensationIntensity({ pullRate: -0.35, rollRate: 0, turnRate: 0, climbDeg: -15, bankDeg: 0, speed: 25 }) === 0,
+    'push-over dive must have 0 wingtip condensation');
+assert(C.tipCondensationIntensity({ pullRate: 0.8, rollRate: 0.8, turnRate: 0, climbDeg: 40, bankDeg: 45, speed: 0.5 }) === 0,
+    'near-zero speed / stall must suppress wingtip condensation');
+assert(C.tipCondensationIntensity({ pullRate: 0.65, rollRate: 0, turnRate: 0, climbDeg: 18, bankDeg: 0, speed: 20 }) > 0.9,
+    'high-G pull-up must strongly trigger wingtip condensation');
+assert(C.tipCondensationIntensity({ pullRate: 0.05, rollRate: 0, turnRate: 0, climbDeg: 38, bankDeg: 0, speed: 20 }) > 0.7,
+    'steep climb attitude must trigger wingtip condensation');
+assert(C.tipCondensationIntensity({ pullRate: 0, rollRate: 0.60, turnRate: 0, climbDeg: 0, bankDeg: 35, speed: 20 }) > 0.9,
+    'hard roll must strongly trigger wingtip condensation');
+assert(C.tipCondensationIntensity({ pullRate: 0, rollRate: 0.05, turnRate: 0.60, climbDeg: 0, bankDeg: 38, speed: 20 }) > 0.7,
+    'hard banked turn must trigger wingtip condensation');
+
 console.log('condensation-vfx-smoke: PASS');

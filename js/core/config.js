@@ -479,10 +479,20 @@ const CONFIG = {
             centerWakeTurns: 1.6,
             centerWakeWidth: 0.12,
             centerWakeOpacity: 0.82,
-            /** Shorter white ribbons from wingTipL / wingTipR emitters (length in turns). */
+            /** Shorter white ribbons from wingTipL / wingTipR emitters (length in turns).
+             *  Triggered only during steep climbs / high-G pull-ups or rolling maneuvers. */
             tipWakeTurns: 0.55,
             tipWakeWidth: 0.085,
             tipWakeOpacity: 0.92,
+            /** Wingtip condensation trigger thresholds (in rad/turn or degrees). */
+            tipPullStartRad: 0.24,
+            tipPullFullRad: 0.58,
+            tipClimbStartDeg: 22,
+            tipClimbFullDeg: 42,
+            tipRollStartRad: 0.26,
+            tipRollFullRad: 0.62,
+            tipTurnStartRad: 0.34,
+            tipTurnFullRad: 0.65,
             /** Ribbon segments kept in GPU buffer (covers ~2 turns of samples). */
             vortexPts: 96,
             trailPersistMs: 2800,
