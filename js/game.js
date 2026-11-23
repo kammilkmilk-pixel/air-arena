@@ -65,10 +65,15 @@ function setupModel(gltfOrScene, x, z, yRot) {
     });
 
     const box = new THREE.Box3().setFromObject(model); const scale = 1.2 / Math.max(box.getSize(new THREE.Vector3()).x, box.getSize(new THREE.Vector3()).y, box.getSize(new THREE.Vector3()).z); model.scale.set(scale, scale, scale); const center = box.getCenter(new THREE.Vector3()); model.position.set(-center.x * scale, -center.y * scale, -center.z * scale);
-    const wrapper = new THREE.Group(); wrapper.add(model);
+    const modelPivot = new THREE.Group();
+    modelPivot.name = 'aircraftModelPivot';
+    modelPivot.add(model);
+    const wrapper = new THREE.Group();
+    wrapper.add(modelPivot);
+    wrapper.userData.modelPivot = modelPivot;
 
     let exhaust = createExhaust();
-    wrapper.add(exhaust.group);
+    modelPivot.add(exhaust.group);
     wrapper.userData.exhaust = exhaust;
 
     wrapper.position.set(x, 45, z); wrapper.rotation.y = yRot; wrapper.userData.logicalQuat = wrapper.quaternion.clone(); scene.add(wrapper);
@@ -951,28 +956,38 @@ function animate() {
     // 🌟 統一的尾焰物理動畫
     // ==========================================
     const exhaustIds = (GameContext.getActiveMatchIds && GameContext.getActiveMatchIds()) || ['red', 'blue'];
+    const stallVfxApi = (typeof window !== 'undefined' && window.AirArenaStallVfx) ? window.AirArenaStallVfx : null;
     exhaustIds.forEach(id => {
         let t = teams[id];
         if (!t || !t.wrapper || !t.wrapper.userData || !t.wrapper.userData.exhaust || t.isDestroyed) return;
         let exhaust = t.wrapper.userData.exhaust;
         let throttle = t.throttle || 2;
+        const stallMod = (stallVfxApi && typeof stallVfxApi.getExhaustMod === 'function')
+            ? stallVfxApi.getExhaustMod(id, throttle, now)
+            : { scaleZMult: 1, scaleXYMult: 1, opacityMult: 1, surgePop: 0 };
 
         exhaust.machTex.offset.y -= 0.02 * throttle;
         exhaust.outerTex.offset.y -= 0.03 * throttle;
         let flicker = Math.sin(now * 0.05) * 0.02 * throttle;
 
-        let scaleX = 0.5 * (0.8 + throttle * 0.1);
-        let scaleY = 0.5 * (0.8 + throttle * 0.1);
-        let scaleZ = 0.5 * (throttle * 0.45) + flicker;
+        let scaleX = 0.5 * (0.8 + throttle * 0.1) * stallMod.scaleXYMult;
+        let scaleY = 0.5 * (0.8 + throttle * 0.1) * stallMod.scaleXYMult;
+        let scaleZ = Math.max(0.08, (0.5 * (throttle * 0.45) + flicker) * stallMod.scaleZMult);
 
         exhaust.group.scale.set(scaleX, scaleY, scaleZ);
 
-        let targetOpacity = 0.05 + (throttle * 0.30);
+        let targetOpacity = (0.05 + (throttle * 0.30)) * stallMod.opacityMult;
         if (exhaust.group.children[0] && exhaust.group.children[0].material) {
             exhaust.group.children[0].material.opacity = targetOpacity;
+            if (exhaust.group.children[0].material.color) {
+                exhaust.group.children[0].material.color.setHex(stallMod.surgePop > 0.25 ? 0xffaa44 : 0xffffff);
+            }
         }
         if (exhaust.group.children[1] && exhaust.group.children[1].material) {
             exhaust.group.children[1].material.opacity = Math.min(1.0, targetOpacity * 1.2);
+            if (exhaust.group.children[1].material.color) {
+                exhaust.group.children[1].material.color.setHex(stallMod.surgePop > 0.25 ? 0xff7722 : 0xffffff);
+            }
         }
     });
 
@@ -1043,6 +1058,7 @@ function animate() {
         }
 
         if (typeof window.updateCondensationVfx === 'function') window.updateCondensationVfx();
+        if (typeof window.updateStallVfx === 'function') window.updateStallVfx();
         renderer.render(scene, camera);
         return;
     }
@@ -1138,8 +1154,9 @@ function animate() {
             window.AirArenaAutocannonVfx.hideAll();
         }
     }
-    // After combat pose update (or planning idle): refresh / hide condensation.
+    // After combat pose update (or planning idle): refresh / hide condensation & stall VFX.
     if (typeof window.updateCondensationVfx === 'function') window.updateCondensationVfx();
+    if (typeof window.updateStallVfx === 'function') window.updateStallVfx();
     if (window.AirArenaMultiView && typeof window.AirArenaMultiView.render === 'function') {
         window.AirArenaMultiView.pruneDestroyed();
         window.AirArenaMultiView.render(scene, renderer);
@@ -1182,6 +1199,7 @@ function refreshReplayDirectorFrame(opts) {
     if (typeof renderCombatFrame === 'function') renderCombatFrame(battleLog[cur.turnIdx], cur.progress);
     if (typeof updateReplayTags === 'function') updateReplayTags(battleLog[cur.turnIdx], cur.progress);
     if (typeof window.updateCondensationVfx === 'function') window.updateCondensationVfx();
+    if (typeof window.updateStallVfx === 'function') window.updateStallVfx();
     if (typeof renderer !== 'undefined' && renderer && typeof scene !== 'undefined' && typeof camera !== 'undefined') {
         renderer.render(scene, camera);
     }

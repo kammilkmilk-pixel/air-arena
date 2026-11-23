@@ -127,6 +127,9 @@ function processFlightPaths(ctx) {
             chain: [...t.chain],
             wasFlaresArmed: t.wasFlaresArmedThisTurn,
             wasChaffArmed: t.wasChaffArmedThisTurn,
+            stalled: !!t.stalled,
+            startAP: Math.round(Number(t.ap) || 0),
+            endAP: Math.round(Number(res && res.finalAP != null ? res.finalAP : t.ap) || 0),
             damageTaken: 0
         };
 

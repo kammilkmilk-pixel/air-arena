@@ -126,6 +126,9 @@ function clearCityScene() {
     if (typeof window !== 'undefined' && window.AirArenaAutocannonVfx && window.AirArenaAutocannonVfx.hideAll) {
         window.AirArenaAutocannonVfx.hideAll();
     }
+    if (typeof window !== 'undefined' && window.AirArenaStallVfx && window.AirArenaStallVfx.hideAll) {
+        window.AirArenaStallVfx.hideAll();
+    }
 }
 
 function restoreOriginalEnvironment() {

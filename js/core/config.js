@@ -528,6 +528,24 @@ const CONFIG = {
             craterPersistTurns: 12
         },
         /**
+         * Realistic aerodynamic stall visuals (stall-vfx.js + condensation-vfx.js):
+         * suppresses smooth aft/wingtip laminar wakes during stall and renders
+         * separated turbulent wing airflow eddies, airframe buffet/wing-rock,
+         * and sputtering engine compressor-stall exhaust.
+         */
+        stall: {
+            enabled: true,
+            onsetApOffset: 8,         // Pre-stall buffet onset starts at stallSpeedAP + 8
+            buffetRollRad: 0.135,     // Wing-rock + buffet roll amplitude (rad)
+            buffetPitchRad: 0.042,    // Elevator/tailplane shudder pitch amplitude (rad)
+            buffetYawRad: 0.045,      // Post-stall nose-wander yaw amplitude (rad)
+            buffetPosAmp: 0.018,      // Micro vertical/lateral airframe tremor (world units)
+            eddiesPerAircraft: 18,    // Turbulent separated wing-surface flow eddies per stalled jet
+            smokePerAircraft: 8,      // Intermittent compressor-stall exhaust smoke puffs per stalled jet
+            eddyOpacity: 0.68,
+            smokeOpacity: 0.58
+        },
+        /**
          * Unified GPU-batched autocannon tracers, barrel-locked muzzle flashes,
          * and surface-aware gun_hit impacts (gun-ballistics.js + autocannon-vfx.js).
          */

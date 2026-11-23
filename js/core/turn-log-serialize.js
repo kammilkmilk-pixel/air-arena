@@ -85,6 +85,9 @@
             damageTaken: block.damageTaken,
             wasFlaresArmed: block.wasFlaresArmed,
             wasChaffArmed: block.wasChaffArmed,
+            stalled: block.stalled !== undefined ? !!block.stalled : undefined,
+            startAP: block.startAP !== undefined ? Number(block.startAP) : undefined,
+            endAP: block.endAP !== undefined ? Number(block.endAP) : undefined,
             damageSteps: Array.isArray(block.damageSteps) ? block.damageSteps.slice() : undefined,
             gunStops: Array.isArray(block.gunStops) ? block.gunStops.slice() : undefined
         };

@@ -328,19 +328,42 @@
     }
 
     /**
+     * Evaluate aft center white wake intensity in [0, 1].
+     * Smooth laminar contrail/wake requires attached forward airflow; during aerodynamic
+     * stall or collapsed forward airspeed it breaks up and fades away.
+     */
+    function centerWakeIntensity(metrics) {
+        const m = metrics || {};
+        const stallFactor = Math.max(0, Math.min(1, Number(m.stallFactor) || 0));
+        const stallGate = 1 - smooth01(0.18, 0.62, stallFactor);
+        if (stallGate <= 1e-4) return 0;
+        const fwdSpeed = Number.isFinite(Number(m.forwardSpeed))
+            ? Number(m.forwardSpeed)
+            : (Number.isFinite(Number(m.speed)) ? Number(m.speed) : 15);
+        const speedGate = smooth01(3.2, 8.0, fwdSpeed);
+        return Math.max(0, Math.min(1, stallGate * speedGate));
+    }
+
+    /**
      * Evaluate wingtip condensation intensity in [0, 1] from aerodynamic maneuver metrics.
      * Triggers on:
      *   - Positive-G pull-ups (high pitch-up rate)
      *   - Steep climb attitude (while maintaining climb, not hard push-over)
      *   - Rolling maneuvers (high roll rate around nose axis)
      *   - Hard banked turns (high turn rate combined with bank angle)
-     * Suppressed during straight/level cruise, gentle maneuvers, or stall/near-zero speed.
+     * Suppressed during straight/level cruise, gentle maneuvers, or aerodynamic stall/low forward airspeed.
      */
     function tipCondensationIntensity(metrics, c) {
         const m = metrics || {};
         const k = c || cfg();
-        const speed = Number(m.speed);
-        const speedFactor = Number.isFinite(speed) ? smooth01(1.5, 4.5, speed) : 1.0;
+        const stallFactor = Math.max(0, Math.min(1, Number(m.stallFactor) || 0));
+        const stallGate = 1 - smooth01(0.15, 0.52, stallFactor);
+        if (stallGate <= 1e-4) return 0;
+
+        const fwdSpeed = Number.isFinite(Number(m.forwardSpeed))
+            ? Number(m.forwardSpeed)
+            : Number(m.speed);
+        const speedFactor = Number.isFinite(fwdSpeed) ? smooth01(4.0, 9.0, fwdSpeed) : 1.0;
         if (speedFactor <= 1e-4) return 0;
 
         const pullRate = Number(m.pullRate) || 0;      // rad/turn (+ = pull-up, - = push-over)
@@ -356,7 +379,17 @@
         const bankTurnScore = smooth01(k.tipTurnStartRad, k.tipTurnFullRad, turnRate)
             * smooth01(15, 32, bankDeg);
 
-        return Math.max(0, Math.min(1, Math.max(pullScore, climbScore, rollScore, bankTurnScore) * speedFactor));
+        return Math.max(0, Math.min(1, Math.max(pullScore, climbScore, rollScore, bankTurnScore) * speedFactor * stallGate));
+    }
+
+    function sampleCenterIntensityAtU(id, u) {
+        if (!Array.isArray(battleLog) || !battleLog.length) return 1.0;
+        const stallApi = (typeof window !== 'undefined' && window.AirArenaStallVfx) ? window.AirArenaStallVfx : null;
+        if (stallApi && typeof stallApi.sampleStallAtU === 'function') {
+            const st = stallApi.sampleStallAtU(id, u);
+            return centerWakeIntensity({ stallFactor: st.stallFactor, forwardSpeed: st.forwardSpeed });
+        }
+        return 1.0;
     }
 
     /** Sample local aerodynamic maneuver intensity at timeline cursor `u` from battleLog poses. */
@@ -382,9 +415,17 @@
         const turnRate = Math.abs(Math.atan2(_noseB.dot(_wingA), Math.max(1e-4, _noseB.dot(_noseA)))) / du;
         const climbDeg = Math.asin(Math.max(-1, Math.min(1, _noseB.y))) * (180 / Math.PI);
         const bankDeg = Math.abs(Math.asin(Math.max(-1, Math.min(1, _wingB.y)))) * (180 / Math.PI);
-        const speed = _samplePosB.distanceTo(_samplePosA) / du; // world units per turn (~10-40 normal flight)
+        _tmpVel.subVectors(_samplePosB, _samplePosA).divideScalar(du);
+        const speed = _tmpVel.length();
+        const forwardSpeed = _tmpVel.dot(_noseB);
 
-        return tipCondensationIntensity({ pullRate, rollRate, turnRate, climbDeg, bankDeg, speed }, c);
+        let stallFactor = 0;
+        const stallApi = (typeof window !== 'undefined' && window.AirArenaStallVfx) ? window.AirArenaStallVfx : null;
+        if (stallApi && typeof stallApi.sampleStallAtU === 'function') {
+            stallFactor = stallApi.sampleStallAtU(id, u).stallFactor;
+        }
+
+        return tipCondensationIntensity({ pullRate, rollRate, turnRate, climbDeg, bankDeg, speed, forwardSpeed, stallFactor }, c);
     }
 
     /**
@@ -566,11 +607,12 @@
                 if (fx.right) fx.right.visible = false;
             } else {
                 const centerEmitter = [0, vis.engineOffsetY, 0];
+                const centerIntensityFn = (u) => sampleCenterIntensityAtU(id, u);
                 const tipIntensityFn = (u) => sampleTipIntensityAtU(id, u, c);
                 buildHistoryRibbon(
                     fx.center, id, uNow,
                     c.centerWakeTurns, c.vortexPts,
-                    centerEmitter, c.centerWakeWidth * 0.5, c.centerWakeOpacity, 1.15, null
+                    centerEmitter, c.centerWakeWidth * 0.5, c.centerWakeOpacity, 1.15, centerIntensityFn
                 );
                 buildHistoryRibbon(
                     fx.left, id, uNow,
@@ -584,7 +626,7 @@
                 );
             }
 
-            // 2) High-AoA leading-edge fog — ONLY during combat animation / replay.
+            // 2) High-AoA leading-edge fog — ONLY during high-speed combat animation / replay (suppressed in stall).
             if (!inFlightAnim && c.onlyDuringFlightAnim) {
                 hideFog(fx);
                 fx.wasFlight = false;
@@ -602,8 +644,13 @@
             }
 
             const { aoa, speed } = estimateFlightLoad(team.wrapper, fx, dtSec);
+            const stallApiNow = (typeof window !== 'undefined' && window.AirArenaStallVfx) ? window.AirArenaStallVfx : null;
+            const stallNow = (stallApiNow && typeof stallApiNow.sampleStallAtU === 'function')
+                ? stallApiNow.sampleStallAtU(id, uNow)
+                : { stallFactor: team.stalled ? 1 : 0, forwardSpeed: speed };
+            const fogGate = (1 - smooth01(0.18, 0.45, stallNow.stallFactor)) * smooth01(4.5, 9.5, stallNow.forwardSpeed);
             fx.aoa = aoa;
-            updateLeFog(fx, speed > 0.03 ? aoa : 0, c, now);
+            updateLeFog(fx, (speed > 0.03 && fogGate > 0.05) ? aoa * fogGate : 0, c, now);
 
             if (!fx.prevPos) fx.prevPos = team.wrapper.position.clone();
             else fx.prevPos.copy(team.wrapper.position);
@@ -641,6 +688,7 @@
             return t * t * (3 - 2 * t);
         },
         tipCondensationIntensity,
+        centerWakeIntensity,
         cfg
     };
 })(typeof window !== 'undefined' ? window : globalThis);
