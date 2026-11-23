@@ -457,6 +457,14 @@
             }
 
             const vis = aircraftVisuals(team);
+            // Tip offsets are live from CONFIG every frame — clear wake if user retuned them.
+            const tipSig = String(vis.wingTipL) + '|' + String(vis.wingTipR);
+            if (fx.tipSig !== tipSig) {
+                fx.tipSig = tipSig;
+                fx.histL.length = 0;
+                fx.histR.length = 0;
+            }
+
             const { aoa, speed, turn } = estimateFlightLoad(team.wrapper, fx, dtSec);
             fx.aoa = aoa;
 
