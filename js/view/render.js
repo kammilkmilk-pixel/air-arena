@@ -123,6 +123,9 @@ function clearCityScene() {
     if (typeof window !== 'undefined' && window.AirArenaGroundExplosionVfx && window.AirArenaGroundExplosionVfx.clearAll) {
         window.AirArenaGroundExplosionVfx.clearAll();
     }
+    if (typeof window !== 'undefined' && window.AirArenaAutocannonVfx && window.AirArenaAutocannonVfx.hideAll) {
+        window.AirArenaAutocannonVfx.hideAll();
+    }
 }
 
 function restoreOriginalEnvironment() {
@@ -1127,38 +1130,82 @@ function drawTrajectoryLine(teamObj) {
     }
 }
 
+const _gunPrevPos = new THREE.Vector3();
+const _gunPrevQuat = new THREE.Quaternion();
+const _gunPrevAcVel = new THREE.Vector3();
+const _gunPrevMuzzle = new THREE.Vector3();
+const _gunPrevVel = new THREE.Vector3();
+const _gunPrevPt = new THREE.Vector3();
+const _gunPrevScratchA = new THREE.Vector3();
+const _gunPrevScratchB = new THREE.Vector3();
+
 function updateGunPreview(teamObj) {
     if (!teamObj.wrapper) return;
     if (!teamObj.userData) teamObj.userData = {};
-    if (!teamObj.userData.gunPreview) { let pts = new Float32Array(32 * 3); let geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(pts, 3)); let g = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0xffaa00, transparent: true, opacity: 0.7, linewidth: 2 })); scene.add(g); teamObj.userData.gunPreview = g; }
-    
+    if (!teamObj.userData.gunPreview) {
+        let pts = new Float32Array(32 * 3);
+        let geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.BufferAttribute(pts, 3));
+        let g = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0xffaa00, transparent: true, opacity: 0.78, linewidth: 2 }));
+        scene.add(g);
+        teamObj.userData.gunPreview = g;
+    }
+
     if (teamObj.wpnQueued && teamObj.weapon === 'gun' && !isAnimating && !window.replayMode && teamObj.pathPoints && teamObj.pathPoints.length >= 2) {
-        let stats = (typeof getThrottleStats === 'function')
-            ? getThrottleStats(teamObj.throttle, teamObj.type || 'mig21')
-            : (CONFIG.aircrafts[teamObj.type || 'mig21'].throttleStats[Math.round(teamObj.throttle)] || { gunRangeMult: 1.0 });
-        let dRange = GUN_RANGE * stats.gunRangeMult; let posArr = teamObj.userData.gunPreview.geometry.attributes.position.array; let ptIdx = 0; let T_now = 1.0; 
-        for (let i = 0; i <= 30; i++) {
-            let t_spawn = (i / 30) * 1.0; 
-            let sPos = getPosAt(t_spawn, teamObj.pathPoints); 
-            let sQuat = getQuatAt(t_spawn, teamObj.pathQuats); 
-            
-            let nPos = sPos.clone().add(new THREE.Vector3(0, -0.2, 0.5).applyQuaternion(sQuat)); 
-            
-            let el = CONFIG.weapons['gun'].elevation || 0;
-            let fwd = new THREE.Vector3(0, Math.sin(el), Math.cos(el)).applyQuaternion(sQuat).normalize();
-            
-            let dt = Math.max(0, T_now - t_spawn); 
-            let muzzleSpeed = dRange * 2.0; 
-            let travelDist = muzzleSpeed * dt; 
-            let pt = nPos.clone().add(fwd.multiplyScalar(travelDist)); 
-            
-            let gunGravMult = CONFIG.weapons['gun'].gravityMult !== undefined ? CONFIG.weapons['gun'].gravityMult : 1.0;
-            pt.y -= 0.5 * (CONFIG.rules.gravity * gunGravMult) * (dt * dt);
-            
-            posArr[ptIdx*3] = pt.x; posArr[ptIdx*3+1] = pt.y; posArr[ptIdx*3+2] = pt.z; ptIdx++;
+        const B = (typeof AirArenaGunBallistics !== 'undefined') ? AirArenaGunBallistics : null;
+        const posArr = teamObj.userData.gunPreview.geometry.attributes.position.array;
+        let ptIdx = 0;
+        const T_now = 1.0;
+
+        if (B) {
+            const vcfg = B.vfxConfig();
+            const params = B.resolveGunParams(teamObj.type || 'mig21', teamObj.throttle);
+            const tMin = Math.max(0, T_now - vcfg.maxFlightTime);
+            const samples = 30;
+            for (let i = 0; i <= samples; i++) {
+                const tSpawn = tMin + (i / samples) * (T_now - tMin);
+                const dt = Math.max(0, T_now - tSpawn);
+                B.samplePosAt(tSpawn, teamObj.pathPoints, _gunPrevPos);
+                B.sampleQuatAt(tSpawn, teamObj.pathQuats, _gunPrevQuat);
+                B.sampleAircraftVelocity(tSpawn, teamObj.pathPoints, _gunPrevAcVel, _gunPrevScratchA, _gunPrevScratchB);
+                B.computeMuzzleWorldPos(_gunPrevPos, _gunPrevQuat, params.centerMuzzle, _gunPrevMuzzle);
+                B.computeBulletVelocity(_gunPrevQuat, _gunPrevAcVel, params.muzzleSpeed, params.elevation, 0, 0, _gunPrevVel);
+
+                let effDt = dt;
+                const gHitT = B.groundImpactTime(_gunPrevMuzzle.y, _gunPrevVel.y, params.gravity, vcfg.groundY);
+                if (gHitT != null && gHitT < effDt) effDt = gHitT;
+
+                B.evalBallisticPoint(_gunPrevMuzzle, _gunPrevVel, params.gravity, effDt, _gunPrevPt);
+                posArr[ptIdx * 3] = _gunPrevPt.x;
+                posArr[ptIdx * 3 + 1] = _gunPrevPt.y;
+                posArr[ptIdx * 3 + 2] = _gunPrevPt.z;
+                ptIdx++;
+            }
+        } else {
+            let stats = (typeof getThrottleStats === 'function')
+                ? getThrottleStats(teamObj.throttle, teamObj.type || 'mig21')
+                : (CONFIG.aircrafts[teamObj.type || 'mig21'].throttleStats[Math.round(teamObj.throttle)] || { gunRangeMult: 1.0 });
+            let dRange = GUN_RANGE * stats.gunRangeMult;
+            for (let i = 0; i <= 30; i++) {
+                let t_spawn = (i / 30) * 1.0;
+                let sPos = getPosAt(t_spawn, teamObj.pathPoints);
+                let sQuat = getQuatAt(t_spawn, teamObj.pathQuats);
+                let nPos = sPos.clone().add(new THREE.Vector3(0, -0.12, 0.45).applyQuaternion(sQuat));
+                let el = CONFIG.weapons['gun'].elevation || 0;
+                let fwd = new THREE.Vector3(0, Math.sin(el), Math.cos(el)).applyQuaternion(sQuat).normalize();
+                let dt = Math.max(0, T_now - t_spawn);
+                let pt = nPos.clone().add(fwd.multiplyScalar(dRange * 2.0 * dt));
+                let gunGravMult = CONFIG.weapons['gun'].gravityMult !== undefined ? CONFIG.weapons['gun'].gravityMult : 1.0;
+                pt.y -= 0.5 * (CONFIG.rules.gravity * gunGravMult) * (dt * dt);
+                posArr[ptIdx * 3] = pt.x; posArr[ptIdx * 3 + 1] = pt.y; posArr[ptIdx * 3 + 2] = pt.z; ptIdx++;
+            }
         }
-        teamObj.userData.gunPreview.geometry.setDrawRange(0, ptIdx); teamObj.userData.gunPreview.geometry.attributes.position.needsUpdate = true; teamObj.userData.gunPreview.visible = true;
-    } else { if(teamObj.userData.gunPreview) teamObj.userData.gunPreview.visible = false; }
+        teamObj.userData.gunPreview.geometry.setDrawRange(0, ptIdx);
+        teamObj.userData.gunPreview.geometry.attributes.position.needsUpdate = true;
+        teamObj.userData.gunPreview.visible = true;
+    } else {
+        if (teamObj.userData.gunPreview) teamObj.userData.gunPreview.visible = false;
+    }
 }
 
 function updateMissilePreview(teamObj) {
@@ -1479,82 +1526,53 @@ function renderCombatFrame(currentLog, animProgress) {
         }
 
         if (t.userData && t.userData.gunPreview) t.userData.gunPreview.visible = false;
-        let currentNosePos = currentPlanePos.clone().add(new THREE.Vector3(0, -0.2, 1.5).applyQuaternion(currentPlaneQuat));
-        
-        for (let age = 0; age <= 2; age++) {
-            let logIdx = turnIdx - age; if (logIdx < 0) continue; let pastLog = battleLog[logIdx]; if (!pastLog || !pastLog[id]) continue;
-            let logChain = pastLog[id].chain;
-            if (logChain && logChain.length > 0 && logChain[0].fire === 'gun' && pastLog[id].pts && pastLog[id].pts.length >= 2) {
-                let stats = (typeof getThrottleStats === 'function')
-                    ? getThrottleStats(logChain[0].throttle || 2, t.type || 'mig21')
-                    : (CONFIG.aircrafts[t.type || 'mig21'].throttleStats[Math.round(logChain[0].throttle || 2)] || { gunRangeMult: 1.0 }); 
-                let dRange = GUN_RANGE * stats.gunRangeMult;
-                
-                for (let b = 0; b < 24; b++) {
-                    if (bulletIdx >= visualBullets.length) break;
-                    let mesh = visualBullets[bulletIdx]; 
-                    let t_spawn = (b / 23) * 0.95; 
-                    let timeSinceSpawn = animProgress - t_spawn + age; 
-                    if (timeSinceSpawn < 0 || timeSinceSpawn > 1.5) continue;
-                    
-                    let spawnPos = getPosAt(t_spawn, pastLog[id].pts); 
-                    let spawnQuat = getQuatAt(t_spawn, pastLog[id].quats);
-                    
-                    let dt = 0.02; 
-                    let acVelocity;
-                    
-                    if (t_spawn >= dt) {
-                        let t_prev = t_spawn - dt;
-                        let prevPos = getPosAt(t_prev, pastLog[id].pts);
-                        acVelocity = new THREE.Vector3().subVectors(spawnPos, prevPos).divideScalar(dt);
-                    } else {
-                        let t_next = t_spawn + dt;
-                        let nextPos = getPosAt(t_next, pastLog[id].pts);
-                        acVelocity = new THREE.Vector3().subVectors(nextPos, spawnPos).divideScalar(dt);
+
+        // Legacy 1px line tracers only used when unified GPU-batched AirArenaAutocannonVfx is unavailable
+        const hasNewAutocannonVfx = (typeof window !== 'undefined' && window.AirArenaAutocannonVfx && typeof window.AirArenaAutocannonVfx.renderCombatAutocannon === 'function');
+        if (!hasNewAutocannonVfx) {
+            let currentNosePos = currentPlanePos.clone().add(new THREE.Vector3(0, -0.12, 0.45).applyQuaternion(currentPlaneQuat));
+            for (let age = 0; age <= 2; age++) {
+                let logIdx = turnIdx - age; if (logIdx < 0) continue; let pastLog = battleLog[logIdx]; if (!pastLog || !pastLog[id]) continue;
+                let logChain = pastLog[id].chain;
+                if (logChain && logChain.length > 0 && logChain[0].fire === 'gun' && pastLog[id].pts && pastLog[id].pts.length >= 2) {
+                    let stats = (typeof getThrottleStats === 'function')
+                        ? getThrottleStats(logChain[0].throttle || 2, t.type || 'mig21')
+                        : (CONFIG.aircrafts[t.type || 'mig21'].throttleStats[Math.round(logChain[0].throttle || 2)] || { gunRangeMult: 1.0 });
+                    let dRange = GUN_RANGE * stats.gunRangeMult;
+                    for (let b = 0; b < 24; b++) {
+                        if (bulletIdx >= visualBullets.length) break;
+                        let mesh = visualBullets[bulletIdx];
+                        let t_spawn = (b / 23) * 0.95;
+                        let timeSinceSpawn = animProgress - t_spawn + age;
+                        if (timeSinceSpawn < 0 || timeSinceSpawn > 1.5) continue;
+                        let spawnPos = getPosAt(t_spawn, pastLog[id].pts);
+                        let spawnQuat = getQuatAt(t_spawn, pastLog[id].quats);
+                        let dt = 0.02;
+                        let acVelocity = (t_spawn >= dt)
+                            ? new THREE.Vector3().subVectors(spawnPos, getPosAt(t_spawn - dt, pastLog[id].pts)).divideScalar(dt)
+                            : new THREE.Vector3().subVectors(getPosAt(t_spawn + dt, pastLog[id].pts), spawnPos).divideScalar(dt);
+                        let startPos = spawnPos.clone().add(new THREE.Vector3(0, -0.12, 0.45).applyQuaternion(spawnQuat));
+                        let forward = new THREE.Vector3(0, 0, 1).applyQuaternion(spawnQuat);
+                        let bulletVelocity = forward.clone().multiplyScalar(dRange * 2.0).add(acVelocity);
+                        let headPos = startPos.clone().add(bulletVelocity.clone().multiplyScalar(timeSinceSpawn));
+                        let gunGravMult = CONFIG.weapons['gun'].gravityMult !== undefined ? CONFIG.weapons['gun'].gravityMult : 1.0;
+                        headPos.y -= 0.5 * (CONFIG.rules.gravity * gunGravMult) * (timeSinceSpawn * timeSinceSpawn);
+                        let tracerLen = 4;
+                        let tailPos = (age === 0 && (bulletVelocity.length() * timeSinceSpawn) < tracerLen)
+                            ? currentNosePos.clone()
+                            : headPos.clone().sub(bulletVelocity.clone().normalize().multiplyScalar(tracerLen));
+                        mesh.geometry.attributes.position.setXYZ(0, headPos.x, headPos.y, headPos.z);
+                        mesh.geometry.attributes.position.setXYZ(1, tailPos.x, tailPos.y, tailPos.z);
+                        mesh.geometry.attributes.position.needsUpdate = true;
+                        let lifeRatio = Math.min(1.0, timeSinceSpawn / 1.5);
+                        let colAttr = mesh.geometry.attributes.color;
+                        colAttr.setXYZ(0, 1.0, 1.0 - (lifeRatio * 0.9), 0.2 * (1.0 - lifeRatio));
+                        colAttr.setXYZ(1, 0.8, (1.0 - (lifeRatio * 0.9)) * 0.8, 0.16 * (1.0 - lifeRatio));
+                        colAttr.needsUpdate = true;
+                        mesh.material.opacity = Math.max(0, 1.0 - (timeSinceSpawn / 1.5));
+                        mesh.visible = true;
+                        bulletIdx++;
                     }
-
-                    let startPos = spawnPos.clone().add(new THREE.Vector3(0, -0.2, 1.5).applyQuaternion(spawnQuat));
-                    let forward = new THREE.Vector3(0, 0, 1).applyQuaternion(spawnQuat);
-                    
-                    let spreadX = Math.sin(b * 123.45 + logIdx) * 0.015; let spreadY = Math.cos(b * 678.90 + logIdx) * 0.015;
-                    let right = new THREE.Vector3(1, 0, 0).applyQuaternion(spawnQuat); let up = new THREE.Vector3(0, 1, 0).applyQuaternion(spawnQuat);
-                    forward.add(right.multiplyScalar(spreadX)).add(up.multiplyScalar(spreadY)).normalize();
-                    
-                    let muzzleSpeed = dRange * 2.0; 
-                    let bulletVelocity = forward.clone().multiplyScalar(muzzleSpeed).add(acVelocity);
-
-                    let headPos = startPos.clone().add(bulletVelocity.clone().multiplyScalar(timeSinceSpawn));
-                    
-                    let gunGravMult = CONFIG.weapons['gun'].gravityMult !== undefined ? CONFIG.weapons['gun'].gravityMult : 1.0;
-                    let gravDrop = 0.5 * (CONFIG.rules.gravity * gunGravMult) * (timeSinceSpawn * timeSinceSpawn);
-                    headPos.y -= gravDrop;
-                    
-                    let tracerLen = 4; let tailPos;
-                    if (age === 0 && (bulletVelocity.length() * timeSinceSpawn) < tracerLen) { 
-                        tailPos = currentNosePos.clone(); 
-                    } else { 
-                        let visualDir = bulletVelocity.clone().normalize();
-                        tailPos = headPos.clone().sub(visualDir.multiplyScalar(tracerLen)); 
-                    }
-                    
-                    mesh.geometry.attributes.position.setXYZ(0, headPos.x, headPos.y, headPos.z); 
-                    mesh.geometry.attributes.position.setXYZ(1, tailPos.x, tailPos.y, tailPos.z); 
-                    mesh.geometry.attributes.position.needsUpdate = true;
-
-                    let lifeRatio = Math.min(1.0, timeSinceSpawn / 1.5); 
-                    let colAttr = mesh.geometry.attributes.color;
-
-                    let curR = 1.0;
-                    let curG = 1.0 - (lifeRatio * 0.9); 
-                    let curB = 0.2 * (1.0 - lifeRatio); 
-
-                    colAttr.setXYZ(0, curR, curG, curB); 
-                    colAttr.setXYZ(1, curR * 0.8, curG * 0.8, curB * 0.8); 
-                    colAttr.needsUpdate = true;
-                    
-                    mesh.material.opacity = Math.max(0, 1.0 - (timeSinceSpawn / 1.5)); 
-                    mesh.visible = true;
-                    bulletIdx++;
                 }
             }
         }
@@ -1695,6 +1713,10 @@ function renderCombatFrame(currentLog, animProgress) {
             });
         }
     });
+
+    if (typeof window !== 'undefined' && window.AirArenaAutocannonVfx && typeof window.AirArenaAutocannonVfx.renderCombatAutocannon === 'function') {
+        window.AirArenaAutocannonVfx.renderCombatAutocannon(battleLog, turnIdx, animProgress, frameIds);
+    }
 
     if (typeof AirArenaBomb !== 'undefined' && typeof AirArenaBomb.applyBombVisuals === 'function') {
         AirArenaBomb.applyBombVisuals(trackIdx, currentLog);

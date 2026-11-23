@@ -71,6 +71,7 @@
         };
         if (trigger.pos) out.pos = plainVec(trigger.pos);
         if (trigger.fwd) out.fwd = plainVec(trigger.fwd);
+        if (trigger.normal) out.normal = plainVec(trigger.normal);
         if (trigger.wind && trigger.wind.x != null) out.wind = plainVec(trigger.wind);
         if (trigger.drift) out.drift = plainVec(trigger.drift);
         if (trigger.quat) out.quat = plainVec(trigger.quat);
@@ -84,7 +85,8 @@
             damageTaken: block.damageTaken,
             wasFlaresArmed: block.wasFlaresArmed,
             wasChaffArmed: block.wasChaffArmed,
-            damageSteps: Array.isArray(block.damageSteps) ? block.damageSteps.slice() : undefined
+            damageSteps: Array.isArray(block.damageSteps) ? block.damageSteps.slice() : undefined,
+            gunStops: Array.isArray(block.gunStops) ? block.gunStops.slice() : undefined
         };
         if (Array.isArray(block.pts)) out.pts = block.pts.map(plainVec);
         if (Array.isArray(block.quats)) out.quats = block.quats.map(plainVec);
@@ -151,6 +153,7 @@
                 if (!t) return t;
                 if (t.pos) t.pos = reviveVec(t.pos, T);
                 if (t.fwd) t.fwd = reviveVec(t.fwd, T);
+                if (t.normal) t.normal = reviveVec(t.normal, T);
                 if (t.wind) t.wind = reviveVec(t.wind, T);
                 if (t.drift) t.drift = reviveVec(t.drift, T);
                 if (t.quat) t.quat = reviveVec(t.quat, T);

@@ -1115,6 +1115,9 @@ function animate() {
         if (window.AirArenaGroundExplosionVfx && typeof window.AirArenaGroundExplosionVfx.syncPlanningCraters === 'function') {
             window.AirArenaGroundExplosionVfx.syncPlanningCraters(battleLog);
         }
+        if (window.AirArenaAutocannonVfx && typeof window.AirArenaAutocannonVfx.hideAll === 'function') {
+            window.AirArenaAutocannonVfx.hideAll();
+        }
     }
     // After combat pose update (or planning idle): refresh / hide condensation.
     if (typeof window.updateCondensationVfx === 'function') window.updateCondensationVfx();
@@ -1220,6 +1223,9 @@ function exitReplayMode() {
     }
     if (typeof AirArenaRocket !== 'undefined' && typeof AirArenaRocket.clearRocketVisuals === 'function') {
         AirArenaRocket.clearRocketVisuals({ dispose: false });
+    }
+    if (window.AirArenaAutocannonVfx && typeof window.AirArenaAutocannonVfx.hideAll === 'function') {
+        window.AirArenaAutocannonVfx.hideAll();
     }
     
     const currentTeam = GameContext.getActiveTeamId();

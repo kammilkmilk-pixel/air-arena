@@ -22,86 +22,183 @@ function finishLiveMissileShot(team, missile, outcome) {
     }
 }
 
+/**
+ * Precompute per-round ballistic stop times (`log[id].gunStops`) and surface
+ * impact triggers (`building` / `ground`) once per turn so render playback
+ * needs ZERO per-frame raycasts and tracers stop cleanly at exact impact points.
+ */
+function precomputeGunRoundStops(id, t, ctx) {
+    const B = (typeof AirArenaGunBallistics !== 'undefined') ? AirArenaGunBallistics : null;
+    if (!B || !t || !t.pathPoints || t.pathPoints.length < 2 || !t.pathQuats || t.pathQuats.length < 2) return;
+    if (!ctx || !ctx.log || !ctx.log[id]) return;
+
+    const vcfg = B.vfxConfig();
+    const rounds = vcfg.roundsPerTurn;
+    const maxFlight = vcfg.maxFlightTime;
+    const throttle = (t.chain && t.chain[0] && t.chain[0].throttle != null) ? t.chain[0].throttle : (t.throttle || 4);
+    const params = B.resolveGunParams(t.type || 'mig21', throttle);
+    const stops = new Array(rounds);
+    const logIdx = (typeof battleLog !== 'undefined' && Array.isArray(battleLog)) ? battleLog.length : 0;
+    const hasObs = (typeof obstacles !== 'undefined' && Array.isArray(obstacles) && obstacles.length > 0);
+    const ray = hasObs ? new THREE.Raycaster() : null;
+    const pos = new THREE.Vector3();
+    const quat = new THREE.Quaternion();
+    const acVel = new THREE.Vector3();
+    const muzzle = new THREE.Vector3();
+    const vel0 = new THREE.Vector3();
+    const pA = new THREE.Vector3();
+    const pB = new THREE.Vector3();
+    const segDir = new THREE.Vector3();
+    const hitNorm = new THREE.Vector3();
+    const scratchA = new THREE.Vector3();
+    const scratchB = new THREE.Vector3();
+    const stepsPerTurn = (typeof CONFIG !== 'undefined' && CONFIG.rules && CONFIG.rules.stepsPerTurn)
+        ? Number(CONFIG.rules.stepsPerTurn) : 100;
+
+    for (let b = 0; b < rounds; b++) {
+        const tSpawn = B.roundSpawnTime(b, rounds);
+        B.samplePosAt(tSpawn, t.pathPoints, pos);
+        B.sampleQuatAt(tSpawn, t.pathQuats, quat);
+        B.sampleAircraftVelocity(tSpawn, t.pathPoints, acVel, scratchA, scratchB);
+        const barrel = params.barrels[b % params.barrels.length];
+        B.computeMuzzleWorldPos(pos, quat, barrel, muzzle);
+        const sp = B.roundSpread(b, logIdx, vcfg.spreadRad);
+        B.computeBulletVelocity(quat, acVel, params.muzzleSpeed, params.elevation, sp.right, sp.up, vel0);
+
+        let bestT = maxFlight;
+        let hitKind = null;
+        const hitPos = new THREE.Vector3();
+
+        // Analytic ground intersection
+        const gHitT = B.groundImpactTime(muzzle.y, vel0.y, params.gravity, vcfg.groundY);
+        if (gHitT != null && gHitT > 0.002 && gHitT < bestT) {
+            bestT = gHitT;
+            hitKind = 'ground';
+            B.evalBallisticPoint(muzzle, vel0, params.gravity, gHitT, hitPos);
+            hitPos.y = Math.max(vcfg.groundY + 0.02, hitPos.y);
+            hitNorm.set(0, 1, 0);
+        }
+
+        // Parabolic chord-sampled building intersection (4 chords covers full arc accurately)
+        if (ray) {
+            const chords = 4;
+            B.evalBallisticPoint(muzzle, vel0, params.gravity, 0, pA);
+            for (let c = 1; c <= chords; c++) {
+                const t0 = ((c - 1) / chords) * bestT;
+                const t1 = (c / chords) * bestT;
+                B.evalBallisticPoint(muzzle, vel0, params.gravity, t1, pB);
+                segDir.subVectors(pB, pA);
+                const segLen = segDir.length();
+                if (segLen > 1e-4) {
+                    segDir.divideScalar(segLen);
+                    ray.set(pA, segDir);
+                    ray.far = segLen;
+                    const hits = ray.intersectObjects(obstacles, false);
+                    if (hits.length > 0 && hits[0].distance <= segLen) {
+                        const frac = hits[0].distance / segLen;
+                        bestT = t0 + (t1 - t0) * frac;
+                        hitKind = 'building';
+                        hitPos.copy(hits[0].point);
+                        if (hits[0].face && hits[0].face.normal) {
+                            hitNorm.copy(hits[0].face.normal).transformDirection(hits[0].object.matrixWorld).normalize();
+                        } else {
+                            hitNorm.copy(segDir).negate();
+                        }
+                        break;
+                    }
+                }
+                pA.copy(pB);
+            }
+        }
+
+        stops[b] = Number(bestT.toFixed(4));
+
+        // Emit surface gun_hit trigger at exact arrival step (staggered every 2nd round to keep VFX crisp & fast)
+        if (hitKind && (b % 2 === 0)) {
+            const arrivalStep = Math.round((tSpawn + bestT) * stepsPerTurn);
+            if (arrivalStep >= 0 && arrivalStep <= stepsPerTurn + 40) {
+                const seed = (typeof sparkSeedFrom === 'function')
+                    ? sparkSeedFrom(arrivalStep, hitPos)
+                    : (((b + 1) * 73856093) >>> 0);
+                ctx.log.vfxTriggers.push({
+                    type: 'gun_hit',
+                    step: arrivalStep,
+                    pos: hitPos.clone(),
+                    normal: hitNorm.clone(),
+                    surface: hitKind,
+                    seed
+                });
+            }
+        }
+    }
+
+    ctx.log[id].gunStops = stops;
+}
+
 function resolveGunsForStep(step, ratio, ctx) {
+    const B = (typeof AirArenaGunBallistics !== 'undefined') ? AirArenaGunBallistics : null;
     combatActiveIds().forEach(id => {
         let t = teams[id]; let enemy = combatEnemyOf(id);
         if (!enemy || t.isDestroyed || enemy.isDestroyed || ctx.death[id] !== -1) return;
 
         if (t.chain && t.chain.length > 0 && t.chain[0].fire === 'gun') {
+            if (step === 0 && B) precomputeGunRoundStops(id, t, ctx);
+
+            const throttle = (t.chain[0].throttle != null) ? t.chain[0].throttle : (t.throttle || 2);
+            const params = B ? B.resolveGunParams(t.type || 'mig21', throttle) : null;
             let stats = (typeof getThrottleStats === 'function')
-                ? getThrottleStats(t.throttle || 2, t.type || 'mig21')
-                : (CONFIG.aircrafts[t.type || 'mig21'].throttleStats[Math.round(t.throttle || 2)] || { gunAngleMult: 1.0, gunRangeMult: 1.0 });
-            let dRange = (typeof GUN_RANGE !== 'undefined' ? GUN_RANGE : 35) * stats.gunRangeMult;
-            let dAngle = (typeof GUN_ANGLE !== 'undefined' ? GUN_ANGLE : Math.PI/12) * stats.gunAngleMult;
+                ? getThrottleStats(throttle, t.type || 'mig21')
+                : (CONFIG.aircrafts[t.type || 'mig21'].throttleStats[Math.round(throttle)] || { gunAngleMult: 1.0, gunRangeMult: 1.0 });
+            let dRange = params ? params.dRange : ((typeof GUN_RANGE !== 'undefined' ? GUN_RANGE : 35) * stats.gunRangeMult);
+            let dAngle = params ? params.dAngle : ((typeof GUN_ANGLE !== 'undefined' ? GUN_ANGLE : Math.PI/12) * stats.gunAngleMult);
 
             let p1 = getPosAt(ratio, t.pathPoints); let p2 = getPosAt(ratio, enemy.pathPoints);
             let q1 = getQuatAt(ratio, t.pathQuats); 
             
-            let el = CONFIG.weapons['gun'].elevation || 0;
+            let el = params ? params.elevation : (CONFIG.weapons['gun'].elevation || 0);
             let fwd = new THREE.Vector3(0, Math.sin(el), Math.cos(el)).applyQuaternion(q1).normalize();
+            let gunMuzzlePos = params
+                ? B.computeMuzzleWorldPos(p1, q1, params.centerMuzzle, new THREE.Vector3())
+                : p1.clone().add(new THREE.Vector3(0, -0.12, 0.45).applyQuaternion(q1));
 
-            // 生成砲口火光
-            if (step % 2 === 0) {
-                let gunPorts = CONFIG.aircrafts[t.type || 'mig21'].guns || [{ id: 1, position: [0, -0.05, 1.2] }];
-                gunPorts.forEach(gun => {
-                    let gunPos = p1.clone().add(new THREE.Vector3(gun.position[0], gun.position[1], gun.position[2]).applyQuaternion(q1));
-                    ctx.log.vfxTriggers.push({ type: 'flash', step: step, pos: gunPos.clone(), fwd: fwd.clone(), rot: Math.random() * Math.PI * 2 });
-                    if (step % 8 === 0) {
-                        let puffPos = gunPos.clone().add(new THREE.Vector3((Math.random()-0.5)*0.2, (Math.random()-0.5)*0.2, 0).applyQuaternion(q1));
-                        ctx.log.vfxTriggers.push({ type: 'puff', step: step, pos: puffPos, rot: Math.random() * Math.PI * 2, scale: 0.35, opacity: 0.16 });
-                    }
-                });
-            }
-            
-            // Raycaster 機砲射線掃描城市模型
-            let gunMuzzlePos = p1.clone().add(new THREE.Vector3(0, -0.12, 0.45).applyQuaternion(q1));
-            let isGunBlockedByBuilding = false;
-            let blockPoint = new THREE.Vector3();
-            let distToBlock = 99999;
-
-            if (typeof obstacles !== 'undefined' && obstacles.length > 0) {
-                let raycaster = new THREE.Raycaster(gunMuzzlePos, fwd);
-                let hits = raycaster.intersectObjects(obstacles, false); 
-                if (hits.length > 0) {
-                    isGunBlockedByBuilding = true;
-                    distToBlock = hits[0].distance;
-                    blockPoint.copy(hits[0].point);
-                }
-            }
-
-            // 機砲打中大廈牆面的火花特效
-            if (isGunBlockedByBuilding && distToBlock <= dRange) {
-                if (step % 4 === 0) {
-                    ctx.log.vfxTriggers.push({ type: 'puff', step: step, pos: blockPoint, rot: Math.random()*Math.PI*2, scale: 0.5, opacity: 0.28 });
-                    ctx.log.vfxTriggers.push(sparkBurstTrigger(step, blockPoint, 6, 0.28, {
-                        wind: fwd.clone().multiplyScalar(-0.028),
-                        life: 14,
-                        streak: 0.55,
-                        gravity: 0.008,
-                        windForce: 0.2
-                    }));
-                }
-            }
-
-            // 判斷是否打中敵機
-            let vecToEnemy = new THREE.Vector3().subVectors(p2, p1);
+            // 判斷是否打中敵機（與彈道預覽線、飛行曳光彈共用同一組彈道方程）
+            let vecToEnemy = new THREE.Vector3().subVectors(p2, gunMuzzlePos);
             let forwardDist = vecToEnemy.dot(fwd);
 
             if (forwardDist > 0 && forwardDist <= dRange) {
-                let muzzleSpeed = dRange * 2.0; 
-                let timeSinceSpawn = forwardDist / muzzleSpeed;
-                let expectedBulletPos = p1.clone().add(fwd.clone().multiplyScalar(forwardDist));
-                
-                let gunGravMult = CONFIG.weapons['gun'].gravityMult !== undefined ? CONFIG.weapons['gun'].gravityMult : 1.0;
-                expectedBulletPos.y -= 0.5 * (CONFIG.rules.gravity * gunGravMult) * (timeSinceSpawn * timeSinceSpawn);
+                let muzzleSpeed = params ? params.muzzleSpeed : (dRange * 2.0);
+                let gravity = params ? params.gravity : (CONFIG.rules.gravity * (CONFIG.weapons['gun'].gravityMult !== undefined ? CONFIG.weapons['gun'].gravityMult : 1.0));
+                let acVel = B ? B.sampleAircraftVelocity(ratio, t.pathPoints, new THREE.Vector3()) : new THREE.Vector3();
+                let v0 = B
+                    ? B.computeBulletVelocity(q1, acVel, muzzleSpeed, el, 0, 0, new THREE.Vector3())
+                    : fwd.clone().multiplyScalar(muzzleSpeed);
+                let closingSpeed = Math.max(1.0, v0.dot(fwd));
+                let timeSinceSpawn = forwardDist / closingSpeed;
+                let expectedBulletPos = B
+                    ? B.evalBallisticPoint(gunMuzzlePos, v0, gravity, timeSinceSpawn, new THREE.Vector3())
+                    : gunMuzzlePos.clone().add(fwd.clone().multiplyScalar(forwardDist)).add(new THREE.Vector3(0, -0.5 * gravity * timeSinceSpawn * timeSinceSpawn, 0));
+
                 const gunCfg = CONFIG.weapons.gun || {};
                 const hitRadius = typeof gunHitRadiusAt === 'function'
                     ? gunHitRadiusAt(forwardDist, dAngle, gunCfg)
                     : Math.min(1.75, Math.max(0.65, forwardDist * Math.tan(dAngle)));
 
                 if (expectedBulletPos.distanceTo(p2) <= hitRadius) {
-                    // 安全判定：只有敵機在障礙物前面才會扣血
-                    if (!isGunBlockedByBuilding || forwardDist < distToBlock) {
+                    // Building occlusion raycast ONLY when target is actually inside hit envelope (big perf win!)
+                    let isGunBlockedByBuilding = false;
+                    if (typeof obstacles !== 'undefined' && obstacles.length > 0) {
+                        const losDir = new THREE.Vector3().subVectors(p2, gunMuzzlePos);
+                        const losDist = losDir.length();
+                        if (losDist > 1e-4) {
+                            const raycaster = new THREE.Raycaster(gunMuzzlePos, losDir.divideScalar(losDist), 0, losDist);
+                            const hits = raycaster.intersectObjects(obstacles, false);
+                            if (hits.length > 0 && hits[0].distance < losDist) {
+                                isGunBlockedByBuilding = true;
+                            }
+                        }
+                    }
+
+                    if (!isGunBlockedByBuilding) {
                         // Range falloff: ≤hitFalloffStart → 100%; beyond that −hitFalloffPerBand per band.
                         const falloffStart = Number.isFinite(Number(gunCfg.hitFalloffStart)) ? Number(gunCfg.hitFalloffStart) : 45;
                         const falloffBand = Number.isFinite(Number(gunCfg.hitFalloffBand)) ? Number(gunCfg.hitFalloffBand) : 10;
@@ -118,43 +215,44 @@ function resolveGunsForStep(step, ratio, ctx) {
                         if (!Array.isArray(ctx.log[enemy.id].damageSteps)) ctx.log[enemy.id].damageSteps = [];
                         ctx.log[enemy.id].damageSteps.push(step);
                         recordCombatHit(ctx, enemy.id, id, 'gun', step);
-                        
-                        // 機身命中：噴泉式四周彈開，再被風壓往機尾飄
-                        // 機模縮放到最大邊長 ~1.2，爆發點必須貼在機身表面附近。
-                        if (step % 2 === 0) {
+
+                        // Clamp nearest tracer round stop time so bullets terminate on the enemy fuselage
+                        if (B && ctx.log[id] && Array.isArray(ctx.log[id].gunStops)) {
+                            const rounds = ctx.log[id].gunStops.length;
+                            const rIdx = Math.min(rounds - 1, Math.max(0, Math.round((ratio / 0.96) * (rounds - 1))));
+                            if (timeSinceSpawn < ctx.log[id].gunStops[rIdx]) {
+                                ctx.log[id].gunStops[rIdx] = Number(timeSinceSpawn.toFixed(4));
+                            }
+                        }
+
+                        // Compact GPU-batched aircraft skin hit effect (metallic sparks + flash + slipstream smoke)
+                        if (step % 3 === 0) {
                             const q2 = getQuatAt(ratio, enemy.pathQuats);
                             const noseDir = new THREE.Vector3(0, 0, 1).applyQuaternion(q2).normalize();
                             const tailDir = noseDir.clone().multiplyScalar(-1);
-                            // Impact on the skin facing the shooter (scaled fuselage half-width ≈ 0.15–0.22).
                             const towardShooter = new THREE.Vector3().subVectors(p1, p2);
                             if (towardShooter.lengthSq() < 1e-6) towardShooter.copy(fwd).multiplyScalar(-1);
                             else towardShooter.normalize();
-                            const skinOffset = 0.16;
+                            const skinOffset = 0.18;
                             const hitPos = p2.clone()
-                                .add(towardShooter.multiplyScalar(skinOffset))
+                                .add(towardShooter.clone().multiplyScalar(skinOffset))
                                 .add(new THREE.Vector3(
-                                    (Math.random() - 0.5) * 0.1,
-                                    (Math.random() - 0.5) * 0.06,
-                                    (Math.random() - 0.5) * 0.14
+                                    (Math.random() - 0.5) * 0.12,
+                                    (Math.random() - 0.5) * 0.08,
+                                    (Math.random() - 0.5) * 0.16
                                 ).applyQuaternion(q2));
                             const wakeWind = tailDir.clone().multiplyScalar(0.036).add(new THREE.Vector3(0, -0.004, 0));
-                            ctx.log.vfxTriggers.push(sparkBurstTrigger(step, hitPos, 10, 0.34, {
-                                wind: wakeWind,
-                                life: 16,
-                                streak: 0.55,
-                                gravity: 0.007,
-                                windForce: 0.26,
-                                fountain: true
-                            }));
-                            ctx.log.vfxTriggers.push({ type: 'flash', step: step, pos: hitPos, rot: Math.random()*Math.PI*2, scale: 0.4 });
+                            const seed = (typeof sparkSeedFrom === 'function')
+                                ? sparkSeedFrom(step, hitPos)
+                                : (((step + 1) * 2654435761) >>> 0);
                             ctx.log.vfxTriggers.push({
-                                type: 'puff',
+                                type: 'gun_hit',
                                 step: step,
                                 pos: hitPos,
-                                rot: Math.random()*Math.PI*2,
-                                scale: 0.32,
-                                opacity: 0.28,
-                                drift: tailDir.clone().multiplyScalar(0.012)
+                                normal: towardShooter,
+                                wind: wakeWind,
+                                surface: 'aircraft',
+                                seed
                             });
                         }
                     }

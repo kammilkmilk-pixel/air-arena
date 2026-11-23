@@ -527,6 +527,19 @@ const CONFIG = {
             lightDistance: 48,
             craterPersistTurns: 12
         },
+        /**
+         * Unified GPU-batched autocannon tracers, barrel-locked muzzle flashes,
+         * and surface-aware gun_hit impacts (gun-ballistics.js + autocannon-vfx.js).
+         */
+        autocannon: {
+            enabled: true,
+            roundsPerTurn: 28,
+            maxFlightTime: 0.92,
+            spreadRad: 0.0045,
+            tracerLength: 3.8,
+            tracerWidth: 0.17,
+            groundY: -0.02
+        },
         flipbookFps: 15,         
         
         poolLimits: {
