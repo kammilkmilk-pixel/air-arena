@@ -291,31 +291,33 @@
         return team.activeBombs;
     }
 
-    function pushBombExplosionVfx(ctx, step, pos, cfg) {
+    function pushBombExplosionVfx(ctx, step, pos, cfg, surface) {
         const exScale = cfg.explosionScale != null ? Number(cfg.explosionScale) : 2.6;
-        const flScale = cfg.flashScale != null ? Number(cfg.flashScale) : 3.2;
-        const pfScale = cfg.puffScale != null ? Number(cfg.puffScale) : 2.0;
+        const blastR = cfg.blastRadius != null ? Number(cfg.blastRadius) : 10;
         const sparkN = cfg.sparkCount != null ? Number(cfg.sparkCount) : 90;
         const sparkP = cfg.sparkPower != null ? Number(cfg.sparkPower) : 0.95;
+        const surf = surface || (pos && pos.y <= 1.8 ? 'ground' : 'building');
+        const seed = (typeof sparkSeedFrom === 'function')
+            ? sparkSeedFrom(step, pos)
+            : ((Math.random() * 0xffffffff) >>> 0);
         ctx.log.vfxTriggers.push({
-            type: 'explosion', step, pos: pos.clone(),
-            rot: Math.random() * Math.PI * 2, scale: exScale
-        });
-        ctx.log.vfxTriggers.push({
-            type: 'flash', step, pos: pos.clone(),
-            rot: Math.random() * Math.PI * 2, scale: flScale
-        });
-        ctx.log.vfxTriggers.push({
-            type: 'puff', step, pos: pos.clone().add(new THREE.Vector3(0, 0.4, 0)),
-            rot: Math.random() * Math.PI * 2, scale: pfScale
+            type: 'ground_explosion',
+            step,
+            pos: pos.clone(),
+            radius: blastR,
+            scale: Math.max(0.95, Math.min(1.65, exScale * 0.52)),
+            seed,
+            surface: surf
         });
         if (typeof sparkBurstTrigger === 'function') {
-            ctx.log.vfxTriggers.push(sparkBurstTrigger(step, pos, sparkN, sparkP, {
+            const sparkPos = pos.clone();
+            if (surf === 'ground') sparkPos.y = Math.max(sparkPos.y, 0.2);
+            ctx.log.vfxTriggers.push(sparkBurstTrigger(step, sparkPos, sparkN, sparkP, {
                 fountain: true,
-                wind: new THREE.Vector3(0, 0.35, 0),
-                gravity: 0.012,
-                life: 22,
-                streak: 0.85
+                wind: new THREE.Vector3(0, 0.42, 0),
+                gravity: 0.014,
+                life: 24,
+                streak: 0.88
             }));
         }
     }
@@ -450,6 +452,7 @@
                 const integ = integrateBombFrame(b.pos, b.vel, b.quat, knobs);
                 b.ageSteps = (Number(b.ageSteps) || 0) + 1;
                 let hit = integ.hit;
+                let hitSurface = integ.hit ? 'ground' : null;
 
                 // Building collision (same ray idea as missiles).
                 if (!hit && typeof obstacles !== 'undefined' && obstacles.length > 0) {
@@ -461,6 +464,7 @@
                         if (hits.length && hits[0].distance <= dist) {
                             b.pos.copy(hits[0].point);
                             hit = true;
+                            hitSurface = (b.pos.y <= 1.8) ? 'ground' : 'building';
                         }
                     }
                 }
@@ -475,7 +479,7 @@
                     b.exploded = true;
                     b.hitGround = true;
                     explodedAt[b.pylonId] = step;
-                    pushBombExplosionVfx(ctx, step, b.pos, cfg);
+                    pushBombExplosionVfx(ctx, step, b.pos, cfg, hitSurface || 'ground');
                     if (typeof AirArenaGroundTargets !== 'undefined'
                         && typeof AirArenaGroundTargets.applyBlastDamage === 'function') {
                         const gtHits = AirArenaGroundTargets.applyBlastDamage(b.pos, blastR, damage, {

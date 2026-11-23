@@ -478,11 +478,23 @@ function resolveDamageAndDeathForStep(step, ratio, ctx) {
                 ctx.log.vfxTriggers.push({ type: 'flash', step: step, pos: currentPos.clone(), rot: Math.random()*Math.PI*2, scale: 1.2 });
                 if (CONFIG.debug) console.log(`🚫 [空域] ${id.toUpperCase()} 離開作戰空域，判定擊落！`);
             } else {
-                ctx.log.vfxTriggers.push({ type: 'explosion', step: step, pos: currentPos.clone(), scale: 2.3, rot: Math.random()*Math.PI*2 });
+                const crashSurf = collisionType === 'ground' ? 'ground' : 'building';
+                const crashSeed = (typeof sparkSeedFrom === 'function')
+                    ? sparkSeedFrom(step, currentPos)
+                    : ((Math.random() * 0xffffffff) >>> 0);
+                ctx.log.vfxTriggers.push({
+                    type: 'ground_explosion',
+                    step: step,
+                    pos: currentPos.clone(),
+                    radius: 9.0,
+                    scale: 1.25,
+                    seed: crashSeed,
+                    surface: crashSurf
+                });
                 ctx.log.vfxTriggers.push(sparkBurstTrigger(step, currentPos, 60, 0.7, {
-                    wind: new THREE.Vector3(0, 0, 0)
+                    fountain: crashSurf === 'ground',
+                    wind: new THREE.Vector3(0, crashSurf === 'ground' ? 0.35 : 0, 0)
                 }));
-                ctx.log.vfxTriggers.push({ type: 'flash', step: step, pos: currentPos.clone(), rot: Math.random()*Math.PI*2, scale: 1.5 });
                 ctx.log.vfxTriggers.push({
                     type: 'debris',
                     step,

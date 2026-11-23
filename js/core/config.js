@@ -492,6 +492,31 @@ const CONFIG = {
             leFogMaxOpacity: 0.72,
             leFogScale: 0.28
         },
+        /**
+         * Multi-layer 3D ground / surface explosion VFX (ground-explosion-vfx.js):
+         * scorch crater + ember glow + shockwave/dust rings + bottom-feathered base-surge
+         * dust collar + multi-lobe rising fireball + dark mushroom smoke plume + 3D clods.
+         */
+        groundExplosion: {
+            enabled: true,
+            maxActiveBlasts: 8,
+            maxCraters: 28,
+            collarCount: 20,
+            fireballLobes: 12,
+            plumeCount: 18,
+            clodCount: 26,
+            hotChunkCount: 12,
+            fireLife: 34,
+            collarLife: 138,
+            plumeLife: 172,
+            shockLife: 13,
+            dustWaveLife: 28,
+            emberLife: 76,
+            clodLife: 62,
+            lightIntensity: 5.2,
+            lightDistance: 48,
+            craterPersistTurns: 12
+        },
         flipbookFps: 15,         
         
         poolLimits: {

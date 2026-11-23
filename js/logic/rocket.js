@@ -638,14 +638,43 @@
         return remember(sol);
     }
 
-    function pushRocketExplosionVfx(ctx, step, pos, cfg) {
+    function pushRocketExplosionVfx(ctx, step, pos, cfg, surface) {
         if (!ctx || !ctx.log) return;
         if (!ctx.log.vfxTriggers) ctx.log.vfxTriggers = [];
         const exScale = cfg.explosionScale != null ? Number(cfg.explosionScale) : 1.6;
         const flScale = cfg.flashScale != null ? Number(cfg.flashScale) : 2.0;
         const pfScale = cfg.puffScale != null ? Number(cfg.puffScale) : 1.4;
+        const blastR = cfg.blastRadius != null ? Number(cfg.blastRadius) : 6;
         const sparkN = cfg.sparkCount != null ? Number(cfg.sparkCount) : 48;
         const sparkP = cfg.sparkPower != null ? Number(cfg.sparkPower) : 0.7;
+        const isSurface = surface === 'ground' || surface === 'building' || (pos && pos.y <= 1.8);
+        if (isSurface) {
+            const surf = (surface === 'building' && pos && pos.y > 1.8) ? 'building' : 'ground';
+            const seed = (typeof sparkSeedFrom === 'function')
+                ? sparkSeedFrom(step, pos)
+                : ((Math.random() * 0xffffffff) >>> 0);
+            ctx.log.vfxTriggers.push({
+                type: 'ground_explosion',
+                step,
+                pos: pos.clone(),
+                radius: blastR,
+                scale: Math.max(0.75, Math.min(1.25, exScale * 0.56)),
+                seed,
+                surface: surf
+            });
+            if (typeof sparkBurstTrigger === 'function') {
+                const sparkPos = pos.clone();
+                if (surf === 'ground') sparkPos.y = Math.max(sparkPos.y, 0.16);
+                ctx.log.vfxTriggers.push(sparkBurstTrigger(step, sparkPos, sparkN, sparkP, {
+                    fountain: true,
+                    wind: new THREE.Vector3(0, 0.32, 0),
+                    gravity: 0.015,
+                    life: 18,
+                    streak: 0.72
+                }));
+            }
+            return;
+        }
         ctx.log.vfxTriggers.push({
             type: 'explosion', step, pos: pos.clone(),
             rot: Math.random() * Math.PI * 2, scale: exScale
@@ -841,11 +870,13 @@
                 r.ageSteps = (Number(r.ageSteps) || 0) + 1;
 
                 let hitSolid = integ.hitGround;
+                let hitSurface = integ.hitGround ? 'ground' : null;
                 if (!hitSolid) {
                     const hit = segmentObstacleHit(integ.oldPos, r.pos);
                     if (hit) {
                         r.pos.copy(hit.point);
                         hitSolid = true;
+                        hitSurface = (r.pos.y <= 1.8) ? 'ground' : 'building';
                     }
                 }
 
@@ -882,7 +913,7 @@
                 if (fuse) {
                     r.exploded = true;
                     explodedAt[r.trackId] = step;
-                    pushRocketExplosionVfx(ctx, step, r.pos, cfg);
+                    pushRocketExplosionVfx(ctx, step, r.pos, cfg, hitSurface || (r.pos.y <= 1.8 ? 'ground' : 'air'));
                     if (typeof AirArenaGroundTargets !== 'undefined'
                         && typeof AirArenaGroundTargets.applyBlastDamage === 'function') {
                         const gtHits = AirArenaGroundTargets.applyBlastDamage(r.pos, blastR, damage, {

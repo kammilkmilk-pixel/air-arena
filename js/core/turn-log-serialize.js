@@ -65,7 +65,9 @@
             seed: trigger.seed,
             count: trigger.count,
             power: trigger.power,
-            color: trigger.color
+            color: trigger.color,
+            radius: trigger.radius,
+            surface: trigger.surface
         };
         if (trigger.pos) out.pos = plainVec(trigger.pos);
         if (trigger.fwd) out.fwd = plainVec(trigger.fwd);

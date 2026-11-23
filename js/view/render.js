@@ -120,6 +120,9 @@ function clearCityScene() {
     if (typeof AirArenaGroundTargets !== 'undefined' && AirArenaGroundTargets.clear) {
         AirArenaGroundTargets.clear();
     }
+    if (typeof window !== 'undefined' && window.AirArenaGroundExplosionVfx && window.AirArenaGroundExplosionVfx.clearAll) {
+        window.AirArenaGroundExplosionVfx.clearAll();
+    }
 }
 
 function restoreOriginalEnvironment() {
@@ -1254,6 +1257,10 @@ function renderCombatFrame(currentLog, animProgress) {
     puffPool.forEach(p => p.visible = false);
     sparkStreakPool.forEach(p => { p.visible = false; });
 
+    if (typeof window !== 'undefined' && window.AirArenaGroundExplosionVfx && window.AirArenaGroundExplosionVfx.renderGroundExplosions) {
+        window.AirArenaGroundExplosionVfx.renderGroundExplosions(battleLog, turnIdx, trackIdx);
+    }
+
     let vfxToRender = [];
     
     if (currentLog.vfxTriggers) {
@@ -1339,6 +1346,14 @@ function renderCombatFrame(currentLog, animProgress) {
         }
 
         if (trigger.type !== 'explosion' && trigger.type !== 'flash' && trigger.type !== 'puff') return;
+        // Ground-proximity explosions are rendered by AirArenaGroundExplosionVfx (3D layered blast);
+        // skip the legacy centered 2D billboard so it doesn't slice a flat seam through the ground.
+        if (trigger.type === 'explosion'
+            && typeof window !== 'undefined'
+            && window.AirArenaGroundExplosionVfx
+            && window.AirArenaGroundExplosionVfx.isGroundExplosionTrigger(trigger)) {
+            return;
+        }
 
         let maxLife = trigger.type === 'flash' ? 8 : (trigger.type === 'puff' ? 60 : 60);
         if (ageFrames >= maxLife) return;

@@ -1112,6 +1112,9 @@ function animate() {
     } else if (!GameContext.isReplayMode()) {
         // Keep chaff sparkles flickering while planning between turns
         GameContext.callService('drawStaticChaff');
+        if (window.AirArenaGroundExplosionVfx && typeof window.AirArenaGroundExplosionVfx.syncPlanningCraters === 'function') {
+            window.AirArenaGroundExplosionVfx.syncPlanningCraters(battleLog);
+        }
     }
     // After combat pose update (or planning idle): refresh / hide condensation.
     if (typeof window.updateCondensationVfx === 'function') window.updateCondensationVfx();
