@@ -35,6 +35,11 @@
             vortexMinSpeed: Number(v.vortexMinSpeed) || 0.04,
             trailPersistMs: Math.max(800, Number(v.trailPersistMs) || 2800),
             sampleMinDist: Math.max(0.05, Number(v.sampleMinDist) || 0.18),
+            tipStreakPts: Math.max(8, Math.min(64, Number(v.tipStreakPts) || 28)),
+            tipStreakPersistMs: Math.max(200, Number(v.tipStreakPersistMs) || 900),
+            tipStreakBaseWidth: Number(v.tipStreakBaseWidth) || 0.045,
+            tipStreakGrow: Number(v.tipStreakGrow) || 0.12,
+            tipStreakSampleMinDist: Math.max(0.04, Number(v.tipStreakSampleMinDist) || 0.12),
             aoaFogStart: Number(v.aoaFogStart) || 0.55,
             aoaFogFull: Number(v.aoaFogFull) || 1.8,
             leFogMaxOpacity: Number(v.leFogMaxOpacity) || 0.72,
@@ -141,17 +146,23 @@
         return mesh;
     }
 
-    function disposeRibbonPair(fx) {
-        if (!fx) return;
-        [fx.left, fx.right].forEach((m) => {
+    function disposeMeshes(list) {
+        (list || []).forEach((m) => {
             if (!m) return;
             if (m.parent) m.parent.remove(m);
             else if (typeof scene !== 'undefined' && scene) scene.remove(m);
             if (m.geometry) m.geometry.dispose();
             if (m.material) m.material.dispose();
         });
+    }
+
+    function disposeRibbonPair(fx) {
+        if (!fx) return;
+        disposeMeshes([fx.left, fx.right, fx.streakL, fx.streakR]);
         fx.left = null;
         fx.right = null;
+        fx.streakL = null;
+        fx.streakR = null;
     }
 
     function ensureFx(team) {
@@ -163,21 +174,30 @@
         let fx = team.wrapper.userData.condensation;
 
         // Rebuild ribbon buffers if capacity grew (e.g. longer persist).
-        if (fx && fx.capPts !== c.vortexPts) {
+        if (fx && (fx.capPts !== c.vortexPts || fx.streakCap !== c.tipStreakPts || !fx.streakL)) {
             disposeRibbonPair(fx);
             fx.left = makeRibbon(c.vortexPts);
             fx.right = makeRibbon(c.vortexPts);
-            scene.add(fx.left);
-            scene.add(fx.right);
+            fx.streakL = makeRibbon(c.tipStreakPts);
+            fx.streakR = makeRibbon(c.tipStreakPts);
+            fx.streakL.name = 'condensationTipStreak';
+            fx.streakR.name = 'condensationTipStreak';
+            scene.add(fx.left, fx.right, fx.streakL, fx.streakR);
             fx.capPts = c.vortexPts;
+            fx.streakCap = c.tipStreakPts;
+            if (!fx.streakHistL) fx.streakHistL = [];
+            if (!fx.streakHistR) fx.streakHistR = [];
         }
 
         if (fx) return fx;
 
         const left = makeRibbon(c.vortexPts);
         const right = makeRibbon(c.vortexPts);
-        scene.add(left);
-        scene.add(right);
+        const streakL = makeRibbon(c.tipStreakPts);
+        const streakR = makeRibbon(c.tipStreakPts);
+        streakL.name = 'condensationTipStreak';
+        streakR.name = 'condensationTipStreak';
+        scene.add(left, right, streakL, streakR);
 
         const fogGroup = new THREE.Group();
         fogGroup.name = 'condensationLeFogGroup';
@@ -197,11 +217,16 @@
         fx = {
             left,
             right,
+            streakL,
+            streakR,
             fogGroup,
             fogSprites,
             histL: [],
             histR: [],
+            streakHistL: [],
+            streakHistR: [],
             capPts: c.vortexPts,
+            streakCap: c.tipStreakPts,
             prevPos: null,
             prevQuat: null,
             intensity: 0,
@@ -212,7 +237,7 @@
     }
 
     /** hist[0] is a live head glued to the tip; hist[1..] are committed wake samples. */
-    function pushTipSample(hist, worldPos, now, c) {
+    function pushTipSample(hist, worldPos, now, maxPts, persistMs, sampleMinDist) {
         if (!hist.length) {
             hist.push({ p: worldPos.clone(), t: now });
             hist.push({ p: worldPos.clone(), t: now });
@@ -222,25 +247,24 @@
         head.p.copy(worldPos);
         head.t = now;
         const lastCommitted = hist[1];
-        if (lastCommitted && lastCommitted.p.distanceToSquared(worldPos) < c.sampleMinDist * c.sampleMinDist) {
+        if (lastCommitted && lastCommitted.p.distanceToSquared(worldPos) < sampleMinDist * sampleMinDist) {
             return;
         }
         hist.splice(1, 0, { p: worldPos.clone(), t: now });
-        while (hist.length > c.vortexPts) hist.pop();
-        const cutoff = now - c.trailPersistMs;
+        while (hist.length > maxPts) hist.pop();
+        const cutoff = now - persistMs;
         while (hist.length && hist[hist.length - 1].t < cutoff) hist.pop();
     }
 
-    function pruneHist(hist, now, c) {
-        const cutoff = now - c.trailPersistMs;
+    function pruneHist(hist, now, maxPts, persistMs) {
+        const cutoff = now - persistMs;
         while (hist.length && hist[hist.length - 1].t < cutoff) hist.pop();
-        while (hist.length > c.vortexPts) hist.pop();
+        while (hist.length > maxPts) hist.pop();
     }
 
     function hideFx(fx) {
         if (!fx) return;
-        if (fx.left) fx.left.visible = false;
-        if (fx.right) fx.right.visible = false;
+        [fx.left, fx.right, fx.streakL, fx.streakR].forEach((m) => { if (m) m.visible = false; });
         if (fx.fogSprites) {
             fx.fogSprites.forEach((s) => {
                 s.visible = false;
@@ -249,6 +273,8 @@
         }
         fx.histL.length = 0;
         fx.histR.length = 0;
+        if (fx.streakHistL) fx.streakHistL.length = 0;
+        if (fx.streakHistR) fx.streakHistR.length = 0;
     }
 
     function localToWorld(wrapper, localArr, out) {
@@ -295,15 +321,18 @@
         return { aoa, speed, turn };
     }
 
-    function writeRibbon(mesh, hist, intensity, c, now) {
+    function writeRibbon(mesh, hist, intensity, now, style) {
         if (!mesh || !hist || hist.length < 2) {
             if (mesh) mesh.visible = false;
             return;
         }
-        // Even if current tip intensity is low, keep fading the persisted wake.
         const drawIntensity = Math.max(intensity, 0.18);
-        const maxPts = c.vortexPts;
-        const persist = Math.max(1, c.trailPersistMs);
+        const maxPts = style.maxPts;
+        const persist = Math.max(1, style.persistMs);
+        const baseW = style.baseWidth;
+        const growW = style.grow;
+        const fadePow = style.fadePow != null ? style.fadePow : 1.1;
+        const bright = style.bright != null ? style.bright : 0.45;
         const posArr = mesh.geometry.attributes.position.array;
         const colArr = mesh.geometry.attributes.color.array;
         const uvArr = mesh.geometry.attributes.uv.array;
@@ -315,8 +344,8 @@
             if (!sample || !sample.p) continue;
             const age = Math.max(0, (now - sample.t) / persist);
             if (age >= 1) continue;
-            const life = age; // 0 at tip → 1 at oldest (time-based, not index-based)
-            const width = (c.vortexBaseWidth + life * c.vortexGrow) * (0.55 + 0.7 * drawIntensity);
+            const life = age;
+            const width = (baseW + life * growW) * (0.55 + 0.7 * drawIntensity);
             _tmpWorld.copy(sample.p);
             if (cam) {
                 _tmpCam.subVectors(cam.position, _tmpWorld).normalize();
@@ -343,8 +372,7 @@
             posArr[idx * 3 + 4] = _tmpWorld.y - _tmpRight.y;
             posArr[idx * 3 + 5] = _tmpWorld.z - _tmpRight.z;
 
-            // Gentler falloff so the wake stays readable across ~2 turns.
-            const fade = Math.pow(1 - life, 1.1) * Math.min(1, 0.45 + drawIntensity * 0.4);
+            const fade = Math.pow(1 - life, fadePow) * Math.min(1, bright + drawIntensity * 0.4);
             const r = 0.95 * fade;
             const g = 0.97 * fade;
             const b = 1.0 * fade;
@@ -449,6 +477,8 @@
             if (!fx.wasFlight) {
                 fx.histL.length = 0;
                 fx.histR.length = 0;
+                if (fx.streakHistL) fx.streakHistL.length = 0;
+                if (fx.streakHistR) fx.streakHistR.length = 0;
                 fx.prevPos = team.wrapper.position.clone();
                 fx.prevQuat = team.wrapper.quaternion.clone();
                 fx.prevVel = null;
@@ -463,6 +493,8 @@
                 fx.tipSig = tipSig;
                 fx.histL.length = 0;
                 fx.histR.length = 0;
+                if (fx.streakHistL) fx.streakHistL.length = 0;
+                if (fx.streakHistR) fx.streakHistR.length = 0;
             }
 
             const { aoa, speed, turn } = estimateFlightLoad(team.wrapper, fx, dtSec);
@@ -484,15 +516,37 @@
             localToWorld(team.wrapper, vis.wingTipR, _tmpB);
             // Always sample while moving in anim — idle tip vapor is OK at cruise.
             if (speedGate > 0.2) {
-                pushTipSample(fx.histL, _tmpA, now, c);
-                pushTipSample(fx.histR, _tmpB, now, c);
+                pushTipSample(fx.histL, _tmpA, now, c.vortexPts, c.trailPersistMs, c.sampleMinDist);
+                pushTipSample(fx.histR, _tmpB, now, c.vortexPts, c.trailPersistMs, c.sampleMinDist);
+                pushTipSample(fx.streakHistL, _tmpA, now, c.tipStreakPts, c.tipStreakPersistMs, c.tipStreakSampleMinDist);
+                pushTipSample(fx.streakHistR, _tmpB, now, c.tipStreakPts, c.tipStreakPersistMs, c.tipStreakSampleMinDist);
             } else {
-                pruneHist(fx.histL, now, c);
-                pruneHist(fx.histR, now, c);
+                pruneHist(fx.histL, now, c.vortexPts, c.trailPersistMs);
+                pruneHist(fx.histR, now, c.vortexPts, c.trailPersistMs);
+                pruneHist(fx.streakHistL, now, c.tipStreakPts, c.tipStreakPersistMs);
+                pruneHist(fx.streakHistR, now, c.tipStreakPts, c.tipStreakPersistMs);
             }
 
-            writeRibbon(fx.left, fx.histL, intensity, c, now);
-            writeRibbon(fx.right, fx.histR, intensity, c, now);
+            const wakeStyle = {
+                maxPts: c.vortexPts,
+                persistMs: c.trailPersistMs,
+                baseWidth: c.vortexBaseWidth,
+                grow: c.vortexGrow,
+                fadePow: 1.1,
+                bright: 0.45
+            };
+            const streakStyle = {
+                maxPts: c.tipStreakPts,
+                persistMs: c.tipStreakPersistMs,
+                baseWidth: c.tipStreakBaseWidth,
+                grow: c.tipStreakGrow,
+                fadePow: 0.85,
+                bright: 0.75
+            };
+            writeRibbon(fx.left, fx.histL, intensity, now, wakeStyle);
+            writeRibbon(fx.right, fx.histR, intensity, now, wakeStyle);
+            writeRibbon(fx.streakL, fx.streakHistL, Math.max(intensity, 0.85), now, streakStyle);
+            writeRibbon(fx.streakR, fx.streakHistR, Math.max(intensity, 0.85), now, streakStyle);
             updateLeFog(fx, aoa, c, now);
 
             if (!fx.prevPos) fx.prevPos = team.wrapper.position.clone();
@@ -507,13 +561,7 @@
     function disposeTeamCondensation(team) {
         if (!team || !team.wrapper || !team.wrapper.userData.condensation) return;
         const fx = team.wrapper.userData.condensation;
-        [fx.left, fx.right].forEach((m) => {
-            if (!m) return;
-            if (m.parent) m.parent.remove(m);
-            else if (typeof scene !== 'undefined' && scene) scene.remove(m);
-            if (m.geometry) m.geometry.dispose();
-            if (m.material) m.material.dispose();
-        });
+        disposeRibbonPair(fx);
         if (fx.fogGroup && fx.fogGroup.parent) fx.fogGroup.parent.remove(fx.fogGroup);
         fx.fogSprites.forEach((s) => {
             if (s.geometry) s.geometry.dispose();

@@ -85,8 +85,8 @@ const CONFIG = {
                 ribbonWidth: 0.12, engineOffsetY: -0.08, noseOffsetZ: 0.65, tailOffsetZ: -0.6,
                 /** Wrapper-local emitters for condensation VFX (MiG after setupModel scale).
                  *  Outer pylon ≈ ±0.25; tip sits just beyond (~±0.38). */
-                wingTipL: [-0.38, 0.01, 0.02],
-                wingTipR: [ 0.38, 0.01, 0.02],
+                wingTipL: [-0.38, -0.08, -0.15],
+                wingTipR: [ 0.38, -0.08, -0.15],
                 /** Leading-edge fog samples (span from root → tip, slightly forward of wing). */
                 wingLeL: [[-0.14, 0.02, 0.16], [-0.26, 0.015, 0.12], [-0.36, 0.01, 0.06]],
                 wingLeR: [[ 0.14, 0.02, 0.16], [ 0.26, 0.015, 0.12], [ 0.36, 0.01, 0.06]]
@@ -485,6 +485,15 @@ const CONFIG = {
             trailPersistMs: 2800,
             /** Min wingtip travel (m) before accepting a new sample — keeps long trails smooth. */
             sampleMinDist: 0.18,
+            /**
+             * Extra short white tip streak at wingTip emitters (contrail stub).
+             * Lives alongside the longer vortex wake.
+             */
+            tipStreakPts: 28,
+            tipStreakPersistMs: 900,
+            tipStreakBaseWidth: 0.045,
+            tipStreakGrow: 0.12,
+            tipStreakSampleMinDist: 0.12,
             /** Pitch-rate proxy (rad/s) → LE fog starts / full (physics velocity ≈ nose). */
             aoaFogStart: 0.55,
             aoaFogFull: 1.8,
