@@ -666,10 +666,8 @@ for (let i = 0; i < SPARK_STREAK_LIMIT; i++) {
 const threatEnvGroup = new THREE.Group(); scene.add(threatEnvGroup);
 window.ghostWrapper = new THREE.Group(); window.ghostWrapper.visible = false; scene.add(window.ghostWrapper);
 
-// Flight-path ribbon: white vapor look (was team red / cyan).
-const trackMaterialWhite = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.55, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false });
-const trackMaterialRed = trackMaterialWhite;
-const trackMaterialBlue = trackMaterialWhite;
+const trackMaterialRed = new THREE.MeshBasicMaterial({ color: 0xff0055, transparent: true, opacity: 0.65, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false });
+const trackMaterialBlue = new THREE.MeshBasicMaterial({ color: 0x00bcd4, transparent: true, opacity: 0.65, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false });
 const flareGeo = new THREE.SphereGeometry(0.4, 8, 8); const expGeo = new THREE.SphereGeometry(1, 16, 16); const expMat = new THREE.MeshBasicMaterial({ color: 0xff4400, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false });
 const flareMats = [ new THREE.MeshBasicMaterial({ color: 0xffff00, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false }), new THREE.MeshBasicMaterial({ color: 0xff8800, transparent: true, opacity: 0.75, blending: THREE.AdditiveBlending, depthWrite: false }), new THREE.MeshBasicMaterial({ color: 0x886655, transparent: true, opacity: 0.28, depthWrite: false }) ];
 const visualFlaresPool = [];
@@ -1038,7 +1036,7 @@ function drawTrajectoryLine(teamObj) {
     // 這會賦予光帶一個無限大的邊界球，徹底免疫任何極端大角度機動造成的 WebGL 引擎誤判剔除！
     geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), 1000000); 
     
-    const trackMat = trackMaterialWhite;
+    const trackMat = ((GameContext.getFaction && GameContext.getFaction(teamObj.id)) === 'blue') ? trackMaterialBlue : trackMaterialRed;
     trajectoryMeshes[teamObj.id] = new THREE.Mesh(geo, trackMat); 
     trajectoryMeshes[teamObj.id].frustumCulled = false;
     
