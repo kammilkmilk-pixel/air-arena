@@ -985,6 +985,9 @@ function animate() {
     // 1. ACMI 重播模式
     // ==========================================
     if (GameContext.isReplayMode()) { 
+        const frameDt = Math.max(4, Math.min(80, now - (GameContext.state.lastReplayFrameMs || now)));
+        GameContext.state.lastReplayFrameMs = now;
+
         if (isReplayingAuto) {
             let dt = now - (GameContext.state.lastReplayTime || now);
             GameContext.state.lastReplayTime = now;
@@ -1016,8 +1019,24 @@ function animate() {
             }
             
             if (battleLog[turnIdx]) {
+                if (window.AirArenaReplayDirector && typeof window.AirArenaReplayDirector.updateReplayCamera === 'function') {
+                    window.AirArenaReplayDirector.updateReplayCamera(battleLog, turnIdx, progress, frameDt);
+                }
                 if (typeof renderCombatFrame === 'function') renderCombatFrame(battleLog[turnIdx], progress);
                 if (typeof updateReplayTags === 'function') updateReplayTags(battleLog[turnIdx], progress);
+                if (typeof explosionPool !== 'undefined') {
+                    [explosionPool, flashPool, puffPool].forEach(pool => {
+                        pool.forEach(mesh => {
+                            if (mesh.visible) {
+                                mesh.quaternion.copy(camera.quaternion);
+                                if (mesh.userData.zRot !== undefined) {
+                                    const qZ = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), mesh.userData.zRot);
+                                    mesh.quaternion.multiply(qZ);
+                                }
+                            }
+                        });
+                    });
+                }
             }
         } catch (e) { 
             console.error("重播渲染遭遇亂流，已由裝甲攔截:", e); 
@@ -1139,6 +1158,36 @@ function animate() {
 let replayInterval = null;
 let isReplayingAuto = false;
 
+function resolveReplayCursor(val) {
+    const count = Array.isArray(battleLog) ? battleLog.length : 0;
+    if (!count) return null;
+    const maxTime = count + 0.99;
+    let turnIdx = Math.max(0, Math.min(count - 1, Math.floor(val) - 1));
+    let progress = val - Math.floor(val);
+    if (progress >= 0.99 || val >= maxTime) {
+        progress = 1.0;
+        turnIdx = Math.max(0, Math.min(count - 1, Math.floor(val - 0.01) - 1));
+    }
+    return { turnIdx, progress };
+}
+
+function refreshReplayDirectorFrame(opts) {
+    if (!GameContext.isReplayMode() || !Array.isArray(battleLog) || !battleLog.length) return;
+    const val = GameContext.state.virtualReplayTime || 1.0;
+    const cur = resolveReplayCursor(val);
+    if (!cur || !battleLog[cur.turnIdx]) return;
+    if (window.AirArenaReplayDirector && typeof window.AirArenaReplayDirector.updateReplayCamera === 'function') {
+        window.AirArenaReplayDirector.updateReplayCamera(battleLog, cur.turnIdx, cur.progress, 16.6, opts || { snap: true });
+    }
+    if (typeof renderCombatFrame === 'function') renderCombatFrame(battleLog[cur.turnIdx], cur.progress);
+    if (typeof updateReplayTags === 'function') updateReplayTags(battleLog[cur.turnIdx], cur.progress);
+    if (typeof window.updateCondensationVfx === 'function') window.updateCondensationVfx();
+    if (typeof renderer !== 'undefined' && renderer && typeof scene !== 'undefined' && typeof camera !== 'undefined') {
+        renderer.render(scene, camera);
+    }
+}
+window.refreshReplayDirectorFrame = refreshReplayDirectorFrame;
+
 function enterReplayMode() {
     if (!GameContext.isReplayMode()) {
         GameContext.setReplayMode(true);
@@ -1166,6 +1215,12 @@ function enterReplayMode() {
         if (labels) {
             labels.innerHTML = '';
             labels.style.display = 'none';
+        }
+        if (window.AirArenaReplayDirector && typeof window.AirArenaReplayDirector.onEnterReplay === 'function') {
+            window.AirArenaReplayDirector.onEnterReplay(
+                typeof camera !== 'undefined' ? camera : null,
+                typeof controls !== 'undefined' ? controls : null
+            );
         }
     }
 }
@@ -1227,6 +1282,12 @@ function exitReplayMode() {
     if (window.AirArenaAutocannonVfx && typeof window.AirArenaAutocannonVfx.hideAll === 'function') {
         window.AirArenaAutocannonVfx.hideAll();
     }
+    if (window.AirArenaReplayDirector && typeof window.AirArenaReplayDirector.onExitReplay === 'function') {
+        window.AirArenaReplayDirector.onExitReplay(
+            typeof camera !== 'undefined' ? camera : null,
+            typeof controls !== 'undefined' ? controls : null
+        );
+    }
     
     const currentTeam = GameContext.getActiveTeamId();
     if (GameContext.getTeam(currentTeam)) GameContext.callService('updateTacticalPreview', GameContext.getTeam(currentTeam));
@@ -1248,7 +1309,13 @@ function toggleReplayPlay() {
         GameContext.state.lastReplayTime = performance.now();
         
         if (btnPlay) btnPlay.innerText = "⏸ 暫停";
-        if (parseFloat(sld.value) >= parseFloat(sld.max)) sld.value = sld.min; 
+        if (parseFloat(sld.value) >= parseFloat(sld.max)) {
+            sld.value = sld.min;
+            GameContext.state.virtualReplayTime = parseFloat(sld.min) || 1.0;
+        } else {
+            GameContext.state.virtualReplayTime = parseFloat(sld.value) || 1.0;
+        }
+        refreshReplayDirectorFrame({ snap: true });
     }
 }
 
@@ -1268,24 +1335,30 @@ document.addEventListener("DOMContentLoaded", () => {
             
             let val = parseFloat(e.target.value); 
             GameContext.state.virtualReplayTime = val; 
-
-            let turnIdx = Math.floor(val) - 1; 
-            let progress = val - Math.floor(val);
-            if (progress >= 0.99 || val === parseFloat(sld.max)) { progress = 1.0; turnIdx = Math.floor(val - 0.01) - 1; }
-            if (turnIdx < 0) turnIdx = 0; 
-            if (turnIdx >= battleLog.length) turnIdx = battleLog.length - 1;
-            
-            let currentLog = battleLog[turnIdx];
-            if (currentLog && typeof renderCombatFrame === 'function') { 
-                renderCombatFrame(currentLog, progress); 
-                if (typeof updateReplayTags === 'function') updateReplayTags(currentLog, progress);
-                renderer.render(scene, camera); 
-            }
+            refreshReplayDirectorFrame({ snap: true });
         });
     }
 
     let btnPlay = document.getElementById('btn-rep-play');
     if (btnPlay) btnPlay.addEventListener('click', toggleReplayPlay);
+
+    let btnDirector = document.getElementById('btn-rep-director');
+    if (btnDirector) {
+        btnDirector.addEventListener('click', () => {
+            if (!window.AirArenaReplayDirector) return;
+            const on = window.AirArenaReplayDirector.toggleEnabled();
+            if (on) refreshReplayDirectorFrame({ snap: true });
+        });
+    }
+
+    let btnAngle = document.getElementById('btn-rep-angle');
+    if (btnAngle) {
+        btnAngle.addEventListener('click', () => {
+            if (!window.AirArenaReplayDirector) return;
+            window.AirArenaReplayDirector.cycleAngleOverride();
+            refreshReplayDirectorFrame({ snap: true });
+        });
+    }
 
     let btnExit = document.getElementById('btn-rep-exit');
     if (btnExit) btnExit.addEventListener('click', exitReplayMode);

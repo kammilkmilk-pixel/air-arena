@@ -109,6 +109,8 @@
         <div class="replay-control-chrome">
             <div class="replay-control-main" id="replay-control-main">
                 <button id="btn-rep-play" class="replay-btn">▶ 播放</button>
+                <button id="btn-rep-director" class="replay-btn replay-director-btn" style="display:none;" type="button" title="自動切換重播焦點戰機與鏡頭（拖曳畫面自動切為手動）">🎬 導播: 自動</button>
+                <button id="btn-rep-angle" class="replay-btn replay-angle-btn" style="display:none;" type="button" title="切換鏡頭角度（自動 / 尾隨 / 越肩 / 纏鬥雙機 / 機側掠影 / 戰術全景）">🎥 視角: 自動</button>
                 <button id="btn-rep-exit" class="replay-btn" style="display:none; color:#ff3355; font-weight:bold; border-color:#ff3355;">↩ 返回座艙</button>
                 <div class="replay-timeline-container">
                     <input type="range" id="replay-slider" min="1" max="1" value="1" step="0.01" disabled>
@@ -121,6 +123,7 @@
             <div class="replay-status-row" id="replay-status-row">
                 <span class="replay-status-spinner" id="replay-status-spinner" aria-hidden="true"></span>
                 <span id="replay-status">狀態: 戰術規劃中</span>
+                <span id="replay-director-badge" class="replay-director-badge" hidden></span>
                 <span id="compute-lock-sub" class="replay-status-sub" hidden></span>
                 <div id="radio-hud" aria-live="polite">
                     <div id="radio-bust" aria-hidden="true">--</div>
@@ -625,7 +628,7 @@
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
 
     <!-- 模組化遊戲組件 -->
-    <script src="js/core/config.js?v=gun1"></script>
+    <script src="js/core/config.js?v=rdir1"></script>
     <script src="js/core/combat-airspace.js"></script>
     <script src="js/core/arena-envelope.js"></script>
     <script src="js/ai/weapon-envelope.js"></script>
@@ -681,9 +684,10 @@
     <script src="js/view/radio-hud.js"></script>
     <script src="js/view/hud.js"></script>
     <script src="js/view/multi-view.js"></script>
+    <script src="js/view/replay-director.js?v=rdir1"></script>
     <script src="js/view/ops-radial-ui.js"></script>
-    <script src="js/view/ui.js"></script>
+    <script src="js/view/ui.js?v=rdir1"></script>
     <script src="js/core/batch-ai-run.js"></script>
-    <script src="js/game.js?v=gun1"></script>
+    <script src="js/game.js?v=rdir1"></script>
 </body>
 </html>

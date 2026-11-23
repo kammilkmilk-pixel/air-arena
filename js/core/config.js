@@ -580,6 +580,21 @@ const CONFIG = {
         groundStores: true,
         bombPylonIndex: 0,
         rocketPylonIndex: 3
+    },
+
+    /**
+     * Automatic ACMI replay camera & aircraft director (1v1 + multi-aircraft 2v2).
+     */
+    replayDirector: {
+        enabledByDefault: true,
+        minHoldTurns: 0.85,
+        criticalHoldTurns: 0.35,
+        maxHoldTurns: 2.5,
+        hysteresisMargin: 13,
+        closeDogfightRange: 44,
+        missileThreatRange: 38,
+        minTerrainAltitude: 2.0,
+        baseFov: 60
     }
 };
 

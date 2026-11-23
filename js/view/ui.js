@@ -1623,6 +1623,16 @@ function uiIsSeatLive(teamId) {
 }
 function uiSelectSeat(teamId) {
     if (!uiIsSeatLive(teamId)) return;
+    // In ACMI replay mode, clicking any roster seat focuses/unlocks that aircraft in Auto-Director
+    if (typeof GameContext !== 'undefined' && GameContext.isReplayMode && GameContext.isReplayMode()) {
+        if (window.AirArenaReplayDirector && typeof window.AirArenaReplayDirector.focusSeat === 'function') {
+            window.AirArenaReplayDirector.focusSeat(teamId);
+            if (typeof window.refreshReplayDirectorFrame === 'function') {
+                window.refreshReplayDirectorFrame({ snap: true });
+            }
+        }
+        return;
+    }
     const t = teams[teamId];
     const crashed = !!(t && (t.isDestroyed || (typeof t.hp === 'number' && t.hp <= 0) ||
         t.wreckPhase === 'falling' || t.wreckPhase === 'gone'));
