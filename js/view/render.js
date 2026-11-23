@@ -980,7 +980,7 @@ function updateSpatialHelpers() {
         if (!t.realBeam) { t.realBeam = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0,0), new THREE.Vector3(0,-1,0)]), new THREE.LineBasicMaterial({color, transparent: true, opacity: 0.5})); scene.add(t.realBeam); }
         if (id !== window.activeTeamId && !isReplaying) { if(t.realBeam) t.realBeam.visible = false; if(label) label.style.display = 'none'; return; }
         if (t.wrapper && !t.isDestroyed && t.matchActive !== false) { 
-            let correctedY = t.wrapper.position.y - 0.08; t.realBeam.position.set(t.wrapper.position.x, correctedY, t.wrapper.position.z); t.realBeam.scale.set(1, Math.max(0.01, correctedY), 1); t.realBeam.visible = true; 
+            let correctedY = t.wrapper.position.y - 0.08; t.realBeam.position.set(t.wrapper.position.x, correctedY, t.wrapper.position.z); t.realBeam.scale.set(1, Math.max(0.01, correctedY), 1); t.realBeam.visible = !isReplaying; 
             if (isReplaying || splitView) { if(label) label.style.display = 'none'; } else {
                 let pos = t.wrapper.position.clone(); pos.y = pos.y * 0.8; pos.project(camera);
                 if (label) { label.style.left = `${(pos.x*.5+.5)*window.innerWidth}px`; label.style.top = `${(pos.y*-.5+.5)*window.innerHeight}px`; label.style.color = colorCss; label.innerText = `${t.wrapper.position.y.toFixed(1)}m`; label.style.display = 'block'; }
@@ -1039,6 +1039,7 @@ function drawTrajectoryLine(teamObj) {
     const trackMat = ((GameContext.getFaction && GameContext.getFaction(teamObj.id)) === 'blue') ? trackMaterialBlue : trackMaterialRed;
     trajectoryMeshes[teamObj.id] = new THREE.Mesh(geo, trackMat); 
     trajectoryMeshes[teamObj.id].frustumCulled = false;
+    trajectoryMeshes[teamObj.id].userData.totalSteps = steps;
     
     scene.add(trajectoryMeshes[teamObj.id]);
 
@@ -1224,6 +1225,25 @@ function renderCombatFrame(currentLog, animProgress) {
     if (!currentLog || !battleLog) return;
     let turnIdx = battleLog.indexOf(currentLog); if (turnIdx === -1) return;
     let trackIdx = Math.min(100, Math.floor(animProgress * 100));
+
+    // Trim forward path ribbon so ONLY the remaining segment ahead of the aircraft stays red/cyan;
+    // the flown wake behind the aircraft is rendered in white by condensation-vfx.js.
+    if (typeof trajectoryMeshes !== 'undefined' && trajectoryMeshes) {
+        const isLatestTurn = (turnIdx === battleLog.length - 1) && !window.replayMode;
+        Object.keys(trajectoryMeshes).forEach((tid) => {
+            const tm = trajectoryMeshes[tid];
+            if (!tm || !tm.geometry) return;
+            if (!isLatestTurn) {
+                tm.visible = false;
+                return;
+            }
+            const total = Number(tm.userData && tm.userData.totalSteps) || 0;
+            if (total > 0) {
+                const startStep = Math.min(total, Math.max(0, Math.floor(animProgress * total)));
+                tm.geometry.setDrawRange(startStep * 6, Math.max(0, (total - startStep) * 6));
+            }
+        });
+    }
 
     explosionPool.forEach(p => {
         if (!(p.userData && typeof p.userData.debrisLife === 'number')) p.visible = false;

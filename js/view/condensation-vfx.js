@@ -1,21 +1,21 @@
 // ============================================================================
-// condensation-vfx.js — wingtip vortex ribbons + high-AoA leading-edge vapor fog
-// Visual-only. Driven each frame from aircraft pose / velocity / stick load.
+// condensation-vfx.js — aft white wake ribbon + short wingtip wake ribbons + LE fog
+// Forward planning ribbon keeps team red/cyan; flown wake behind aircraft is white.
 // ============================================================================
 
 (function initCondensationVfx(root) {
     const _tmpNose = new THREE.Vector3();
     const _tmpVel = new THREE.Vector3();
-    const _tmpRight = new THREE.Vector3();
+    const _tmpWing = new THREE.Vector3();
     const _tmpUp = new THREE.Vector3();
     const _tmpLocal = new THREE.Vector3();
-    const _tmpWorld = new THREE.Vector3();
-    const _tmpCam = new THREE.Vector3();
+    const _tmpCenter = new THREE.Vector3();
     const _tmpA = new THREE.Vector3();
     const _tmpB = new THREE.Vector3();
 
     let vaporTex = null;
-    let vortexMat = null;
+    let wakeFadeTex = null;
+    let whiteRibbonMat = null;
     let fogMat = null;
     let lastNow = 0;
 
@@ -26,20 +26,14 @@
         return {
             enabled: v.enabled !== false,
             onlyDuringFlightAnim: v.onlyDuringFlightAnim !== false,
-            vortexPts: Math.max(16, Math.min(160, Number(v.vortexPts) || 96)),
-            vortexBaseWidth: Number(v.vortexBaseWidth) || 0.03,
-            vortexGrow: Number(v.vortexGrow) || 0.22,
-            vortexIdle: Number(v.vortexIdle) || 0.35,
-            vortexTurnBoost: Number(v.vortexTurnBoost) || 1.1,
-            vortexAoaBoost: Number(v.vortexAoaBoost) || 0.85,
-            vortexMinSpeed: Number(v.vortexMinSpeed) || 0.04,
+            centerWakeTurns: Math.max(0.2, Math.min(3.0, Number(v.centerWakeTurns) || 1.6)),
+            centerWakeWidth: Math.max(0.02, Number(v.centerWakeWidth) || 0.12),
+            centerWakeOpacity: Math.max(0.05, Math.min(1, Number(v.centerWakeOpacity) || 0.82)),
+            tipWakeTurns: Math.max(0.08, Math.min(2.5, Number(v.tipWakeTurns) || 0.55)),
+            tipWakeWidth: Math.max(0.015, Number(v.tipWakeWidth) || 0.085),
+            tipWakeOpacity: Math.max(0.05, Math.min(1, Number(v.tipWakeOpacity) || 0.92)),
+            vortexPts: Math.max(24, Math.min(180, Number(v.vortexPts) || 96)),
             trailPersistMs: Math.max(800, Number(v.trailPersistMs) || 2800),
-            sampleMinDist: Math.max(0.05, Number(v.sampleMinDist) || 0.18),
-            tipStreakPts: Math.max(8, Math.min(64, Number(v.tipStreakPts) || 28)),
-            tipStreakPersistMs: Math.max(200, Number(v.tipStreakPersistMs) || 900),
-            tipStreakBaseWidth: Number(v.tipStreakBaseWidth) || 0.045,
-            tipStreakGrow: Number(v.tipStreakGrow) || 0.12,
-            tipStreakSampleMinDist: Math.max(0.04, Number(v.tipStreakSampleMinDist) || 0.12),
             aoaFogStart: Number(v.aoaFogStart) || 0.55,
             aoaFogFull: Number(v.aoaFogFull) || 1.8,
             leFogMaxOpacity: Number(v.leFogMaxOpacity) || 0.72,
@@ -62,8 +56,10 @@
             : null;
         const vis = (ac && ac.visuals) || {};
         return {
-            wingTipL: Array.isArray(vis.wingTipL) ? vis.wingTipL : [-0.38, 0.01, 0.02],
-            wingTipR: Array.isArray(vis.wingTipR) ? vis.wingTipR : [0.38, 0.01, 0.02],
+            engineOffsetY: Number.isFinite(Number(vis.engineOffsetY)) ? Number(vis.engineOffsetY) : -0.08,
+            tailOffsetZ: Number.isFinite(Number(vis.tailOffsetZ)) ? Number(vis.tailOffsetZ) : -0.45,
+            wingTipL: Array.isArray(vis.wingTipL) ? vis.wingTipL : [-0.38, -0.08, -0.15],
+            wingTipR: Array.isArray(vis.wingTipR) ? vis.wingTipR : [0.38, -0.08, -0.15],
             wingLeL: Array.isArray(vis.wingLeL) ? vis.wingLeL : [[-0.14, 0.02, 0.16], [-0.26, 0.015, 0.12], [-0.36, 0.01, 0.06]],
             wingLeR: Array.isArray(vis.wingLeR) ? vis.wingLeR : [[0.14, 0.02, 0.16], [0.26, 0.015, 0.12], [0.36, 0.01, 0.06]]
         };
@@ -85,20 +81,50 @@
             vaporTex = new THREE.CanvasTexture(canvas);
             vaporTex.needsUpdate = true;
         }
-        if (!vortexMat) {
-            // Additive: black texture edges / faded tail vanish instead of drawing dark sheets.
-            const map = (typeof window !== 'undefined' && window.ribbonTexShared)
-                ? window.ribbonTexShared
-                : vaporTex;
-            vortexMat = new THREE.MeshBasicMaterial({
-                map,
+        if (!wakeFadeTex) {
+            // 1D vertical white → transparent alpha gradient (Three r128 safe; UV.y = age 0..1).
+            const c2 = document.createElement('canvas');
+            c2.width = 32;
+            c2.height = 128;
+            const gctx = c2.getContext('2d');
+            // Crisp light-ribbon cross-section (solid bright white core + cool vapor edge so it
+            // reads clearly over both dark terrain and bright white buildings) × smooth tail fade.
+            const img = gctx.createImageData(32, 128);
+            const data = img.data;
+            for (let y = 0; y < 128; y++) {
+                const v = y / 127; // 0 = emitter head, 1 = tail end
+                // Hold strong brightness near aircraft, then taper cleanly to transparent tail
+                const fadeT = Math.max(0, (v - 0.22) / 0.78);
+                const tailAlpha = Math.pow(1 - fadeT, 1.35);
+                for (let x = 0; x < 32; x++) {
+                    const u = Math.abs((x / 31) * 2 - 1); // 0 center .. 1 outer edge
+                    // Keep 82% of ribbon width full-solid like drawTrajectoryLine, soften only outermost 18%
+                    const edge = u < 0.82 ? 1.0 : Math.max(0, 1 - (u - 0.82) / 0.18);
+                    const a = Math.round(255 * tailAlpha * edge);
+                    // Pure white core (u < 0.65) with cool ice-blue vapor rim (u >= 0.65) for contrast on white roofs
+                    const rim = u < 0.65 ? 0 : (u - 0.65) / 0.35;
+                    const p = (y * 32 + x) * 4;
+                    data[p] = Math.round(255 - rim * 95);
+                    data[p + 1] = Math.round(255 - rim * 55);
+                    data[p + 2] = 255;
+                    data[p + 3] = a;
+                }
+            }
+            gctx.putImageData(img, 0, 0);
+            wakeFadeTex = new THREE.CanvasTexture(c2);
+            wakeFadeTex.wrapS = THREE.ClampToEdgeWrapping;
+            wakeFadeTex.wrapT = THREE.ClampToEdgeWrapping;
+            wakeFadeTex.needsUpdate = true;
+        }
+        if (!whiteRibbonMat) {
+            whiteRibbonMat = new THREE.MeshBasicMaterial({
+                map: wakeFadeTex,
+                color: 0xffffff,
                 transparent: true,
-                opacity: 1,
-                blending: THREE.AdditiveBlending,
+                opacity: 0.85,
+                blending: THREE.NormalBlending,
                 depthWrite: false,
-                side: THREE.DoubleSide,
-                vertexColors: true,
-                fog: true
+                side: THREE.DoubleSide
             });
         }
         if (!fogMat) {
@@ -115,10 +141,9 @@
         }
     }
 
-    function makeRibbon(maxPts) {
+    function makeWakeRibbon(maxPts, name) {
         const geo = new THREE.BufferGeometry();
         geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(maxPts * 2 * 3), 3));
-        geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(maxPts * 2 * 3), 3));
         geo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(maxPts * 2 * 2), 2));
         const indices = [];
         for (let i = 0; i < maxPts - 1; i++) {
@@ -128,11 +153,11 @@
         geo.setIndex(indices);
         geo.setDrawRange(0, 0);
         geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), 1e6);
-        const mesh = new THREE.Mesh(geo, vortexMat.clone());
+        const mesh = new THREE.Mesh(geo, whiteRibbonMat.clone());
         mesh.frustumCulled = false;
-        mesh.renderOrder = 3;
+        mesh.renderOrder = 2;
         mesh.visible = false;
-        mesh.name = 'condensationVortex';
+        mesh.name = name || 'condensationWakeRibbon';
         return mesh;
     }
 
@@ -156,15 +181,6 @@
         });
     }
 
-    function disposeRibbonPair(fx) {
-        if (!fx) return;
-        disposeMeshes([fx.left, fx.right, fx.streakL, fx.streakR]);
-        fx.left = null;
-        fx.right = null;
-        fx.streakL = null;
-        fx.streakR = null;
-    }
-
     function ensureFx(team) {
         if (!team || !team.wrapper) return null;
         if (typeof scene === 'undefined' || !scene) return null;
@@ -173,35 +189,24 @@
         const vis = aircraftVisuals(team);
         let fx = team.wrapper.userData.condensation;
 
-        // Rebuild ribbon buffers if capacity grew (e.g. longer persist).
-        if (fx && (fx.capPts !== c.vortexPts || fx.streakCap !== c.tipStreakPts || !fx.streakL)) {
-            disposeRibbonPair(fx);
-            fx.left = makeRibbon(c.vortexPts);
-            fx.right = makeRibbon(c.vortexPts);
-            fx.streakL = makeRibbon(c.tipStreakPts);
-            fx.streakR = makeRibbon(c.tipStreakPts);
-            fx.streakL.name = 'condensationTipStreak';
-            fx.streakR.name = 'condensationTipStreak';
-            scene.add(fx.left, fx.right, fx.streakL, fx.streakR);
+        if (fx && (fx.capPts !== c.vortexPts || !fx.center)) {
+            disposeMeshes([fx.center, fx.left, fx.right]);
+            fx.center = makeWakeRibbon(c.vortexPts, 'condensationCenterWake');
+            fx.left = makeWakeRibbon(c.vortexPts, 'condensationTipWakeL');
+            fx.right = makeWakeRibbon(c.vortexPts, 'condensationTipWakeR');
+            scene.add(fx.center, fx.left, fx.right);
             fx.capPts = c.vortexPts;
-            fx.streakCap = c.tipStreakPts;
-            if (!fx.streakHistL) fx.streakHistL = [];
-            if (!fx.streakHistR) fx.streakHistR = [];
         }
 
         if (fx) return fx;
 
-        const left = makeRibbon(c.vortexPts);
-        const right = makeRibbon(c.vortexPts);
-        const streakL = makeRibbon(c.tipStreakPts);
-        const streakR = makeRibbon(c.tipStreakPts);
-        streakL.name = 'condensationTipStreak';
-        streakR.name = 'condensationTipStreak';
-        scene.add(left, right, streakL, streakR);
+        const center = makeWakeRibbon(c.vortexPts, 'condensationCenterWake');
+        const left = makeWakeRibbon(c.vortexPts, 'condensationTipWakeL');
+        const right = makeWakeRibbon(c.vortexPts, 'condensationTipWakeR');
+        scene.add(center, left, right);
 
         const fogGroup = new THREE.Group();
         fogGroup.name = 'condensationLeFogGroup';
-        // Tag so ghostWrapper.clone() can strip these (same pattern as exhaust).
         fogGroup.userData.isCondensationVfx = true;
         const fogSprites = [];
         const places = [].concat(vis.wingLeL || [], vis.wingLeR || []);
@@ -215,100 +220,187 @@
         team.wrapper.add(fogGroup);
 
         fx = {
+            center,
             left,
             right,
-            streakL,
-            streakR,
             fogGroup,
             fogSprites,
-            histL: [],
-            histR: [],
-            streakHistL: [],
-            streakHistR: [],
             capPts: c.vortexPts,
-            streakCap: c.tipStreakPts,
             prevPos: null,
             prevQuat: null,
-            intensity: 0,
+            prevVel: null,
+            wasFlight: false,
             aoa: 0
         };
         team.wrapper.userData.condensation = fx;
         return fx;
     }
 
-    /** hist[0] is a live head glued to the tip; hist[1..] are committed wake samples. */
-    function pushTipSample(hist, worldPos, now, maxPts, persistMs, sampleMinDist) {
-        if (!hist.length) {
-            hist.push({ p: worldPos.clone(), t: now });
-            hist.push({ p: worldPos.clone(), t: now });
-            return;
-        }
-        const head = hist[0];
-        head.p.copy(worldPos);
-        head.t = now;
-        const lastCommitted = hist[1];
-        if (lastCommitted && lastCommitted.p.distanceToSquared(worldPos) < sampleMinDist * sampleMinDist) {
-            return;
-        }
-        hist.splice(1, 0, { p: worldPos.clone(), t: now });
-        while (hist.length > maxPts) hist.pop();
-        const cutoff = now - persistMs;
-        while (hist.length && hist[hist.length - 1].t < cutoff) hist.pop();
+    function hideFog(fx) {
+        if (!fx || !fx.fogSprites) return;
+        fx.fogSprites.forEach((s) => {
+            s.visible = false;
+            if (s.material) s.material.opacity = 0;
+        });
     }
 
-    function pruneHist(hist, now, maxPts, persistMs) {
-        const cutoff = now - persistMs;
-        while (hist.length && hist[hist.length - 1].t < cutoff) hist.pop();
-        while (hist.length > maxPts) hist.pop();
-    }
-
-    function hideFx(fx) {
+    function hideAllMeshes(fx) {
         if (!fx) return;
-        [fx.left, fx.right, fx.streakL, fx.streakR].forEach((m) => { if (m) m.visible = false; });
-        if (fx.fogSprites) {
-            fx.fogSprites.forEach((s) => {
-                s.visible = false;
-                if (s.material) s.material.opacity = 0;
-            });
-        }
-        fx.histL.length = 0;
-        fx.histR.length = 0;
-        if (fx.streakHistL) fx.streakHistL.length = 0;
-        if (fx.streakHistR) fx.streakHistR.length = 0;
-    }
-
-    function localToWorld(wrapper, localArr, out) {
-        _tmpLocal.set(Number(localArr[0]) || 0, Number(localArr[1]) || 0, Number(localArr[2]) || 0);
-        return out.copy(_tmpLocal).applyQuaternion(wrapper.quaternion).add(wrapper.position);
+        if (fx.center) fx.center.visible = false;
+        if (fx.left) fx.left.visible = false;
+        if (fx.right) fx.right.visible = false;
+        hideFog(fx);
     }
 
     /**
-     * Flight-only load proxies.
-     * Sim velocity is nearly nose-aligned, so geometric AoA ≈ 0; use pitch/yaw rate instead.
-     * Never reads joy stick — planning must not spawn vapor.
+     * Resolve continuous timeline cursor `u` in turn units:
+     *   Turn 1 start = 0.0, Turn 1 end = 1.0, Turn 2 mid = 1.5, etc.
      */
+    function currentTimelineCursor() {
+        if (typeof battleLog === 'undefined' || !Array.isArray(battleLog) || battleLog.length === 0) {
+            return null;
+        }
+        if (typeof GameContext !== 'undefined' && GameContext.isReplayMode && GameContext.isReplayMode()) {
+            const val = Number(GameContext.state && GameContext.state.virtualReplayTime) || 1.0;
+            const maxU = battleLog.length;
+            // virtualReplayTime: 1.0 = start of battleLog[0], 1.99 = end of battleLog[0]
+            return Math.max(0, Math.min(maxU, val - 1.0));
+        }
+        if (typeof GameContext !== 'undefined' && GameContext.isAnimating && GameContext.isAnimating()) {
+            const prog = Math.max(0, Math.min(1, Number(GameContext.state && GameContext.state.animProgress) || 0));
+            return (battleLog.length - 1) + prog;
+        }
+        // Planning between turns (Turn 2+): aircraft sits at end of last resolved turn.
+        return battleLog.length;
+    }
+
+    /** Sample historical pose for `id` at timeline cursor `u` in [0, battleLog.length]. */
+    function samplePoseAtU(id, u, outPos, outQuat) {
+        if (u < 0 || !Array.isArray(battleLog) || !battleLog.length) return false;
+        let tIdx = Math.floor(u);
+        let frac = u - tIdx;
+        if (tIdx >= battleLog.length) {
+            tIdx = battleLog.length - 1;
+            frac = 1.0;
+        }
+        const entry = battleLog[tIdx] && battleLog[tIdx][id];
+        if (!entry || !entry.pts || entry.pts.length < 2 || !entry.quats || entry.quats.length < 2) {
+            return false;
+        }
+        const p = (typeof getPosAt === 'function')
+            ? getPosAt(frac, entry.pts)
+            : entry.pts[Math.min(entry.pts.length - 1, Math.floor(frac * (entry.pts.length - 1)))];
+        const q = (typeof getQuatAt === 'function')
+            ? getQuatAt(frac, entry.quats)
+            : entry.quats[Math.min(entry.quats.length - 1, Math.floor(frac * (entry.quats.length - 1)))];
+        outPos.copy(p);
+        outQuat.copy(q);
+        return true;
+    }
+
+    const _samplePos = new THREE.Vector3();
+    const _sampleQuat = new THREE.Quaternion();
+    const _prevCenter = new THREE.Vector3();
+    const _tangent = new THREE.Vector3();
+    const _toCam = new THREE.Vector3();
+    const _camSide = new THREE.Vector3();
+
+    /**
+     * Build a white vapor ribbon from `uNow` backward over `spanTurns`,
+     * emitted at `localOffset` ([x, y, z] in wrapper-local coordinates).
+     * Uses billboard-assisted width so ribbons stay visible from top-down AND edge-on bank angles.
+     */
+    function buildHistoryRibbon(mesh, id, uNow, spanTurns, maxPts, localOffset, halfWidth, baseOpacity, fadePow) {
+        if (!mesh || uNow <= 0.005 || spanTurns <= 0.01) {
+            if (mesh) mesh.visible = false;
+            return;
+        }
+        const uStart = Math.max(0, uNow - spanTurns);
+        const actualSpan = uNow - uStart;
+        if (actualSpan <= 0.005) {
+            mesh.visible = false;
+            return;
+        }
+
+        const segs = Math.max(8, Math.min(maxPts - 1, Math.round((actualSpan / Math.max(0.25, spanTurns)) * (maxPts - 1))));
+        const posArr = mesh.geometry.attributes.position.array;
+        const uvArr = mesh.geometry.attributes.uv.array;
+        const cam = (typeof camera !== 'undefined') ? camera : null;
+        let valid = 0;
+
+        for (let i = 0; i <= segs; i++) {
+            const frac = i / segs; // 0 at aircraft (newest) → 1 at oldest tail end
+            const u = uNow - frac * actualSpan;
+            if (!samplePoseAtU(id, u, _samplePos, _sampleQuat)) break;
+
+            const age = Math.min(1, Math.max(0, (uNow - u) / spanTurns));
+            _tmpLocal.set(Number(localOffset[0]) || 0, Number(localOffset[1]) || 0, Number(localOffset[2]) || 0);
+            _tmpCenter.copy(_tmpLocal).applyQuaternion(_sampleQuat).add(_samplePos);
+
+            // Wing-horizontal basis blended with camera-facing perpendicular so steep banks never collapse to 0px.
+            _tmpWing.set(1, 0, 0).applyQuaternion(_sampleQuat).normalize();
+            if (cam) {
+                if (i === 0) {
+                    _tangent.set(0, 0, 1).applyQuaternion(_sampleQuat).normalize();
+                } else {
+                    _tangent.subVectors(_prevCenter, _tmpCenter);
+                    if (_tangent.lengthSq() < 1e-8) _tangent.set(0, 0, 1).applyQuaternion(_sampleQuat);
+                    _tangent.normalize();
+                }
+                _toCam.subVectors(cam.position, _tmpCenter).normalize();
+                _camSide.crossVectors(_tangent, _toCam);
+                if (_camSide.lengthSq() > 1e-6) {
+                    _camSide.normalize();
+                    if (_camSide.dot(_tmpWing) < 0) _camSide.negate();
+                    _tmpWing.lerp(_camSide, 0.65).normalize();
+                }
+            }
+            _prevCenter.copy(_tmpCenter);
+            const w = halfWidth * (1.0 + age * 0.35);
+            _tmpWing.multiplyScalar(w);
+
+            const idx = valid * 2;
+            posArr[idx * 3 + 0] = _tmpCenter.x + _tmpWing.x;
+            posArr[idx * 3 + 1] = _tmpCenter.y + _tmpWing.y;
+            posArr[idx * 3 + 2] = _tmpCenter.z + _tmpWing.z;
+            posArr[idx * 3 + 3] = _tmpCenter.x - _tmpWing.x;
+            posArr[idx * 3 + 4] = _tmpCenter.y - _tmpWing.y;
+            posArr[idx * 3 + 5] = _tmpCenter.z - _tmpWing.z;
+
+            // CanvasTexture flipY=true in Three r128: UV v=1 samples canvas top (y=0, full alpha), v=0 samples bottom (y=127, transparent).
+            const vCoord = Math.pow(1 - age, fadePow);
+            uvArr[idx * 2 + 0] = 0;
+            uvArr[idx * 2 + 1] = vCoord;
+            uvArr[idx * 2 + 2] = 1;
+            uvArr[idx * 2 + 3] = vCoord;
+            valid++;
+        }
+
+        if (valid > 1) {
+            mesh.geometry.setDrawRange(0, (valid - 1) * 6);
+            mesh.geometry.attributes.position.needsUpdate = true;
+            mesh.geometry.attributes.uv.needsUpdate = true;
+            if (mesh.material) mesh.material.opacity = baseOpacity;
+            mesh.visible = true;
+        } else {
+            mesh.visible = false;
+        }
+    }
+
     function estimateFlightLoad(wrapper, fx, dtSec) {
         let speed = 0;
         if (fx.prevPos && dtSec > 1e-4) {
             _tmpVel.subVectors(wrapper.position, fx.prevPos).divideScalar(dtSec);
             speed = _tmpVel.length();
         }
-
         let pitchRate = 0;
-        let turn = 0;
         if (fx.prevQuat && dtSec > 1e-4) {
-            const ang = fx.prevQuat.angleTo(wrapper.quaternion) / Math.max(dtSec, 1e-3);
-            turn = Math.min(1.6, ang / 1.6);
-
-            // Pitch component via local +Y rotation rate (approx).
             _tmpNose.set(0, 0, 1).applyQuaternion(wrapper.quaternion);
             _tmpUp.set(0, 1, 0).applyQuaternion(wrapper.quaternion);
             _tmpA.set(0, 0, 1).applyQuaternion(fx.prevQuat);
             _tmpB.copy(_tmpNose).sub(_tmpA);
             pitchRate = Math.abs(_tmpB.dot(_tmpUp) / Math.max(dtSec, 1e-3));
         }
-
-        // Path curvature: angle between successive velocity samples.
         let pathAoa = 0;
         if (fx.prevVel && speed > 0.08 && fx.prevVel.lengthSq() > 1e-4) {
             _tmpA.copy(fx.prevVel).normalize();
@@ -316,90 +408,14 @@
             const dot = Math.max(-1, Math.min(1, _tmpA.dot(_tmpB)));
             pathAoa = Math.acos(dot) / Math.max(dtSec, 1e-3) * 0.35;
         }
-
-        const aoa = Math.max(pitchRate, pathAoa);
-        return { aoa, speed, turn };
-    }
-
-    function writeRibbon(mesh, hist, intensity, now, style) {
-        if (!mesh || !hist || hist.length < 2) {
-            if (mesh) mesh.visible = false;
-            return;
-        }
-        const drawIntensity = Math.max(intensity, 0.18);
-        const maxPts = style.maxPts;
-        const persist = Math.max(1, style.persistMs);
-        const baseW = style.baseWidth;
-        const growW = style.grow;
-        const fadePow = style.fadePow != null ? style.fadePow : 1.1;
-        const bright = style.bright != null ? style.bright : 0.45;
-        const posArr = mesh.geometry.attributes.position.array;
-        const colArr = mesh.geometry.attributes.color.array;
-        const uvArr = mesh.geometry.attributes.uv.array;
-        const cam = (typeof camera !== 'undefined') ? camera : null;
-        let valid = 0;
-
-        for (let h = 0; h < hist.length && h < maxPts; h++) {
-            const sample = hist[h];
-            if (!sample || !sample.p) continue;
-            const age = Math.max(0, (now - sample.t) / persist);
-            if (age >= 1) continue;
-            const life = age;
-            const width = (baseW + life * growW) * (0.55 + 0.7 * drawIntensity);
-            _tmpWorld.copy(sample.p);
-            if (cam) {
-                _tmpCam.subVectors(cam.position, _tmpWorld).normalize();
-            } else {
-                _tmpCam.set(0, 1, 0);
-            }
-            const next = hist[Math.min(h + 1, hist.length - 1)];
-            const nextP = (next && next.p) ? next.p : sample.p;
-            _tmpA.subVectors(_tmpWorld, nextP);
-            if (_tmpA.lengthSq() < 1e-8) _tmpA.set(0, 0, 1);
-            else _tmpA.normalize();
-            _tmpRight.crossVectors(_tmpA, _tmpCam);
-            if (_tmpRight.lengthSq() < 1e-6) {
-                _tmpUp.set(0, 1, 0);
-                _tmpRight.crossVectors(_tmpA, _tmpUp);
-            }
-            _tmpRight.normalize().multiplyScalar(width);
-
-            const idx = valid * 2;
-            posArr[idx * 3 + 0] = _tmpWorld.x + _tmpRight.x;
-            posArr[idx * 3 + 1] = _tmpWorld.y + _tmpRight.y;
-            posArr[idx * 3 + 2] = _tmpWorld.z + _tmpRight.z;
-            posArr[idx * 3 + 3] = _tmpWorld.x - _tmpRight.x;
-            posArr[idx * 3 + 4] = _tmpWorld.y - _tmpRight.y;
-            posArr[idx * 3 + 5] = _tmpWorld.z - _tmpRight.z;
-
-            const fade = Math.pow(1 - life, fadePow) * Math.min(1, bright + drawIntensity * 0.4);
-            const r = 0.95 * fade;
-            const g = 0.97 * fade;
-            const b = 1.0 * fade;
-            colArr[idx * 3 + 0] = r; colArr[idx * 3 + 1] = g; colArr[idx * 3 + 2] = b;
-            colArr[idx * 3 + 3] = r; colArr[idx * 3 + 4] = g; colArr[idx * 3 + 5] = b;
-            uvArr[idx * 2 + 0] = 0; uvArr[idx * 2 + 1] = life;
-            uvArr[idx * 2 + 2] = 1; uvArr[idx * 2 + 3] = life;
-            valid++;
-        }
-
-        if (valid > 1) {
-            mesh.geometry.setDrawRange(0, (valid - 1) * 6);
-            mesh.geometry.attributes.position.needsUpdate = true;
-            mesh.geometry.attributes.color.needsUpdate = true;
-            mesh.geometry.attributes.uv.needsUpdate = true;
-            mesh.visible = true;
-            if (mesh.material) mesh.material.opacity = 1;
-        } else {
-            mesh.visible = false;
-        }
+        return { aoa: Math.max(pitchRate, pathAoa), speed };
     }
 
     function updateLeFog(fx, aoa, c, now) {
         const span = Math.max(1e-3, c.aoaFogFull - c.aoaFogStart);
         let t = (aoa - c.aoaFogStart) / span;
         t = Math.max(0, Math.min(1, t));
-        t = t * t * (3 - 2 * t); // smoothstep
+        t = t * t * (3 - 2 * t);
         const pulse = 0.92 + 0.08 * Math.sin(now * 0.009);
         const opacity = t * c.leFogMaxOpacity * pulse;
         const camQ = (typeof camera !== 'undefined' && camera) ? camera.quaternion : null;
@@ -427,127 +443,77 @@
         return ['red', 'blue'];
     }
 
-    function hideAllCondensation() {
-        if (typeof teams === 'undefined') return;
-        activeIds().forEach((id) => {
-            const team = teams[id];
-            if (team && team.wrapper && team.wrapper.userData.condensation) {
-                const fx = team.wrapper.userData.condensation;
-                hideFx(fx);
-                fx.wasFlight = false;
-                fx.prevVel = null;
-            }
-        });
-    }
-
     function updateCondensationVfx() {
         const c = cfg();
         if (!c.enabled || typeof teams === 'undefined') return;
-
-        const flightOn = !c.onlyDuringFlightAnim || isFlightAnimActive();
-        if (!flightOn) {
-            hideAllCondensation();
-            lastNow = performance.now();
-            return;
-        }
 
         const now = performance.now();
         const dtSec = lastNow ? Math.min(0.05, Math.max(0.008, (now - lastNow) / 1000)) : 0.016;
         lastNow = now;
 
+        const uNow = currentTimelineCursor();
+        const inFlightAnim = isFlightAnimActive();
+        const splitView = !!(typeof window !== 'undefined' && window.AirArenaMultiView && window.AirArenaMultiView.isSplit && window.AirArenaMultiView.isSplit());
+
         ensureSharedMats();
         const ids = activeIds();
         ids.forEach((id) => {
             const team = teams[id];
-            if (!team || !team.wrapper || team.isDestroyed || team.matchActive === false) {
+            if (!team || !team.wrapper || team.isDestroyed || team.matchActive === false || !team.wrapper.visible) {
                 if (team && team.wrapper && team.wrapper.userData.condensation) {
-                    hideFx(team.wrapper.userData.condensation);
+                    hideAllMeshes(team.wrapper.userData.condensation);
                 }
-                return;
-            }
-            if (!team.wrapper.visible) {
-                if (team.wrapper.userData.condensation) hideFx(team.wrapper.userData.condensation);
                 return;
             }
 
             const fx = ensureFx(team);
             if (!fx) return;
+            const vis = aircraftVisuals(team);
 
-            // Fresh wake when combat anim / replay just started.
+            // 1) White wake ribbons behind the aircraft (from battleLog history — never on planning ghost).
+            if (uNow == null || uNow <= 0.005 || splitView) {
+                if (fx.center) fx.center.visible = false;
+                if (fx.left) fx.left.visible = false;
+                if (fx.right) fx.right.visible = false;
+            } else {
+                const centerEmitter = [0, vis.engineOffsetY, 0];
+                buildHistoryRibbon(
+                    fx.center, id, uNow,
+                    c.centerWakeTurns, c.vortexPts,
+                    centerEmitter, c.centerWakeWidth * 0.5, c.centerWakeOpacity, 1.15
+                );
+                buildHistoryRibbon(
+                    fx.left, id, uNow,
+                    c.tipWakeTurns, c.vortexPts,
+                    vis.wingTipL, c.tipWakeWidth * 0.5, c.tipWakeOpacity, 0.95
+                );
+                buildHistoryRibbon(
+                    fx.right, id, uNow,
+                    c.tipWakeTurns, c.vortexPts,
+                    vis.wingTipR, c.tipWakeWidth * 0.5, c.tipWakeOpacity, 0.95
+                );
+            }
+
+            // 2) High-AoA leading-edge fog — ONLY during combat animation / replay.
+            if (!inFlightAnim && c.onlyDuringFlightAnim) {
+                hideFog(fx);
+                fx.wasFlight = false;
+                fx.prevVel = null;
+                return;
+            }
+
             if (!fx.wasFlight) {
-                fx.histL.length = 0;
-                fx.histR.length = 0;
-                if (fx.streakHistL) fx.streakHistL.length = 0;
-                if (fx.streakHistR) fx.streakHistR.length = 0;
                 fx.prevPos = team.wrapper.position.clone();
                 fx.prevQuat = team.wrapper.quaternion.clone();
                 fx.prevVel = null;
                 fx.wasFlight = true;
+                hideFog(fx);
                 return;
             }
 
-            const vis = aircraftVisuals(team);
-            // Tip offsets are live from CONFIG every frame — clear wake if user retuned them.
-            const tipSig = String(vis.wingTipL) + '|' + String(vis.wingTipR);
-            if (fx.tipSig !== tipSig) {
-                fx.tipSig = tipSig;
-                fx.histL.length = 0;
-                fx.histR.length = 0;
-                if (fx.streakHistL) fx.streakHistL.length = 0;
-                if (fx.streakHistR) fx.streakHistR.length = 0;
-            }
-
-            const { aoa, speed, turn } = estimateFlightLoad(team.wrapper, fx, dtSec);
+            const { aoa, speed } = estimateFlightLoad(team.wrapper, fx, dtSec);
             fx.aoa = aoa;
-
-            const speedGate = speed < c.vortexMinSpeed
-                ? Math.max(0.25, speed / Math.max(c.vortexMinSpeed, 1e-3))
-                : 1;
-            let intensity = c.vortexIdle
-                + turn * c.vortexTurnBoost
-                + Math.min(1.2, aoa / Math.max(c.aoaFogFull, 1e-3)) * c.vortexAoaBoost;
-            intensity *= speedGate;
-            const th = Number(team.throttle) || 2;
-            intensity *= 0.9 + Math.min(0.3, (th - 2) * 0.07);
-            intensity = Math.max(0, Math.min(1.85, intensity));
-            fx.intensity = intensity;
-
-            localToWorld(team.wrapper, vis.wingTipL, _tmpA);
-            localToWorld(team.wrapper, vis.wingTipR, _tmpB);
-            // Always sample while moving in anim — idle tip vapor is OK at cruise.
-            if (speedGate > 0.2) {
-                pushTipSample(fx.histL, _tmpA, now, c.vortexPts, c.trailPersistMs, c.sampleMinDist);
-                pushTipSample(fx.histR, _tmpB, now, c.vortexPts, c.trailPersistMs, c.sampleMinDist);
-                pushTipSample(fx.streakHistL, _tmpA, now, c.tipStreakPts, c.tipStreakPersistMs, c.tipStreakSampleMinDist);
-                pushTipSample(fx.streakHistR, _tmpB, now, c.tipStreakPts, c.tipStreakPersistMs, c.tipStreakSampleMinDist);
-            } else {
-                pruneHist(fx.histL, now, c.vortexPts, c.trailPersistMs);
-                pruneHist(fx.histR, now, c.vortexPts, c.trailPersistMs);
-                pruneHist(fx.streakHistL, now, c.tipStreakPts, c.tipStreakPersistMs);
-                pruneHist(fx.streakHistR, now, c.tipStreakPts, c.tipStreakPersistMs);
-            }
-
-            const wakeStyle = {
-                maxPts: c.vortexPts,
-                persistMs: c.trailPersistMs,
-                baseWidth: c.vortexBaseWidth,
-                grow: c.vortexGrow,
-                fadePow: 1.1,
-                bright: 0.45
-            };
-            const streakStyle = {
-                maxPts: c.tipStreakPts,
-                persistMs: c.tipStreakPersistMs,
-                baseWidth: c.tipStreakBaseWidth,
-                grow: c.tipStreakGrow,
-                fadePow: 0.85,
-                bright: 0.75
-            };
-            writeRibbon(fx.left, fx.histL, intensity, now, wakeStyle);
-            writeRibbon(fx.right, fx.histR, intensity, now, wakeStyle);
-            writeRibbon(fx.streakL, fx.streakHistL, Math.max(intensity, 0.85), now, streakStyle);
-            writeRibbon(fx.streakR, fx.streakHistR, Math.max(intensity, 0.85), now, streakStyle);
-            updateLeFog(fx, aoa, c, now);
+            updateLeFog(fx, speed > 0.03 ? aoa : 0, c, now);
 
             if (!fx.prevPos) fx.prevPos = team.wrapper.position.clone();
             else fx.prevPos.copy(team.wrapper.position);
@@ -561,7 +527,7 @@
     function disposeTeamCondensation(team) {
         if (!team || !team.wrapper || !team.wrapper.userData.condensation) return;
         const fx = team.wrapper.userData.condensation;
-        disposeRibbonPair(fx);
+        disposeMeshes([fx.center, fx.left, fx.right]);
         if (fx.fogGroup && fx.fogGroup.parent) fx.fogGroup.parent.remove(fx.fogGroup);
         fx.fogSprites.forEach((s) => {
             if (s.geometry) s.geometry.dispose();
@@ -572,15 +538,14 @@
 
     root.updateCondensationVfx = updateCondensationVfx;
     root.disposeTeamCondensation = disposeTeamCondensation;
-    // Node-friendly helpers for smoke tests (no WebGL).
     root.AirArenaCondensation = {
         estimateAoaFromNoseVel(noseDotVel) {
             const d = Math.max(-1, Math.min(1, Number(noseDotVel) || 0));
             return Math.acos(d);
         },
         fogAmount(aoa, start, full) {
-            const s = Number(start) || 0.18;
-            const f = Number(full) || 0.42;
+            const s = Number(start) || 0.55;
+            const f = Number(full) || 1.8;
             let t = (Number(aoa) - s) / Math.max(1e-3, f - s);
             t = Math.max(0, Math.min(1, t));
             return t * t * (3 - 2 * t);

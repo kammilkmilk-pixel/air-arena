@@ -79,5 +79,6 @@ assert(knobs.onlyDuringFlightAnim === true, 'onlyDuringFlightAnim');
 assert(knobs.aoaFogStart === 0.55, 'cfg.aoaFogStart');
 assert(knobs.trailPersistMs >= 2000, 'trailPersistMs should cover ~1–2 turns, got ' + knobs.trailPersistMs);
 assert(knobs.vortexPts >= 64, 'vortexPts buffer for long wake, got ' + knobs.vortexPts);
+assert(knobs.centerWakeTurns > knobs.tipWakeTurns, 'centerWakeTurns (' + knobs.centerWakeTurns + ') must exceed shorter tipWakeTurns (' + knobs.tipWakeTurns + ')');
 
 console.log('condensation-vfx-smoke: PASS');

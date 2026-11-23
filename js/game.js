@@ -1185,6 +1185,13 @@ function exitReplayMode() {
 
     let sld = document.getElementById('replay-slider');
     if (sld) sld.value = sld.max; 
+    ['red', 'red2', 'blue', 'blue2'].forEach(id => {
+        const tm = (typeof trajectoryMeshes !== 'undefined') ? trajectoryMeshes[id] : null;
+        if (tm && tm.geometry) {
+            const total = Number(tm.userData && tm.userData.totalSteps) || 0;
+            if (total > 0) tm.geometry.setDrawRange(0, total * 6);
+        }
+    }); 
 
     // Restore live visibility after ACMI may have re-shown historically-alive wrecks.
     ['red', 'red2', 'blue', 'blue2'].forEach((id) => {

@@ -465,35 +465,27 @@ const CONFIG = {
          * Aircraft vapor: wingtip vortices + high-AoA leading-edge fog.
          * Pure visual — no combat / physics side effects.
          */
+        /**
+         * Aircraft wake & vapor:
+         *  - Center white wake ribbon behind tail (replaces aft red/cyan ribbon; forward path stays team-colored)
+         *  - Shorter white wake ribbons at wingtip emitters (CONFIG.aircrafts.mig21.visuals.wingTipL/R)
+         *  - High-AoA leading-edge fog (combat anim / replay only)
+         */
         condensation: {
             enabled: true,
-            /** Only during combat animation / ACMI replay — never while planning stick. */
+            /** LE fog only during combat animation / ACMI replay — never while planning stick. */
             onlyDuringFlightAnim: true,
+            /** Center white ribbon behind aircraft (length in turns, width matches forward ribbon 0.12). */
+            centerWakeTurns: 1.6,
+            centerWakeWidth: 0.12,
+            centerWakeOpacity: 0.82,
+            /** Shorter white ribbons from wingTipL / wingTipR emitters (length in turns). */
+            tipWakeTurns: 0.55,
+            tipWakeWidth: 0.085,
+            tipWakeOpacity: 0.92,
             /** Ribbon segments kept in GPU buffer (covers ~2 turns of samples). */
             vortexPts: 96,
-            vortexBaseWidth: 0.03,
-            vortexGrow: 0.22,
-            /** Soft trail when flying; boosted by turn / AoA. */
-            vortexIdle: 0.35,
-            vortexTurnBoost: 1.1,
-            vortexAoaBoost: 0.85,
-            vortexMinSpeed: 0.04,
-            /**
-             * How long wingtip vapor lingers (wall-clock).
-             * Combat/replay ≈ 1.5s per turn → 1.75 turns ≈ 2600ms.
-             */
             trailPersistMs: 2800,
-            /** Min wingtip travel (m) before accepting a new sample — keeps long trails smooth. */
-            sampleMinDist: 0.18,
-            /**
-             * Extra short white tip streak at wingTip emitters (contrail stub).
-             * Lives alongside the longer vortex wake.
-             */
-            tipStreakPts: 28,
-            tipStreakPersistMs: 900,
-            tipStreakBaseWidth: 0.045,
-            tipStreakGrow: 0.12,
-            tipStreakSampleMinDist: 0.12,
             /** Pitch-rate proxy (rad/s) → LE fog starts / full (physics velocity ≈ nose). */
             aoaFogStart: 0.55,
             aoaFogFull: 1.8,

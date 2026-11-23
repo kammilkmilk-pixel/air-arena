@@ -332,12 +332,18 @@ function finishTurnSimultaneously() {
             let freshRes = simulateFlight(t, t.chain); t.pathPoints = freshRes.points; t.pathQuats = freshRes.quats;
             GameContext.stateMachine.resetTurnStatus(id);
 
-            // 1. 先處理舊回合的殘影
-            if (trajectoryMeshes[id]) { 
-                trajectoryMeshes[id].material = trajectoryMeshes[id].material.clone();
-                pastTrajectories.push(trajectoryMeshes[id]); if (pastTrajectories.length > 4) scene.remove(pastTrajectories.shift()); 
-                pastTrajectories.forEach((mesh, idx) => { mesh.material.opacity = (pastTrajectories.length - 1 - idx) <= 1 ? 0.35 : 0.12; }); 
-                trajectoryMeshes[id] = null; 
+            // 1. 清除舊回合規劃光帶（飛機後方尾跡改由白色尾跡光帶呈現，不再保留紅/藍殘影）
+            if (trajectoryMeshes[id]) {
+                scene.remove(trajectoryMeshes[id]);
+                if (trajectoryMeshes[id].geometry) trajectoryMeshes[id].geometry.dispose();
+                trajectoryMeshes[id] = null;
+            }
+            while (pastTrajectories.length > 0) {
+                const oldMesh = pastTrajectories.shift();
+                if (oldMesh) {
+                    scene.remove(oldMesh);
+                    if (oldMesh.geometry) oldMesh.geometry.dispose();
+                }
             }
 
             // 2. 🟢 救命神藥：確保新回合一開始，立刻為敵方建立未來網格，否則 HUD 將無實體可操作！
