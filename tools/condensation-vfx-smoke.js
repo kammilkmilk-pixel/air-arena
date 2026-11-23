@@ -37,8 +37,11 @@ global.CONFIG = {
     visuals: {
         condensation: {
             enabled: true,
-            aoaFogStart: 0.18,
-            aoaFogFull: 0.42
+            onlyDuringFlightAnim: true,
+            vortexPts: 96,
+            trailPersistMs: 2800,
+            aoaFogStart: 0.55,
+            aoaFogFull: 1.8
         }
     }
 };
@@ -64,15 +67,16 @@ assert(aligned < 1e-6, 'nose||vel → AoA≈0, got ' + aligned);
 const ninety = C.estimateAoaFromNoseVel(0);
 assert(Math.abs(ninety - Math.PI / 2) < 1e-6, 'perp → AoA≈π/2, got ' + ninety);
 
-assert(C.fogAmount(0.0, 0.18, 0.42) === 0, 'below start → fog 0');
-assert(C.fogAmount(0.18, 0.18, 0.42) === 0, 'at start → fog 0');
-assert(C.fogAmount(0.42, 0.18, 0.42) === 1, 'at full → fog 1');
-const mid = C.fogAmount(0.30, 0.18, 0.42);
+assert(C.fogAmount(0.0, 0.55, 1.8) === 0, 'below start → fog 0');
+assert(C.fogAmount(0.55, 0.55, 1.8) === 0, 'at start → fog 0');
+assert(C.fogAmount(1.8, 0.55, 1.8) === 1, 'at full → fog 1');
+const mid = C.fogAmount(1.175, 0.55, 1.8);
 assert(mid > 0.4 && mid < 0.7, 'mid AoA fog in (0.4,0.7), got ' + mid);
 
 const knobs = C.cfg();
 assert(knobs.enabled === true, 'cfg.enabled');
-assert(knobs.aoaFogStart === 0.18, 'cfg.aoaFogStart');
+assert(knobs.onlyDuringFlightAnim === true, 'onlyDuringFlightAnim');
+assert(knobs.aoaFogStart === 0.55, 'cfg.aoaFogStart');
 assert(knobs.trailPersistMs >= 2000, 'trailPersistMs should cover ~1–2 turns, got ' + knobs.trailPersistMs);
 assert(knobs.vortexPts >= 64, 'vortexPts buffer for long wake, got ' + knobs.vortexPts);
 

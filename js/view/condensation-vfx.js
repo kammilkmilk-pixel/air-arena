@@ -25,20 +25,29 @@
             : {};
         return {
             enabled: v.enabled !== false,
+            onlyDuringFlightAnim: v.onlyDuringFlightAnim !== false,
             vortexPts: Math.max(16, Math.min(160, Number(v.vortexPts) || 96)),
-            vortexBaseWidth: Number(v.vortexBaseWidth) || 0.035,
-            vortexGrow: Number(v.vortexGrow) || 0.7,
-            vortexIdle: Number(v.vortexIdle) || 0.12,
-            vortexTurnBoost: Number(v.vortexTurnBoost) || 1.35,
-            vortexAoaBoost: Number(v.vortexAoaBoost) || 0.9,
-            vortexMinSpeed: Number(v.vortexMinSpeed) || 0.08,
+            vortexBaseWidth: Number(v.vortexBaseWidth) || 0.09,
+            vortexGrow: Number(v.vortexGrow) || 1.35,
+            vortexIdle: Number(v.vortexIdle) || 0.35,
+            vortexTurnBoost: Number(v.vortexTurnBoost) || 1.1,
+            vortexAoaBoost: Number(v.vortexAoaBoost) || 0.85,
+            vortexMinSpeed: Number(v.vortexMinSpeed) || 0.04,
             trailPersistMs: Math.max(800, Number(v.trailPersistMs) || 2800),
-            sampleMinDist: Math.max(0.05, Number(v.sampleMinDist) || 0.35),
-            aoaFogStart: Number(v.aoaFogStart) || 0.18,
-            aoaFogFull: Number(v.aoaFogFull) || 0.42,
-            leFogMaxOpacity: Number(v.leFogMaxOpacity) || 0.55,
-            leFogScale: Number(v.leFogScale) || 0.22
+            sampleMinDist: Math.max(0.05, Number(v.sampleMinDist) || 0.18),
+            aoaFogStart: Number(v.aoaFogStart) || 0.55,
+            aoaFogFull: Number(v.aoaFogFull) || 1.8,
+            leFogMaxOpacity: Number(v.leFogMaxOpacity) || 0.72,
+            leFogScale: Number(v.leFogScale) || 0.28
         };
+    }
+
+    function isFlightAnimActive() {
+        if (typeof GameContext !== 'undefined') {
+            if (GameContext.isAnimating && GameContext.isAnimating()) return true;
+            if (GameContext.isReplayMode && GameContext.isReplayMode()) return true;
+        }
+        return !!(typeof window !== 'undefined' && window.replayMode);
     }
 
     function aircraftVisuals(team) {
@@ -75,11 +84,12 @@
             const map = (typeof window !== 'undefined' && window.ribbonTexShared)
                 ? window.ribbonTexShared
                 : vaporTex;
+            // NormalBlending reads better against bright sky than additive washout.
             vortexMat = new THREE.MeshBasicMaterial({
                 map,
                 transparent: true,
                 opacity: 1,
-                blending: THREE.AdditiveBlending,
+                blending: THREE.NormalBlending,
                 depthWrite: false,
                 side: THREE.DoubleSide,
                 vertexColors: true,
@@ -92,7 +102,7 @@
                 color: 0xe8f2ff,
                 transparent: true,
                 opacity: 0,
-                blending: THREE.AdditiveBlending,
+                blending: THREE.NormalBlending,
                 depthWrite: false,
                 side: THREE.DoubleSide,
                 fog: true
@@ -241,52 +251,42 @@
     }
 
     /**
-     * Estimate geometric AoA (rad) from nose vs world velocity.
-     * Falls back to stick pitch demand when velocity is tiny (hover / stall preview).
+     * Flight-only load proxies.
+     * Sim velocity is nearly nose-aligned, so geometric AoA ≈ 0; use pitch/yaw rate instead.
+     * Never reads joy stick — planning must not spawn vapor.
      */
-    function estimateAoa(team, wrapper, fx, dtSec) {
-        _tmpNose.set(0, 0, 1).applyQuaternion(wrapper.quaternion);
+    function estimateFlightLoad(wrapper, fx, dtSec) {
         let speed = 0;
         if (fx.prevPos && dtSec > 1e-4) {
             _tmpVel.subVectors(wrapper.position, fx.prevPos).divideScalar(dtSec);
             speed = _tmpVel.length();
-        } else {
-            _tmpVel.set(0, 0, 0);
         }
 
-        let aoa = 0;
-        if (speed > 0.05) {
-            _tmpVel.normalize();
-            const dot = Math.max(-1, Math.min(1, _tmpNose.dot(_tmpVel)));
-            aoa = Math.acos(dot);
-        } else {
-            const pitchCmd = Math.abs(Number(team.joyY) || 0);
-            aoa = pitchCmd * 0.55;
-        }
-
-        // Stick / path pitch demand can push fog earlier during planning.
-        const pitchPush = Math.abs(Number(team.joyY) || 0) * 0.35;
-        if (team.chain && team.chain[0] && team.chain[0].pitch != null) {
-            aoa = Math.max(aoa, Math.abs(Number(team.chain[0].pitch)) * 0.85);
-        }
-        aoa = Math.max(aoa, pitchPush);
-        return { aoa, speed };
-    }
-
-    function estimateTurnLoad(team, wrapper, fx, dtSec) {
-        let turn = Math.hypot(Number(team.joyX) || 0, Number(team.joyY) || 0);
-        if (team.chain && team.chain[0]) {
-            const cmd = team.chain[0];
-            turn = Math.max(
-                turn,
-                Math.hypot(Number(cmd.yaw) || 0, Number(cmd.pitch) || 0) / (Math.PI / 3)
-            );
-        }
+        let pitchRate = 0;
+        let turn = 0;
         if (fx.prevQuat && dtSec > 1e-4) {
             const ang = fx.prevQuat.angleTo(wrapper.quaternion) / Math.max(dtSec, 1e-3);
-            turn = Math.max(turn, Math.min(1.6, ang / 1.8));
+            turn = Math.min(1.6, ang / 1.6);
+
+            // Pitch component via local +Y rotation rate (approx).
+            _tmpNose.set(0, 0, 1).applyQuaternion(wrapper.quaternion);
+            _tmpUp.set(0, 1, 0).applyQuaternion(wrapper.quaternion);
+            _tmpA.set(0, 0, 1).applyQuaternion(fx.prevQuat);
+            _tmpB.copy(_tmpNose).sub(_tmpA);
+            pitchRate = Math.abs(_tmpB.dot(_tmpUp) / Math.max(dtSec, 1e-3));
         }
-        return Math.max(0, Math.min(1.5, turn));
+
+        // Path curvature: angle between successive velocity samples.
+        let pathAoa = 0;
+        if (fx.prevVel && speed > 0.08 && fx.prevVel.lengthSq() > 1e-4) {
+            _tmpA.copy(fx.prevVel).normalize();
+            _tmpB.copy(_tmpVel).normalize();
+            const dot = Math.max(-1, Math.min(1, _tmpA.dot(_tmpB)));
+            pathAoa = Math.acos(dot) / Math.max(dtSec, 1e-3) * 0.35;
+        }
+
+        const aoa = Math.max(pitchRate, pathAoa);
+        return { aoa, speed, turn };
     }
 
     function writeRibbon(mesh, hist, intensity, c, now) {
@@ -338,9 +338,9 @@
             posArr[idx * 3 + 5] = _tmpWorld.z - _tmpRight.z;
 
             // Gentler falloff so the wake stays readable across ~2 turns.
-            const fade = Math.pow(1 - life, 1.05) * drawIntensity * (0.55 + 0.45 * intensity);
-            const r = 0.78 * fade;
-            const g = 0.88 * fade;
+            const fade = Math.pow(1 - life, 0.95) * Math.min(1.4, drawIntensity * 1.15);
+            const r = 0.86 * fade;
+            const g = 0.92 * fade;
             const b = 1.0 * fade;
             colArr[idx * 3 + 0] = r; colArr[idx * 3 + 1] = g; colArr[idx * 3 + 2] = b;
             colArr[idx * 3 + 3] = r; colArr[idx * 3 + 4] = g; colArr[idx * 3 + 5] = b;
@@ -355,7 +355,7 @@
             mesh.geometry.attributes.color.needsUpdate = true;
             mesh.geometry.attributes.uv.needsUpdate = true;
             mesh.visible = true;
-            if (mesh.material) mesh.material.opacity = Math.min(1, 0.3 + drawIntensity * 0.7);
+            if (mesh.material) mesh.material.opacity = Math.min(0.95, 0.45 + drawIntensity * 0.5);
         } else {
             mesh.visible = false;
         }
@@ -393,9 +393,29 @@
         return ['red', 'blue'];
     }
 
+    function hideAllCondensation() {
+        if (typeof teams === 'undefined') return;
+        activeIds().forEach((id) => {
+            const team = teams[id];
+            if (team && team.wrapper && team.wrapper.userData.condensation) {
+                const fx = team.wrapper.userData.condensation;
+                hideFx(fx);
+                fx.wasFlight = false;
+                fx.prevVel = null;
+            }
+        });
+    }
+
     function updateCondensationVfx() {
         const c = cfg();
         if (!c.enabled || typeof teams === 'undefined') return;
+
+        const flightOn = !c.onlyDuringFlightAnim || isFlightAnimActive();
+        if (!flightOn) {
+            hideAllCondensation();
+            lastNow = performance.now();
+            return;
+        }
 
         const now = performance.now();
         const dtSec = lastNow ? Math.min(0.05, Math.max(0.008, (now - lastNow) / 1000)) : 0.016;
@@ -418,28 +438,38 @@
 
             const fx = ensureFx(team);
             if (!fx) return;
+
+            // Fresh wake when combat anim / replay just started.
+            if (!fx.wasFlight) {
+                fx.histL.length = 0;
+                fx.histR.length = 0;
+                fx.prevPos = team.wrapper.position.clone();
+                fx.prevQuat = team.wrapper.quaternion.clone();
+                fx.prevVel = null;
+                fx.wasFlight = true;
+                return;
+            }
+
             const vis = aircraftVisuals(team);
-            const { aoa, speed } = estimateAoa(team, team.wrapper, fx, dtSec);
-            const turn = estimateTurnLoad(team, team.wrapper, fx, dtSec);
+            const { aoa, speed, turn } = estimateFlightLoad(team.wrapper, fx, dtSec);
             fx.aoa = aoa;
 
             const speedGate = speed < c.vortexMinSpeed
-                ? Math.max(0.15, speed / Math.max(c.vortexMinSpeed, 1e-3))
+                ? Math.max(0.25, speed / Math.max(c.vortexMinSpeed, 1e-3))
                 : 1;
             let intensity = c.vortexIdle
                 + turn * c.vortexTurnBoost
                 + Math.min(1.2, aoa / Math.max(c.aoaFogFull, 1e-3)) * c.vortexAoaBoost;
             intensity *= speedGate;
-            // Throttle / energy: AB slightly thicker vapor.
             const th = Number(team.throttle) || 2;
-            intensity *= 0.85 + Math.min(0.35, (th - 2) * 0.08);
+            intensity *= 0.9 + Math.min(0.3, (th - 2) * 0.07);
             intensity = Math.max(0, Math.min(1.85, intensity));
             fx.intensity = intensity;
 
-            // Sample wing tips (distance-gated) and age out beyond ~1.5–2 turns.
             localToWorld(team.wrapper, vis.wingTipL, _tmpA);
             localToWorld(team.wrapper, vis.wingTipR, _tmpB);
-            if (intensity >= 0.06 && speedGate > 0.2) {
+            // Always sample while moving in anim — idle tip vapor is OK at cruise.
+            if (speedGate > 0.2) {
                 pushTipSample(fx.histL, _tmpA, now, c);
                 pushTipSample(fx.histR, _tmpB, now, c);
             } else {
@@ -455,6 +485,8 @@
             else fx.prevPos.copy(team.wrapper.position);
             if (!fx.prevQuat) fx.prevQuat = team.wrapper.quaternion.clone();
             else fx.prevQuat.copy(team.wrapper.quaternion);
+            if (!fx.prevVel) fx.prevVel = _tmpVel.clone();
+            else fx.prevVel.copy(_tmpVel);
         });
     }
 

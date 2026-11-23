@@ -467,27 +467,29 @@ const CONFIG = {
          */
         condensation: {
             enabled: true,
+            /** Only during combat animation / ACMI replay — never while planning stick. */
+            onlyDuringFlightAnim: true,
             /** Ribbon segments kept in GPU buffer (covers ~2 turns of samples). */
             vortexPts: 96,
-            vortexBaseWidth: 0.035,
-            vortexGrow: 0.7,
+            vortexBaseWidth: 0.09,
+            vortexGrow: 1.35,
             /** Soft trail when flying; boosted by turn / AoA. */
-            vortexIdle: 0.12,
-            vortexTurnBoost: 1.35,
-            vortexAoaBoost: 0.9,
-            vortexMinSpeed: 0.08,
+            vortexIdle: 0.35,
+            vortexTurnBoost: 1.1,
+            vortexAoaBoost: 0.85,
+            vortexMinSpeed: 0.04,
             /**
              * How long wingtip vapor lingers (wall-clock).
              * Combat/replay ≈ 1.5s per turn → 1.75 turns ≈ 2600ms.
              */
             trailPersistMs: 2800,
             /** Min wingtip travel (m) before accepting a new sample — keeps long trails smooth. */
-            sampleMinDist: 0.35,
-            /** Radians — LE fog starts / full. */
-            aoaFogStart: 0.18,
-            aoaFogFull: 0.42,
-            leFogMaxOpacity: 0.55,
-            leFogScale: 0.22
+            sampleMinDist: 0.18,
+            /** Pitch-rate proxy (rad/s) → LE fog starts / full (physics velocity ≈ nose). */
+            aoaFogStart: 0.55,
+            aoaFogFull: 1.8,
+            leFogMaxOpacity: 0.72,
+            leFogScale: 0.28
         },
         flipbookFps: 15,         
         

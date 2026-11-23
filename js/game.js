@@ -979,7 +979,7 @@ function animate() {
     if (typeof updateSpatialHelpers === 'function') updateSpatialHelpers();
     if (typeof updateDynamicHUD === 'function') updateDynamicHUD();
     if (typeof window.updateCombatAirspaceVfx === 'function') window.updateCombatAirspaceVfx();
-    if (typeof window.updateCondensationVfx === 'function') window.updateCondensationVfx();
+    // Condensation runs AFTER renderCombatFrame (see below) so wingtip samples match live pose.
 
     // ==========================================
     // 1. ACMI 重播模式
@@ -1023,6 +1023,7 @@ function animate() {
             console.error("重播渲染遭遇亂流，已由裝甲攔截:", e); 
         }
 
+        if (typeof window.updateCondensationVfx === 'function') window.updateCondensationVfx();
         renderer.render(scene, camera);
         return;
     }
@@ -1112,6 +1113,8 @@ function animate() {
         // Keep chaff sparkles flickering while planning between turns
         GameContext.callService('drawStaticChaff');
     }
+    // After combat pose update (or planning idle): refresh / hide condensation.
+    if (typeof window.updateCondensationVfx === 'function') window.updateCondensationVfx();
     if (window.AirArenaMultiView && typeof window.AirArenaMultiView.render === 'function') {
         window.AirArenaMultiView.pruneDestroyed();
         window.AirArenaMultiView.render(scene, renderer);
