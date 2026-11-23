@@ -979,6 +979,7 @@ function animate() {
     if (typeof updateSpatialHelpers === 'function') updateSpatialHelpers();
     if (typeof updateDynamicHUD === 'function') updateDynamicHUD();
     if (typeof window.updateCombatAirspaceVfx === 'function') window.updateCombatAirspaceVfx();
+    if (typeof window.updateCondensationVfx === 'function') window.updateCondensationVfx();
 
     // ==========================================
     // 1. ACMI 重播模式

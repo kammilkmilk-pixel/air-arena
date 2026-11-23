@@ -82,7 +82,13 @@ const CONFIG = {
                 5: { thrust: 180, heat: 22, turnLimit: 0.4, speedProfile: [2.5, 3.0, 5.0], gunAngleMult: 0.4, gunRangeMult: 1.3 }
             },
             visuals: {
-                ribbonWidth: 0.12, engineOffsetY: -0.08, noseOffsetZ: 0.65, tailOffsetZ: -0.6
+                ribbonWidth: 0.12, engineOffsetY: -0.08, noseOffsetZ: 0.65, tailOffsetZ: -0.6,
+                /** Wrapper-local emitters for condensation VFX (MiG after setupModel scale). */
+                wingTipL: [-0.54, 0.01, 0.02],
+                wingTipR: [ 0.54, 0.01, 0.02],
+                /** Leading-edge fog samples (span from root → tip, slightly forward of wing). */
+                wingLeL: [[-0.18, 0.02, 0.18], [-0.34, 0.015, 0.14], [-0.48, 0.01, 0.08]],
+                wingLeR: [[ 0.18, 0.02, 0.18], [ 0.34, 0.015, 0.14], [ 0.48, 0.01, 0.08]]
             },
             
             guns: [
@@ -453,6 +459,26 @@ const CONFIG = {
             baseOpacity: 0.38,    
             fadeRate: 0.02,     
             color: 0xa8a8a8      
+        },
+        /**
+         * Aircraft vapor: wingtip vortices + high-AoA leading-edge fog.
+         * Pure visual — no combat / physics side effects.
+         */
+        condensation: {
+            enabled: true,
+            vortexPts: 40,
+            vortexBaseWidth: 0.035,
+            vortexGrow: 0.55,
+            /** Soft trail when flying; boosted by turn / AoA. */
+            vortexIdle: 0.12,
+            vortexTurnBoost: 1.35,
+            vortexAoaBoost: 0.9,
+            vortexMinSpeed: 0.08,
+            /** Radians — LE fog starts / full. */
+            aoaFogStart: 0.18,
+            aoaFogFull: 0.42,
+            leFogMaxOpacity: 0.55,
+            leFogScale: 0.22
         },
         flipbookFps: 15,         
         

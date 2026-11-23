@@ -1419,6 +1419,9 @@ function renderCombatFrame(currentLog, animProgress) {
             if (t.wrapper.userData.exhaust) {
                 t.wrapper.userData.exhaust.group.visible = !isDead;
             }
+            if (isDead && typeof window.disposeTeamCondensation === 'function') {
+                window.disposeTeamCondensation(t);
+            }
         }
 
         let currentPlanePos = t.wrapper.position.clone();
