@@ -46,10 +46,10 @@
             : null;
         const vis = (ac && ac.visuals) || {};
         return {
-            wingTipL: Array.isArray(vis.wingTipL) ? vis.wingTipL : [-0.54, 0.01, 0.02],
-            wingTipR: Array.isArray(vis.wingTipR) ? vis.wingTipR : [0.54, 0.01, 0.02],
-            wingLeL: Array.isArray(vis.wingLeL) ? vis.wingLeL : [[-0.18, 0.02, 0.18], [-0.34, 0.015, 0.14], [-0.48, 0.01, 0.08]],
-            wingLeR: Array.isArray(vis.wingLeR) ? vis.wingLeR : [[0.18, 0.02, 0.18], [0.34, 0.015, 0.14], [0.48, 0.01, 0.08]]
+            wingTipL: Array.isArray(vis.wingTipL) ? vis.wingTipL : [-0.38, 0.01, 0.02],
+            wingTipR: Array.isArray(vis.wingTipR) ? vis.wingTipR : [0.38, 0.01, 0.02],
+            wingLeL: Array.isArray(vis.wingLeL) ? vis.wingLeL : [[-0.14, 0.02, 0.16], [-0.26, 0.015, 0.12], [-0.36, 0.01, 0.06]],
+            wingLeR: Array.isArray(vis.wingLeR) ? vis.wingLeR : [[0.14, 0.02, 0.16], [0.26, 0.015, 0.12], [0.36, 0.01, 0.06]]
         };
     }
 
@@ -144,11 +144,14 @@
 
         const fogGroup = new THREE.Group();
         fogGroup.name = 'condensationLeFogGroup';
+        // Tag so ghostWrapper.clone() can strip these (same pattern as exhaust).
+        fogGroup.userData.isCondensationVfx = true;
         const fogSprites = [];
         const places = [].concat(vis.wingLeL || [], vis.wingLeR || []);
         places.forEach((p, i) => {
             const spr = makeFogSprite(c.leFogScale * (0.85 + (i % 3) * 0.12));
             spr.position.set(Number(p[0]) || 0, Number(p[1]) || 0, Number(p[2]) || 0);
+            spr.userData.isCondensationVfx = true;
             fogGroup.add(spr);
             fogSprites.push(spr);
         });

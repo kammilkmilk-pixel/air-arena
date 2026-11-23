@@ -1096,8 +1096,14 @@ function drawTrajectoryLine(teamObj) {
                                 (c.name && c.name.toLowerCase().includes('exhaust')) || 
                                 (c.parent && c.parent.name && c.parent.name.toLowerCase().includes('exhaust')) ||
                                 c.name === 'flyingGlowMesh';
+                // Condensation (wingtip LE fog) must not appear on the planning ghost.
+                const isCondensation = !!(c.userData && c.userData.isCondensationVfx)
+                    || c.name === 'condensationLeFogGroup'
+                    || c.name === 'condensationLeFog'
+                    || c.name === 'condensationVortex'
+                    || (c.parent && c.parent.userData && c.parent.userData.isCondensationVfx);
 
-                if (isExhaust) {
+                if (isExhaust || isCondensation) {
                     c.visible = false; 
                 } 
                 else if (c.isMesh) {

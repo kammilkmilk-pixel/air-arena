@@ -83,12 +83,13 @@ const CONFIG = {
             },
             visuals: {
                 ribbonWidth: 0.12, engineOffsetY: -0.08, noseOffsetZ: 0.65, tailOffsetZ: -0.6,
-                /** Wrapper-local emitters for condensation VFX (MiG after setupModel scale). */
-                wingTipL: [-0.54, 0.01, 0.02],
-                wingTipR: [ 0.54, 0.01, 0.02],
+                /** Wrapper-local emitters for condensation VFX (MiG after setupModel scale).
+                 *  Outer pylon ≈ ±0.25; tip sits just beyond (~±0.38). */
+                wingTipL: [-0.38, 0.01, 0.02],
+                wingTipR: [ 0.38, 0.01, 0.02],
                 /** Leading-edge fog samples (span from root → tip, slightly forward of wing). */
-                wingLeL: [[-0.18, 0.02, 0.18], [-0.34, 0.015, 0.14], [-0.48, 0.01, 0.08]],
-                wingLeR: [[ 0.18, 0.02, 0.18], [ 0.34, 0.015, 0.14], [ 0.48, 0.01, 0.08]]
+                wingLeL: [[-0.14, 0.02, 0.16], [-0.26, 0.015, 0.12], [-0.36, 0.01, 0.06]],
+                wingLeR: [[ 0.14, 0.02, 0.16], [ 0.26, 0.015, 0.12], [ 0.36, 0.01, 0.06]]
             },
             
             guns: [
