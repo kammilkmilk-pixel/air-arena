@@ -60,6 +60,15 @@ assert(Stall && Cond && Ser, 'Required modules must initialize cleanly');
 const sfCruise = Stall.computeStallFactor({ stalled: false, ap: 140, forwardSpeed: 22, slipAngleDeg: 3 });
 assert.strictEqual(sfCruise, 0, `Normal cruise must have stallFactor=0, got ${sfCruise}`);
 
+// Real physics.js per-turn speeds (ECO≈2.5, MIL≈4.16 u/turn) must NEVER be misclassified as stalled
+const sfEcoCruise = Stall.computeStallFactor({ stalled: false, ap: 120, forwardSpeed: 2.5, slipAngleDeg: 2 });
+assert.strictEqual(sfEcoCruise, 0, `Normal ECO cruise (2.5 u/turn) must have stallFactor=0, got ${sfEcoCruise}`);
+const sfMilCruise = Stall.computeStallFactor({ stalled: false, ap: 120, forwardSpeed: 4.16, slipAngleDeg: 2 });
+assert.strictEqual(sfMilCruise, 0, `Normal MIL cruise (4.16 u/turn) must have stallFactor=0, got ${sfMilCruise}`);
+
+const sfApexHang = Stall.computeStallFactor({ stalled: false, ap: 80, forwardSpeed: 0.7, slipAngleDeg: 2 });
+assert(sfApexHang > 0.6, `True zero-airspeed apex hang (0.7 u/turn) must trigger stallFactor > 0.6, got ${sfApexHang}`);
+
 const sfOnset = Stall.computeStallFactor({ stalled: false, ap: 39, forwardSpeed: 9, slipAngleDeg: 8 });
 assert(sfOnset > 0.1 && sfOnset < 0.65, `Pre-stall AP=39 should give gradual onset, got ${sfOnset}`);
 
@@ -70,9 +79,11 @@ const sfKinematic = Stall.computeStallFactor({ stalled: false, forwardSpeed: 2.6
 assert(sfKinematic >= 0.75, `Kinematic low-speed mushing must detect stall without flag, got ${sfKinematic}`);
 
 // 2) Laminar wake & wingtip condensation suppression during stall
-const cwCruise = Cond.centerWakeIntensity({ stallFactor: 0, forwardSpeed: 20 });
+const cwCruise = Cond.centerWakeIntensity({ stallFactor: 0, forwardSpeed: 4.16 });
+const cwEco = Cond.centerWakeIntensity({ stallFactor: 0, forwardSpeed: 2.5 });
 const cwStall = Cond.centerWakeIntensity({ stallFactor: sfDeep, forwardSpeed: 3.0 });
-assert.strictEqual(cwCruise, 1, `Center white wake should be 1.0 in normal flight, got ${cwCruise}`);
+assert.strictEqual(cwCruise, 1, `Center white wake should be 1.0 in normal MIL flight (4.16 u/turn), got ${cwCruise}`);
+assert(cwEco > 0.35 && cwEco < 0.85, `Center white wake should be subtle in ECO cruise (2.5 u/turn), got ${cwEco}`);
 assert.strictEqual(cwStall, 0, `Center white wake must vanish during deep stall, got ${cwStall}`);
 
 const tipHighSpeedClimb = Cond.tipCondensationIntensity({ climbDeg: 40, forwardSpeed: 20, stallFactor: 0 });

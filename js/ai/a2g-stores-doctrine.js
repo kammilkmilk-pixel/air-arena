@@ -164,7 +164,7 @@
         if (!sol || sol.fuze !== 'vt') return { ok: false, reason: 'noSol' };
         const vtR = Number(sol.vtRadius) || doc.vtRadius;
         const hit = !!sol.anyVtHit
-            || (Number.isFinite(sol.bestCpaDist) && sol.bestCpaDist <= vtR * 1.05);
+            || (Number.isFinite(sol.bestCpaDist) && sol.bestCpaDist <= vtR * 1.15);
         if (!hit) return { ok: false, reason: 'noWindow', sol, bestCpaDist: sol.bestCpaDist };
         return { ok: true, reason: 'vtHit', fuze: 'vt', sol };
     }
@@ -395,6 +395,7 @@
         if (!action || !team) return null;
         const q = action.queueAction || 'none';
         if (q === 'flare' || q === 'chaff') return null;
+        if (action.state === 'rocketLeadAttack' && q === 'rocket') return null;
         if (isSurvivalState(action.state)) return null;
         if (ctx.actualMissileThreat && (ctx.shouldFlareNow || ctx.shouldChaffNow)) return null;
         if (q === 'missile' && (action.missileType === 'fox1' || ctx.aiMissileType === 'fox1')) return null;
@@ -403,14 +404,18 @@
         const docR = getRocketDoctrine();
         const hasFox = teamHasFoxMissile(team);
         const outEnv = missileOutOfEnvelope(ctx);
+        const enemyLowHp = !!ctx.enemyLowHp
+            || (enemy && Number.isFinite(Number(enemy.hp)) && Number(enemy.hp) > 0 && Number(enemy.hp) <= 44);
         const gunSweet = !!ctx.gunSweetSpot;
         if (q === 'gun' && gunSweet) return null;
 
         const vt = evaluateRocketVtShot(team, enemy, ctx);
-        // Conservative: do not steal in-envelope FOX. VT fills dry racks or out-of-envelope soft holds.
+        // Conservative: do not steal in-envelope FOX unless enemy is low-HP finisher (<=44 HP).
+        // VT fills dry racks, out-of-envelope soft holds, front-aspect holds, or low-HP finishers.
         const preferVt = vt.ok && (
             (!hasFox && docR.vtWhenMissileDry) ||
             (hasFox && outEnv && docR.vtWhenOutOfMissileEnvelope) ||
+            (enemyLowHp && q !== 'missile') ||
             (!hasFox && docR.vtFillSoftHold && (q === 'none' || q === 'missile'))
         );
 

@@ -125,4 +125,7 @@ assert.strictEqual(stealCm, null, 'strike must not steal flare');
 assert.ok(Array.isArray(require(path.join(__dirname, '../assets/maps/default.json')).groundTargets));
 assert.ok(require(path.join(__dirname, '../assets/maps/default.json')).groundTargets.length >= 3);
 
+// 3D ground-target markers stay hidden by default until map update
+assert.strictEqual(GT.visualsEnabled(), false, 'ground target visuals must stay off by default');
+
 console.log('ground-targets-smoke: PASS');

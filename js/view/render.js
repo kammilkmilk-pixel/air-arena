@@ -1864,7 +1864,8 @@ function loadCityGlbFallback() {
                 });
                 applyArenaMode();
                 if (typeof AirArenaGroundTargets !== 'undefined' && AirArenaGroundTargets.loadFromMapDoc) {
-                    AirArenaGroundTargets.loadFromMapDoc({ ground: ORIGINAL_ENV && ORIGINAL_ENV.ground });
+                    const showGt = !!(AirArenaGroundTargets.visualsEnabled && AirArenaGroundTargets.visualsEnabled());
+                    AirArenaGroundTargets.loadFromMapDoc({ ground: ORIGINAL_ENV && ORIGINAL_ENV.ground }, { seed: showGt });
                 }
                 if (CONFIG.debug) console.log(`🏙️ [加載成功] 城市模型部署完畢。已登記 ${cityObstacles.length} 個建築網格，${cityCollisionProxies.length} 個足跡代理碰撞。`);
                 activeMapMeta = { id: 'original', path: null, doc: null, aiMapPath: null };
@@ -1880,7 +1881,8 @@ function loadCityGlbFallback() {
                 cityRoot.updateMatrixWorld(true);
                 applyArenaMode();
                 if (typeof AirArenaGroundTargets !== 'undefined' && AirArenaGroundTargets.loadFromMapDoc) {
-                    AirArenaGroundTargets.loadFromMapDoc({ ground: ORIGINAL_ENV && ORIGINAL_ENV.ground });
+                    const showGt = !!(AirArenaGroundTargets.visualsEnabled && AirArenaGroundTargets.visualsEnabled());
+                    AirArenaGroundTargets.loadFromMapDoc({ ground: ORIGINAL_ENV && ORIGINAL_ENV.ground }, { seed: showGt });
                 }
                 activeMapMeta = { id: 'original', path: null, doc: null, aiMapPath: null };
                 refreshAirArenaAiMap({ mapId: 'original', reason: 'procedural-city' });
@@ -1906,7 +1908,8 @@ function finishMapBuild(root, mapDoc) {
     }
     applyArenaMode();
     if (typeof AirArenaGroundTargets !== 'undefined' && AirArenaGroundTargets.loadFromMapDoc) {
-        AirArenaGroundTargets.loadFromMapDoc(mapDoc || {});
+        const showGt = !!(AirArenaGroundTargets.visualsEnabled && AirArenaGroundTargets.visualsEnabled());
+        AirArenaGroundTargets.loadFromMapDoc(mapDoc || {}, { seed: showGt });
     }
 }
 

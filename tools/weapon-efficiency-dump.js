@@ -85,6 +85,7 @@ function analyzeFile(filePath) {
     let building = 0;
     let combat = 0;
     let ground = 0;
+    let midair = 0;
     let airspace = 0;
     let other = 0;
     const models = new Set();
@@ -94,6 +95,7 @@ function analyzeFile(filePath) {
         if (c === 'building') building++;
         else if (c === 'combat') combat++;
         else if (c === 'ground') ground++;
+        else if (c === 'midair') midair++;
         else if (c === 'airspace') airspace++;
         else other++;
     }
@@ -233,7 +235,7 @@ function analyzeFile(filePath) {
 
     const fox1Env = countRe(raw, /envelope:\s*type=fox1/gi);
     const fox2Env = countRe(raw, /envelope:\s*type=fox2/gi);
-    const gateOk = j.turn >= 150 && building <= 1;
+    const gateOk = j.turn >= 150 && building <= 1 && ground === 0 && midair === 0;
     const spawnFacing = (j.batch && j.batch.spawnFacing) ? String(j.batch.spawnFacing) : '';
     const loadout = (j.batch && j.batch.loadout) ? String(j.batch.loadout) : '';
 
@@ -246,6 +248,7 @@ function analyzeFile(filePath) {
         building,
         combat,
         ground,
+        midair,
         airspace,
         other,
         gateOk,
@@ -304,7 +307,7 @@ function printRow(r) {
         [
             r.file.padEnd(56),
             `T${String(r.turn).padStart(3)}`,
-            `b${r.building}/g${r.ground}/a${r.airspace || 0}/c${r.combat}`,
+            `b${r.building}/g${r.ground}/m${r.midair || 0}/a${r.airspace || 0}/c${r.combat}`,
             r.gateOk ? 'GATE' : '----',
             r.spawnFacing ? `face=${r.spawnFacing}` : 'face=-',
             r.loadout ? `lo=${r.loadout}` : 'lo=-',
@@ -340,7 +343,7 @@ function summarize(name, rows) {
     const wcMatches = rows.filter((r) => r.countersUsed > 0).length;
     console.log(`\n## group ${name} (n=${n})`);
     console.log(
-        `  avgTurn=${avg('turn').toFixed(0)}  building=${sum('building')}  ground=${sum('ground')}  airspace=${sum('airspace')}  combat=${sum('combat')}  gatePass=${rows.filter((r) => r.gateOk).length}/${n}`
+        `  avgTurn=${avg('turn').toFixed(0)}  building=${sum('building')}  ground=${sum('ground')}  midair=${sum('midair')}  airspace=${sum('airspace')}  combat=${sum('combat')}  gatePass=${rows.filter((r) => r.gateOk).length}/${n}`
     );
     const atk = sum('missileAttackSel');
     const prep = sum('missilePrepSel');
