@@ -1453,19 +1453,38 @@ function uiCycleGroundTarget(teamId = null) {
         if (typeof showSMSAlert === 'function') showSMSAlert('無可用對地目標', '#ffaa66');
         return;
     }
-    // Mirror designation onto the commanded AI wingman so strike resolves immediately.
-    if (id && id !== designatorId && GameContext.stateMachine
-        && typeof GameContext.stateMachine.setDesignatedGroundTarget === 'function') {
-        GameContext.stateMachine.setDesignatedGroundTarget(id, gt.id);
+    // Mirror designation onto the commanded AI wingman(s) of the same faction so strike resolves immediately.
+    const mirrorIds = new Set();
+    if (id && id !== designatorId) mirrorIds.add(id);
+    const desTeam = teams[designatorId];
+    const desFaction = desTeam && (desTeam.faction || (GameContext.getFaction && GameContext.getFaction(designatorId)));
+    const activeIds = (GameContext.getActiveMatchIds ? GameContext.getActiveMatchIds() : Object.keys(teams || {}));
+    for (const cid of activeIds) {
+        if (!cid || cid === designatorId) continue;
+        const ct = teams[cid];
+        if (!ct || !ct.aiEnabled || ct.isDestroyed) continue;
+        const cf = ct.faction || (GameContext.getFaction && GameContext.getFaction(cid));
+        if (desFaction && cf === desFaction) mirrorIds.add(cid);
     }
+    mirrorIds.forEach((wid) => {
+        if (GameContext.stateMachine && typeof GameContext.stateMachine.setDesignatedGroundTarget === 'function') {
+            GameContext.stateMachine.setDesignatedGroundTarget(wid, gt.id);
+        } else if (teams[wid]) {
+            teams[wid].designatedGroundTargetId = gt.id;
+        }
+    });
     if (typeof showSMSAlert === 'function') {
         showSMSAlert(`對地目標: ${gt.name || gt.id}`, '#ffcc66');
     }
-    const t = teams[id];
-    if (t && t.aiEnabled && !t.ready && !t.isDestroyed && t.wingmanOrder === 'strike') {
-        uiRunAI(id);
-    }
-    updateDashboardUI(teams[uiCurrentTeamId()] || t);
+    const rerunTargets = new Set(mirrorIds);
+    if (id) rerunTargets.add(id);
+    rerunTargets.forEach((wid) => {
+        const wt = teams[wid];
+        if (wt && wt.aiEnabled && !wt.ready && !wt.isDestroyed && wt.wingmanOrder === 'strike') {
+            uiRunAI(wid);
+        }
+    });
+    updateDashboardUI(teams[uiCurrentTeamId()] || teams[id]);
 }
 
 function uiBindWingmanOrderHudOnce() {
@@ -2060,9 +2079,13 @@ function uiBuildCompactDecisionFrame(teamId, action) {
         urbanSrc: ur && ur.source ? ur.source : null,
         urbanScore: ur && ur.score != null ? ur.score : null,
         queue: action.queueAction || 'none',
-        chaff: dbg.shouldChaffNow ? 1 : 0,
-        flare: dbg.shouldFlareNow ? 1 : (dbg.flare ? 1 : 0),
+        rocketFuze: action.rocketFuze || (action.queueAction === 'rocket' ? (team.rocketFuze || 'vt') : null),
+        chaff: (action.queueAction === 'chaff' && (team.chaffAmmo == null || team.chaffAmmo > 0)) ? 1 : 0,
+        flare: (action.queueAction === 'flare' && (team.flareAmmo == null || team.flareAmmo > 0)) ? 1 : 0,
+        chaffRequested: dbg.shouldChaffNow ? 1 : 0,
+        flareRequested: (dbg.shouldFlareNow || dbg.flare) ? 1 : 0,
         chaffAmmo: dbg.chaffReserve != null ? dbg.chaffReserve : (team.chaffAmmo != null ? team.chaffAmmo : null),
+        flareAmmo: team.flareAmmo != null ? team.flareAmmo : null,
         reason: action.reason || null,
         role: team.aiTacticalRole || null,
         tap: tapInfo.tap || null,
@@ -2078,13 +2101,25 @@ function uiEmptyWeaponCounters() {
         turns: 0,
         mslQ: 0,
         gunQ: 0,
+        rocketQ: 0,
+        rocketVt: 0,
+        rocketImpact: 0,
+        bombQ: 0,
         illum: 0,
         mslAtk: 0,
         mslPrep: 0,
         chaff: 0,
         flare: 0,
+        chaffRequested: 0,
+        flareRequested: 0,
+        chaffExpended: 0,
+        flareExpended: 0,
         chaffEsc: 0,
         flareEsc: 0,
+        gunHitTurns: 0,
+        gunHitSteps: 0,
+        stallTurns: 0,
+        damageDealtByWeapon: { gun: 0, fox1: 0, fox2: 0, rocket: 0, bomb: 0 },
         kills: 0,
         killsGun: 0,
         killsMsl: 0,
@@ -2103,6 +2138,17 @@ function uiGetAIWeaponCounters(teamId) {
     base.killsMsl = Number(team && team.combatKillsMsl) || Number(base.killsMsl) || 0;
     base.killsFox1 = Number(team && team.combatKillsFox1) || Number(base.killsFox1) || 0;
     base.killsFox2 = Number(team && team.combatKillsFox2) || Number(base.killsFox2) || 0;
+    base.flareExpended = Number(team && team.flaresExpended) || Number(base.flareExpended) || 0;
+    base.chaffExpended = Number(team && team.chaffExpended) || Number(base.chaffExpended) || 0;
+    base.gunHitTurns = Number(team && team.gunHitTurns) || Number(base.gunHitTurns) || 0;
+    base.gunHitSteps = Number(team && team.gunHitSteps) || Number(base.gunHitSteps) || 0;
+    base.stallTurns = Number(team && team.stallTurns) || Number(base.stallTurns) || 0;
+    if (team && team.damageDealtByWeapon && typeof team.damageDealtByWeapon === 'object') {
+        base.damageDealtByWeapon = Object.assign(
+            { gun: 0, fox1: 0, fox2: 0, rocket: 0, bomb: 0 },
+            team.damageDealtByWeapon
+        );
+    }
     return base;
 }
 
@@ -2115,6 +2161,12 @@ function uiBumpWeaponCounters(team, action, frame, isNewTurn) {
     const q = String(frame.queue || action.queueAction || 'none');
     if (q === 'missile') c.mslQ += 1;
     if (q === 'gun') c.gunQ += 1;
+    if (q === 'rocket') {
+        c.rocketQ = (c.rocketQ || 0) + 1;
+        if (frame.rocketFuze === 'impact') c.rocketImpact = (c.rocketImpact || 0) + 1;
+        else c.rocketVt = (c.rocketVt || 0) + 1;
+    }
+    if (q === 'bomb') c.bombQ = (c.bombQ || 0) + 1;
     const st = String(frame.state || action.state || '');
     const reason = String(frame.reason || action.reason || '');
     if (st === 'fox1Illuminate' || /illuminate/i.test(reason)) c.illum += 1;
@@ -2122,6 +2174,8 @@ function uiBumpWeaponCounters(team, action, frame, isNewTurn) {
     if (st === 'missilePrep' || /^missilePrep[-_]/i.test(st)) c.mslPrep += 1;
     const escaping = /escape|Escape|obstacleEmergency|urbanRouteEscape|building-escaping|chaff while building|flare while building/i
         .test(`${st} ${reason}`);
+    if (frame.chaffRequested) c.chaffRequested = (c.chaffRequested || 0) + 1;
+    if (frame.flareRequested) c.flareRequested = (c.flareRequested || 0) + 1;
     if (frame.chaff) {
         c.chaff += 1;
         if (escaping) c.chaffEsc += 1;
@@ -2253,6 +2307,15 @@ function uiBuildAIDebugSnapshot(teamId, opts = {}) {
         combatKillsFox1: Number(team.combatKillsFox1) || 0,
         combatKillsFox2: Number(team.combatKillsFox2) || 0,
         missileShots: Array.isArray(team.missileShots) ? team.missileShots.slice() : [],
+        rocketShots: Array.isArray(team.rocketShots) ? team.rocketShots.slice() : [],
+        damageDealtByWeapon: (team.damageDealtByWeapon && typeof team.damageDealtByWeapon === 'object')
+            ? Object.assign({ gun: 0, fox1: 0, fox2: 0, rocket: 0, bomb: 0 }, team.damageDealtByWeapon)
+            : { gun: 0, fox1: 0, fox2: 0, rocket: 0, bomb: 0 },
+        gunHitTurns: Number(team.gunHitTurns) || 0,
+        gunHitSteps: Number(team.gunHitSteps) || 0,
+        stallTurns: Number(team.stallTurns) || 0,
+        flaresExpended: Number(team.flaresExpended) || 0,
+        chaffExpended: Number(team.chaffExpended) || 0,
         tacticalRole: team.aiTacticalRole || null,
         tacticalRoleWhy: team.aiTacticalRoleWhy || null,
         tacticalRoleUntilTurn: Number.isFinite(Number(team.aiTacticalRoleUntilTurn))
@@ -2270,6 +2333,15 @@ function uiBuildAIDebugSnapshot(teamId, opts = {}) {
             queuedAction: team.queuedAction || 'none',
             flareAmmo: team.flareAmmo,
             chaffAmmo: team.chaffAmmo != null ? team.chaffAmmo : 0,
+            pylons: Array.isArray(team.pylons)
+                ? team.pylons.map((p) => ({
+                    id: p.id,
+                    weaponType: typeof pylonWeaponType === 'function' ? pylonWeaponType(p) : (p.weaponType || null),
+                    state: p.state || 'empty',
+                    ammo: p.ammo != null ? p.ammo : (p.state === 'empty' ? 0 : 1),
+                    ammoMax: p.ammoMax != null ? p.ammoMax : (p.state === 'empty' ? 0 : 1)
+                }))
+                : [],
             position: uiRoundVec3(pos),
             forward: fwdInfo.forward,
             fwdY: fwdInfo.fwdY
@@ -2497,8 +2569,15 @@ function uiBuildAIRosterSnapshot() {
             combatKillsFox1: snap.combatKillsFox1 || 0,
             combatKillsFox2: snap.combatKillsFox2 || 0,
             missileShots: Array.isArray(snap.missileShots) ? snap.missileShots : [],
+            rocketShots: Array.isArray(snap.rocketShots) ? snap.rocketShots : [],
+            damageDealtByWeapon: snap.damageDealtByWeapon || null,
+            gunHitTurns: snap.gunHitTurns || 0,
+            stallTurns: snap.stallTurns || 0,
             hp: snap.aircraft ? snap.aircraft.hp : null,
             ap: snap.aircraft ? snap.aircraft.ap : null,
+            flareAmmo: snap.aircraft ? snap.aircraft.flareAmmo : null,
+            chaffAmmo: snap.aircraft ? snap.aircraft.chaffAmmo : null,
+            pylons: snap.aircraft && Array.isArray(snap.aircraft.pylons) ? snap.aircraft.pylons : [],
             wingmanOrder: snap.wingmanOrder,
             leadId: snap.leadId,
             lockedTargetId: snap.lockedTargetId,
@@ -2510,12 +2589,31 @@ function uiBuildAIRosterSnapshot() {
             weaponCounters: snap.weaponCounters || null
         });
     });
+    const redAlive = rosterSummary.filter((r) => r.faction === 'red' && !r.isDestroyed).length;
+    const blueAlive = rosterSummary.filter((r) => r.faction === 'blue' && !r.isDestroyed).length;
+    let winner = null;
+    let endReason = null;
+    if (redAlive === 0 && blueAlive === 0) {
+        winner = 'draw';
+        endReason = 'mutual_destruction';
+    } else if (redAlive === 0 && blueAlive > 0) {
+        winner = 'blue';
+        endReason = 'elimination';
+    } else if (blueAlive === 0 && redAlive > 0) {
+        winner = 'red';
+        endReason = 'elimination';
+    } else if (GameContext && GameContext.state && GameContext.state.phase === 'game_over') {
+        winner = 'draw';
+        endReason = 'turn_limit';
+    }
     return {
         schema: 'air-arena-ai-debug-roster-v2',
         exportedAt: new Date().toISOString(),
         turn,
         matchMode: matchCfg ? matchCfg.mode : null,
         arenaMode,
+        winner,
+        endReason,
         unitIds: ids.slice(),
         trailMax: AI_DECISION_TRAIL_MAX,
         rosterSummary,
@@ -2578,22 +2676,32 @@ async function uiExportAllAIDebug() {
     const turn = roster.turn || 0;
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
     const filename = `ai-debug-roster-T${turn}-${stamp}.json`;
+    let downloaded = false;
     try {
-        await uiCopyTextToClipboard(text);
         uiDownloadTextFile(filename, JSON.stringify(roster, null, 2), 'application/json;charset=utf-8');
-        showSMSAlert(`全機決策已複製 + 下載 (${roster.unitIds.length}機, 含自動軌跡)`, '#00ff88');
-        return true;
-    } catch (err) {
-        console.error('[ai-debug] export-all failed', err);
+        downloaded = true;
+    } catch (dlErr) {
+        console.error('[ai-debug] export-all download failed', dlErr);
+        showSMSAlert('全機決策匯出失敗', '#ff5555');
+        return false;
+    }
+    const canClipboard = (typeof document === 'undefined' || typeof document.hasFocus !== 'function' || document.hasFocus());
+    if (canClipboard) {
         try {
-            uiDownloadTextFile(filename, JSON.stringify(roster, null, 2), 'application/json;charset=utf-8');
-            showSMSAlert('複製失敗，已改下載 JSON', '#ffbb00');
+            await uiCopyTextToClipboard(text);
+            showSMSAlert(`全機決策已複製 + 下載 (${roster.unitIds.length}機, 含自動軌跡)`, '#00ff88');
             return true;
-        } catch (err2) {
-            showSMSAlert('全機決策匯出失敗', '#ff5555');
-            return false;
+        } catch (clipErr) {
+            if (clipErr && clipErr.name !== 'NotAllowedError') {
+                console.warn('[ai-debug] clipboard copy unavailable, JSON downloaded:', clipErr.message || clipErr);
+            }
         }
     }
+    if (downloaded) {
+        showSMSAlert(`全機決策已下載 JSON (${roster.unitIds.length}機)`, '#00ff88');
+        return true;
+    }
+    return false;
 }
 
 function uiCopyTextToClipboard(text) {

@@ -475,7 +475,13 @@
                 const fuseOk = b.launchStep < 0
                     ? true
                     : (step >= (b.launchStep + fuseDelay));
-                if (hit && fuseOk) {
+                if (hit && !fuseOk) {
+                    // Hit surface before arming fuse completed: mark dud so bomb stops instead of falling underground.
+                    b.exploded = true;
+                    b.dud = true;
+                    b.hitGround = true;
+                    explodedAt[b.pylonId] = step;
+                } else if (hit && fuseOk) {
                     b.exploded = true;
                     b.hitGround = true;
                     explodedAt[b.pylonId] = step;
@@ -504,9 +510,17 @@
                         if (b.pos.distanceTo(vPos) <= blastR) {
                             if (ctx.hp[vid] != null) {
                                 ctx.hp[vid] = Math.max(0, ctx.hp[vid] - damage);
-                                if (ctx.log.hpTrack && ctx.log.hpTrack[vid]) {
-                                    ctx.log.hpTrack[vid][step] = (ctx.log.hpTrack[vid][step] || 0) + damage;
+                                if (ctx.log[vid]) {
+                                    ctx.log[vid].damageTaken = (Number(ctx.log[vid].damageTaken) || 0) + damage;
+                                    if (!Array.isArray(ctx.log[vid].damageSteps)) ctx.log[vid].damageSteps = [];
+                                    ctx.log[vid].damageSteps.push(step);
                                 }
+                                if (typeof recordCombatHit === 'function') {
+                                    recordCombatHit(ctx, vid, id, 'bomb', step);
+                                }
+                                if (!ctx.log.weaponDamageDealt) ctx.log.weaponDamageDealt = {};
+                                if (!ctx.log.weaponDamageDealt[id]) ctx.log.weaponDamageDealt[id] = {};
+                                ctx.log.weaponDamageDealt[id].bomb = (ctx.log.weaponDamageDealt[id].bomb || 0) + damage;
                             }
                         }
                     });

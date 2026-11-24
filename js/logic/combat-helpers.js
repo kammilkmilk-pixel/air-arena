@@ -60,6 +60,13 @@ function groundStoresPreviewEnabled() {
     return !!(typeof CONFIG !== 'undefined' && CONFIG.preview && CONFIG.preview.groundStores);
 }
 
+/** Pick store mesh for a pylon weaponType (fallback to preview indices or FOX mesh). */
+function meshBaseForWeaponType(weaponType, idx) {
+    if (weaponType === 'bomb' && typeof bombMeshBase !== 'undefined' && bombMeshBase) return bombMeshBase;
+    if (weaponType === 'rocket' && typeof rocketMeshBase !== 'undefined' && rocketMeshBase) return rocketMeshBase;
+    return meshBaseForPylonIndex(idx);
+}
+
 /** Pick store mesh for a pylon index (preview swaps bomb/rocket; else FOX mesh). */
 function meshBaseForPylonIndex(idx) {
     if (groundStoresPreviewEnabled() && typeof CONFIG !== 'undefined' && CONFIG.preview) {
@@ -72,6 +79,31 @@ function meshBaseForPylonIndex(idx) {
     }
     return missileMeshBase;
 }
+
+/** Upgrade bomb/rocket pylon visuals if async GLB assets finished loading after initial attach. */
+function refreshStorePylonMeshes() {
+    if (typeof teams === 'undefined') return;
+    const ids = (typeof GameContext !== 'undefined' && GameContext.getRosterIds)
+        ? GameContext.getRosterIds()
+        : Object.keys(teams);
+    ids.forEach((id) => {
+        const t = teams[id];
+        if (!t || !Array.isArray(t.pylons)) return;
+        t.pylons.forEach((p, idx) => {
+            if (!p || !p.mesh) return;
+            const wt = p.weaponType;
+            if (wt !== 'bomb' && wt !== 'rocket') return;
+            const wantBase = (wt === 'bomb' && typeof bombMeshBase !== 'undefined' && bombMeshBase)
+                ? bombMeshBase
+                : ((wt === 'rocket' && typeof rocketMeshBase !== 'undefined' && rocketMeshBase) ? rocketMeshBase : null);
+            if (!wantBase || p.mesh.userData.storeMeshKind === wt) return;
+            while (p.mesh.children.length > 0) p.mesh.remove(p.mesh.children[0]);
+            p.mesh.add(wantBase.clone());
+            p.mesh.userData.storeMeshKind = wt;
+        });
+    });
+}
+if (typeof window !== 'undefined') window.refreshStorePylonMeshes = refreshStorePylonMeshes;
 
 function tryAttachAllPylons() {
     const ids = (typeof GameContext !== 'undefined' && GameContext.getRosterIds)
@@ -97,9 +129,6 @@ function tryAttachAllPylons() {
             }
         }
         t.pylons = acConfig.pylons.map((p, idx) => {
-            const storeBase = meshBaseForPylonIndex(idx) || missileMeshBase;
-            let pMesh = new THREE.Group(); pMesh.add(storeBase.clone());
-            pMesh.position.set(p.position[0], p.position[1], p.position[2]); t.wrapper.add(pMesh);
             const rawSlot = loadout && loadout[idx];
             const isEmpty = rawSlot === 'empty' || rawSlot === 'none' || rawSlot === 'gun';
             let weaponType = isEmpty
@@ -107,7 +136,7 @@ function tryAttachAllPylons() {
                 : ((rawSlot)
                     ? (typeof sanitizePylonWeapon === 'function' ? sanitizePylonWeapon(rawSlot) : rawSlot)
                     : (p.weapon || 'fox2'));
-            // Preview mesh swap also tags store type for SMS / bomb path.
+            // Preview mesh swap also tags store type for SMS / bomb path (opt-in via ?storesPreview=1).
             if (!isEmpty && groundStoresPreviewEnabled() && typeof CONFIG !== 'undefined' && CONFIG.preview) {
                 const bombIdx = Number.isFinite(Number(CONFIG.preview.bombPylonIndex))
                     ? Number(CONFIG.preview.bombPylonIndex) : 0;
@@ -116,6 +145,12 @@ function tryAttachAllPylons() {
                 if (idx === bombIdx && typeof bombMeshBase !== 'undefined' && bombMeshBase) weaponType = 'bomb';
                 else if (idx === rocketIdx && typeof rocketMeshBase !== 'undefined' && rocketMeshBase) weaponType = 'rocket';
             }
+            const storeBase = meshBaseForWeaponType(weaponType, idx) || missileMeshBase;
+            let pMesh = new THREE.Group(); pMesh.add(storeBase.clone());
+            if ((weaponType === 'bomb' && storeBase === bombMeshBase) || (weaponType === 'rocket' && storeBase === rocketMeshBase)) {
+                pMesh.userData.storeMeshKind = weaponType;
+            }
+            pMesh.position.set(p.position[0], p.position[1], p.position[2]); t.wrapper.add(pMesh);
             if (isEmpty) pMesh.visible = false;
             const pylonState = {
                 id: p.id,

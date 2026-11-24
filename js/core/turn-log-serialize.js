@@ -105,6 +105,27 @@
         });
     }
 
+    function serializeFlareStep(list) {
+        if (!Array.isArray(list)) return [];
+        return list.map((f) => {
+            if (!f || typeof f !== 'object') return f;
+            const o = { ...f };
+            if (f.pos) o.pos = plainVec(f.pos);
+            if (f.vel) o.vel = plainVec(f.vel);
+            return o;
+        });
+    }
+
+    function hydrateFlareStep(list, T) {
+        if (!Array.isArray(list)) return [];
+        return list.map((f) => {
+            if (!f || typeof f !== 'object') return f;
+            if (f.pos) f.pos = reviveVec(f.pos, T);
+            if (f.vel) f.vel = reviveVec(f.vel, T);
+            return f;
+        });
+    }
+
     function serializeTurnLog(log) {
         if (!log || typeof log !== 'object') return null;
         const out = {
@@ -118,13 +139,28 @@
             wreckGroundBurst: log.wreckGroundBurst ? { ...log.wreckGroundBurst } : undefined,
             killedBy: log.killedBy ? JSON.parse(JSON.stringify(log.killedBy)) : undefined,
             damageFrom: log.damageFrom ? JSON.parse(JSON.stringify(log.damageFrom)) : undefined,
+            airspacePenalty: log.airspacePenalty ? { ...log.airspacePenalty } : undefined,
+            airspaceOutsideHit: log.airspaceOutsideHit ? { ...log.airspaceOutsideHit } : undefined,
+            groundTargetHits: Array.isArray(log.groundTargetHits)
+                ? log.groundTargetHits.map((h) => ({ ...h }))
+                : undefined,
+            groundTargetsState: Array.isArray(log.groundTargetsState)
+                ? log.groundTargetsState.map((gt) => ({ ...gt }))
+                : undefined,
+            seatEndState: log.seatEndState ? JSON.parse(JSON.stringify(log.seatEndState)) : undefined,
+            weaponDamageDealt: log.weaponDamageDealt ? JSON.parse(JSON.stringify(log.weaponDamageDealt)) : undefined,
+            globalChaffEnd: Array.isArray(log.globalChaffEnd) ? serializeFlareStep(log.globalChaffEnd) : undefined,
             radioCues: Array.isArray(log.radioCues) ? log.radioCues.map((c) => ({ ...c })) : [],
             vfxTriggers: mapArr(log.vfxTriggers, serializeVfx) || [],
             hitch: log.hitch ? { ...log.hitch } : undefined
         };
         Object.keys(log).forEach((key) => {
             if (out[key] !== undefined) return;
-            if (key === 'flaresTrack' || key === 'chaffTrack' || key === 'hpTrack') {
+            if (key === 'flaresTrack' || key === 'chaffTrack') {
+                out[key] = Array.isArray(log[key]) ? log[key].map(serializeFlareStep) : log[key];
+                return;
+            }
+            if (key === 'hpTrack') {
                 out[key] = log[key];
                 return;
             }
@@ -162,6 +198,15 @@
                 if (t.quat) t.quat = reviveVec(t.quat, T);
                 return t;
             });
+        }
+        if (Array.isArray(log.flaresTrack)) {
+            log.flaresTrack = log.flaresTrack.map((stepList) => hydrateFlareStep(stepList, T));
+        }
+        if (Array.isArray(log.chaffTrack)) {
+            log.chaffTrack = log.chaffTrack.map((stepList) => hydrateFlareStep(stepList, T));
+        }
+        if (Array.isArray(log.globalChaffEnd)) {
+            log.globalChaffEnd = hydrateFlareStep(log.globalChaffEnd, T);
         }
         Object.keys(log).forEach((key) => {
             const block = log[key];

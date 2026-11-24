@@ -595,7 +595,7 @@ const CONFIG = {
      * URL: ?storesPreview=0 disables; ?storesPreview=1 forces on.
      */
     preview: {
-        groundStores: true,
+        groundStores: false,
         bombPylonIndex: 0,
         rocketPylonIndex: 3
     },

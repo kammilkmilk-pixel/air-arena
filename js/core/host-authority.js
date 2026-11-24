@@ -30,6 +30,7 @@
     let matchConfig = null;
     let peerConnected = false;
     let pendingRemoteIntent = null;
+    let pendingTurnLogs = [];
     let intentTimer = null;
     let statusText = '';
     let reconnectToken = null;
@@ -374,16 +375,15 @@
 
     function onRemoteIntent(intent) {
         if (!intent || role !== 'host') return;
-        const seat = intent.seatId || remoteSeatId;
-        if (seat !== remoteSeatId && seat !== 'blue' && seat !== 'red') {
-            // allow explicit seat from guest
+        if (intent.seatId && intent.seatId !== remoteSeatId) {
+            return;
         }
-        const applySeat = intent.seatId || remoteSeatId;
+        const applySeat = remoteSeatId;
         pendingRemoteIntent = intent;
         clearIntentTimer();
         const p = Proto();
         if (p && p.applyTurnIntent) {
-            p.applyTurnIntent(applySeat, intent, { GameContext: typeof GameContext !== 'undefined' ? GameContext : null });
+            p.applyTurnIntent(applySeat, Object.assign({}, intent, { seatId: applySeat }), { GameContext: typeof GameContext !== 'undefined' ? GameContext : null });
         }
         setStatus('已收到對手指令', { intent: true });
         maybeResolveHostTurn();
@@ -416,7 +416,10 @@
     function guestApplyTurnLog(msg) {
         const log = decodeTurn(msg);
         if (!log || typeof GameContext === 'undefined') return false;
-        if (GameContext.isAnimating && GameContext.isAnimating()) return false;
+        if (GameContext.isAnimating && GameContext.isAnimating()) {
+            pendingTurnLogs.push(msg);
+            return true;
+        }
 
         GameContext.stateMachine.commitTurn(log);
         pendingRemoteIntent = null;
@@ -521,6 +524,13 @@
         window.addEventListener('EnginePhaseChanged', (e) => {
             const phase = e && e.detail && e.detail.phase;
             if (!engaged || !role) return;
+            if (phase === 'planning' && role === 'guest' && pendingTurnLogs.length > 0) {
+                const nextMsg = pendingTurnLogs.shift();
+                setTimeout(() => {
+                    if (engaged && role === 'guest') guestApplyTurnLog(nextMsg);
+                }, 0);
+                return;
+            }
             if (phase === 'planning' && role === 'host' && !e.detail.wreckFall) {
                 pendingRemoteIntent = null;
                 armIntentTimer();
@@ -528,6 +538,7 @@
             }
             if (phase === 'game_over') {
                 clearIntentTimer();
+                pendingTurnLogs = [];
                 setStatus('戰鬥結束');
             }
         });
@@ -825,7 +836,14 @@
             try {
                 reconnectToken = sessionStorage.getItem('aa-net-reconnect') || reconnectToken;
                 room = room || sessionStorage.getItem('aa-net-room');
-                localSeatId = localSeatId || sessionStorage.getItem('aa-net-seat') || 'red';
+                const savedSeat = sessionStorage.getItem('aa-net-seat');
+                if (savedSeat === 'red' || savedSeat === 'blue') {
+                    localSeatId = savedSeat;
+                    remoteSeatId = localSeatId === 'red' ? 'blue' : 'red';
+                } else {
+                    localSeatId = localSeatId || 'red';
+                    remoteSeatId = localSeatId === 'red' ? 'blue' : 'red';
+                }
                 role = role || sessionStorage.getItem('aa-net-role') || 'guest';
             } catch (e) { /* ignore */ }
         }
@@ -854,6 +872,7 @@
         room = null;
         peerConnected = false;
         pendingRemoteIntent = null;
+        pendingTurnLogs = [];
         engaged = false;
         queueMode = null;
     }

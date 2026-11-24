@@ -201,6 +201,7 @@ async function bootGame() {
         rocketMeshBase = prepareStoreMeshBase(rocketGltf, 'rocket', 0.18, 0);
         if (!bombMeshBase) console.warn('⚠ bomb.glb missing — ground-store preview skips bomb mesh');
         if (!rocketMeshBase) console.warn('⚠ rocket.glb missing — ground-store preview skips rocket mesh');
+        if (typeof refreshStorePylonMeshes === 'function') refreshStorePylonMeshes();
 
         checkInit();
 
@@ -780,43 +781,50 @@ window.updateTacticalPreview = function(teamObj) {
     
     const enemyObj = teams[enemyId];
     if (enemyObj && enemyObj.wrapper && !enemyObj.isDestroyed && typeof threatEnvGroup !== 'undefined') {
-        while(threatEnvGroup.children.length > 0){ 
-            let child = threatEnvGroup.children[0]; 
-            if(child.geometry) child.geometry.dispose(); 
-            threatEnvGroup.remove(child); 
+        const showEnv = !!(enemyObj.userData && enemyObj.userData.showEnvelope);
+        threatEnvGroup.visible = showEnv;
+        if (showEnv) {
+            while (threatEnvGroup.children.length > 0) {
+                let child = threatEnvGroup.children[0];
+                if (child.geometry) child.geometry.dispose();
+                threatEnvGroup.remove(child);
+            }
+            threatEnvGroup.position.set(0, 0, 0); threatEnvGroup.quaternion.identity();
+
+            if (!window._threatEnvMats) {
+                window._threatEnvMats = {
+                    t1: new THREE.LineBasicMaterial({ color: 0x00ff88, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending }),
+                    t2: new THREE.LineBasicMaterial({ color: 0x00aa55, transparent: true, opacity: 0.3, blending: THREE.AdditiveBlending }),
+                    t3: new THREE.LineBasicMaterial({ color: 0x006633, transparent: true, opacity: 0.15, blending: THREE.AdditiveBlending }),
+                    center: new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9 })
+                };
+            }
+            const { t1: matT1, t2: matT2, t3: matT3, center: matCenter } = window._threatEnvMats;
+
+            function createEnvelopeNet(testThrottle, lineMat) {
+                const segments = 16; const pathSets = [];
+                for (let i = 0; i < segments; i++) {
+                    let angle = (i / segments) * Math.PI * 2;
+                    let tYaw = -Math.cos(angle) * (Math.PI / 4);
+                    let tPitch = Math.sin(angle) * (Math.PI / 3);
+                    let r = simulateFlight(enemyObj, [{ yaw: tYaw, pitch: tPitch, roll: 0, throttle: testThrottle }]);
+                    pathSets.push(r.points);
+                }
+                for (let i = 0; i < segments; i += 2) {
+                    threatEnvGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pathSets[i]), lineMat));
+                }
+                [15, 30].forEach(frame => {
+                    let ringPts = [];
+                    for (let i = 0; i < segments; i++) ringPts.push(pathSets[i][frame]);
+                    ringPts.push(pathSets[0][frame]);
+                    threatEnvGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(ringPts), lineMat));
+                });
+            }
+            createEnvelopeNet(1, matT1); createEnvelopeNet(2, matT2); createEnvelopeNet(3, matT3);
+            let centerRes = simulateFlight(enemyObj, [{ yaw: 0, pitch: 0, roll: 0, throttle: enemyObj.throttle }]);
+            let centerLine = new THREE.Line(new THREE.BufferGeometry().setFromPoints(centerRes.points), matCenter);
+            threatEnvGroup.add(centerLine);
         }
-        threatEnvGroup.position.set(0, 0, 0); threatEnvGroup.quaternion.identity();
-        
-        const matT1 = new THREE.LineBasicMaterial({ color: 0x00ff88, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending }); 
-        const matT2 = new THREE.LineBasicMaterial({ color: 0x00aa55, transparent: true, opacity: 0.3, blending: THREE.AdditiveBlending }); 
-        const matT3 = new THREE.LineBasicMaterial({ color: 0x006633, transparent: true, opacity: 0.15, blending: THREE.AdditiveBlending });
-        
-        function createEnvelopeNet(testThrottle, lineMat) { 
-            const segments = 16; const pathSets = []; 
-            for (let i = 0; i < segments; i++) { 
-                let angle = (i / segments) * Math.PI * 2; 
-                let tYaw = -Math.cos(angle) * (Math.PI / 4); 
-                let tPitch = Math.sin(angle) * (Math.PI / 3); 
-                let r = simulateFlight(enemyObj, [{yaw: tYaw, pitch: tPitch, roll: 0, throttle: testThrottle}]); 
-                pathSets.push(r.points); 
-            } 
-            for (let i = 0; i < segments; i += 2) { 
-                threatEnvGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pathSets[i]), lineMat)); 
-            } 
-            [15, 30].forEach(frame => { 
-                let ringPts = []; 
-                for (let i = 0; i < segments; i++) ringPts.push(pathSets[i][frame]); 
-                ringPts.push(pathSets[0][frame]); 
-                threatEnvGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(ringPts), lineMat)); 
-            }); 
-        }
-        createEnvelopeNet(1, matT1); createEnvelopeNet(2, matT2); createEnvelopeNet(3, matT3); 
-        let centerRes = simulateFlight(enemyObj, [{yaw: 0, pitch: 0, roll: 0, throttle: enemyObj.throttle}]);
-        let centerLine = new THREE.Line(new THREE.BufferGeometry().setFromPoints(centerRes.points), new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9 })); 
-        threatEnvGroup.add(centerLine); 
-        
-        // 🟢 蜘蛛網顯示權與 userData 開關綁定
-        threatEnvGroup.visible = !!(enemyObj.userData && enemyObj.userData.showEnvelope);
     }
 
     if (typeof updateTargetingLock === 'function') updateTargetingLock(teamObj); 
@@ -957,11 +965,42 @@ function animate() {
     // ==========================================
     const exhaustIds = (GameContext.getActiveMatchIds && GameContext.getActiveMatchIds()) || ['red', 'blue'];
     const stallVfxApi = (typeof window !== 'undefined' && window.AirArenaStallVfx) ? window.AirArenaStallVfx : null;
+    const isReplayNow = GameContext.isReplayMode();
+    let replayExhaustLog = null;
+    let replayExhaustStep = 0;
+    if (isReplayNow && Array.isArray(battleLog) && battleLog.length > 0) {
+        const stepsPerTurn = (CONFIG && CONFIG.rules && Number(CONFIG.rules.stepsPerTurn)) || 100;
+        const val = GameContext.state.virtualReplayTime || 1.0;
+        const maxTime = battleLog.length + 0.99;
+        let tIdx = Math.max(0, Math.min(battleLog.length - 1, Math.floor(val) - 1));
+        let prog = val - Math.floor(val);
+        if (prog >= 0.99 || val >= maxTime) {
+            prog = 1.0;
+            tIdx = Math.max(0, Math.min(battleLog.length - 1, Math.floor(val - 0.01) - 1));
+        }
+        replayExhaustLog = battleLog[tIdx] || null;
+        replayExhaustStep = Math.min(stepsPerTurn, Math.floor(prog * stepsPerTurn));
+    }
     exhaustIds.forEach(id => {
         let t = teams[id];
-        if (!t || !t.wrapper || !t.wrapper.userData || !t.wrapper.userData.exhaust || t.isDestroyed) return;
+        if (!t || !t.wrapper || !t.wrapper.userData || !t.wrapper.userData.exhaust) return;
         let exhaust = t.wrapper.userData.exhaust;
-        let throttle = t.throttle || 2;
+        if (isReplayNow) {
+            if (!t.wrapper.visible || !replayExhaustLog) return;
+            const hpArr = replayExhaustLog.hpTrack && replayExhaustLog.hpTrack[id];
+            if (Array.isArray(hpArr) && hpArr.length > 0) {
+                const hpAt = Number(hpArr[Math.min(hpArr.length - 1, replayExhaustStep)]);
+                if (Number.isFinite(hpAt) && hpAt <= 0) return;
+            }
+        } else if (t.isDestroyed) {
+            return;
+        }
+        const repThrottle = (isReplayNow && replayExhaustLog && replayExhaustLog[id]
+            && Array.isArray(replayExhaustLog[id].chain) && replayExhaustLog[id].chain[0]
+            && replayExhaustLog[id].chain[0].throttle != null)
+            ? Number(replayExhaustLog[id].chain[0].throttle)
+            : null;
+        let throttle = Number.isFinite(repThrottle) ? repThrottle : (t.throttle || 2);
         const stallMod = (stallVfxApi && typeof stallVfxApi.getExhaustMod === 'function')
             ? stallVfxApi.getExhaustMod(id, throttle, now)
             : { scaleZMult: 1, scaleXYMult: 1, opacityMult: 1, surgePop: 0 };
@@ -1066,7 +1105,7 @@ function animate() {
     // ==========================================
     // 2. 正常戰鬥播放模式
     // ==========================================
-    if (GameContext.isAnimating() && teams.red.flightCurve && teams.blue.flightCurve) {
+    if (GameContext.isAnimating() && Array.isArray(battleLog) && battleLog.length > 0) {
         try {
             if (!GameContext.state._awaitingRadio) {
                 const step = (window.AirArenaBatchRun && typeof AirArenaBatchRun.animStep === 'function')
@@ -1079,11 +1118,12 @@ function animate() {
             if (currentLog && typeof renderCombatFrame === 'function') renderCombatFrame(currentLog, GameContext.state.animProgress);
             if (typeof updateReplayTags === 'function') updateReplayTags(currentLog, GameContext.state.animProgress);
             
-            let trackIdx = Math.min(100, Math.floor(GameContext.state.animProgress * 100));
+            const stepsPerTurnAnim = (CONFIG && CONFIG.rules && Number(CONFIG.rules.stepsPerTurn)) || 100;
+            let trackIdx = Math.min(stepsPerTurnAnim, Math.floor(GameContext.state.animProgress * stepsPerTurnAnim));
             const animIds = (GameContext.getActiveMatchIds && GameContext.getActiveMatchIds()) || ['red', 'blue'];
             animIds.forEach(id => {
                 let t = teams[id]; 
-                if(!t || t.isDestroyed || !t.flightCurve) return; 
+                if (!t || t.isDestroyed) return; 
                 if (t.pylons && currentLog) {
                     t.pylons.forEach(p => {
                         let explodeFrame = currentLog[`${id}ExplodedAt`] ? currentLog[`${id}ExplodedAt`][p.id] : undefined;
@@ -1234,6 +1274,12 @@ function enterReplayMode() {
             labels.innerHTML = '';
             labels.style.display = 'none';
         }
+        if (Array.isArray(battleLog)) {
+            battleLog.forEach((lg) => {
+                if (!lg || !Array.isArray(lg.vfxTriggers)) return;
+                lg.vfxTriggers.forEach((tr) => { if (tr && tr._replaySpawned) tr._replaySpawned = false; });
+            });
+        }
         if (window.AirArenaReplayDirector && typeof window.AirArenaReplayDirector.onEnterReplay === 'function') {
             window.AirArenaReplayDirector.onEnterReplay(
                 typeof camera !== 'undefined' ? camera : null,
@@ -1272,13 +1318,21 @@ function exitReplayMode() {
         }
     }); 
 
-    // Restore live visibility after ACMI may have re-shown historically-alive wrecks.
-    ['red', 'red2', 'blue', 'blue2'].forEach((id) => {
+    // Restore live poses & visibility for ALL seats (even if the active seat is destroyed).
+    const restoreIds = (GameContext.getActiveMatchIds && GameContext.getActiveMatchIds()) || ['red', 'red2', 'blue', 'blue2'];
+    restoreIds.forEach((id) => {
         const t = teams[id];
         if (!t || !t.wrapper) return;
         if (t.matchActive === false) {
             t.wrapper.visible = false;
             return;
+        }
+        if (t.startPos && t.startQuat) {
+            t.wrapper.position.copy(t.startPos);
+            t.wrapper.quaternion.copy(t.startQuat);
+            if (t.wrapper.userData && t.wrapper.userData.logicalQuat) {
+                t.wrapper.userData.logicalQuat.copy(t.startQuat);
+            }
         }
         const gone = t.isDestroyed && t.wreckPhase !== 'falling';
         t.wrapper.visible = !gone;
@@ -1286,6 +1340,10 @@ function exitReplayMode() {
             t.wrapper.userData.exhaust.group.visible = !t.isDestroyed;
         }
     });
+
+    if (window.AirArenaStallVfx && typeof window.AirArenaStallVfx.hideAll === 'function') {
+        window.AirArenaStallVfx.hideAll();
+    }
 
     // ACMI may leave flare pool meshes visible; restore planning-view static flares only.
     if (typeof window.hideVisualFlares === 'function') window.hideVisualFlares();
@@ -1352,6 +1410,12 @@ document.addEventListener("DOMContentLoaded", () => {
             }
             
             let val = parseFloat(e.target.value); 
+            if (Array.isArray(battleLog) && val < (GameContext.state.virtualReplayTime || 0)) {
+                battleLog.forEach((lg) => {
+                    if (!lg || !Array.isArray(lg.vfxTriggers)) return;
+                    lg.vfxTriggers.forEach((tr) => { if (tr && tr._replaySpawned) tr._replaySpawned = false; });
+                });
+            }
             GameContext.state.virtualReplayTime = val; 
             refreshReplayDirectorFrame({ snap: true });
         });

@@ -8811,9 +8811,10 @@ window.AirArenaAI = {
             `wingman: order=strike gt=${gt.id} horiz=${horiz.toFixed(1)}`
         ], 'wingmanStrike');
 
-        // Release when Impact / bomb window is good.
+        // Release when Impact / bomb window is good (simulate planned maneuver instead of stale pathPoints).
         if (typeof AirArenaA2GStoresDoctrine !== 'undefined') {
-            const commit = AirArenaA2GStoresDoctrine.pickStrikeStoresCommit(action, liveSelf, gt, {
+            const plannedSelf = this.buildPlannedTeamForStores(liveSelf, action, true);
+            const commit = AirArenaA2GStoresDoctrine.pickStrikeStoresCommit(action, plannedSelf, gt, {
                 distance: horiz,
                 angleDeg: Number(steer.local && Math.acos(this.clamp(steer.local.z, -1, 1)) * 180 / Math.PI)
             });
@@ -17757,8 +17758,13 @@ window.AirArenaAI = {
         const policyMode = this.normalizePolicyMode(self.aiPolicyMode || this.getPolicyMode(teamId));
         const enemyToSelf = selfPos.clone().sub(enemyLeadPos).normalize();
         const enemyAspectToSelf = trackedEnemyForward.angleTo(enemyToSelf);
-        const enemyMissileArmed = (enemy.pylons || []).some(p => p.state === 'armed');
-        const enemyMissileStandby = (enemy.pylons || []).some(p => p.state === 'standby');
+        const isFoxPylonEarly = (p) => {
+            if (!p) return false;
+            const wt = typeof pylonWeaponType === 'function' ? pylonWeaponType(p) : (p.weaponType || 'fox2');
+            return wt !== 'bomb' && wt !== 'rocket';
+        };
+        const enemyMissileArmed = (enemy.pylons || []).some(p => isFoxPylonEarly(p) && p.state === 'armed');
+        const enemyMissileStandby = (enemy.pylons || []).some(p => isFoxPylonEarly(p) && p.state === 'standby');
         const enemyMissileReady = enemyMissileArmed || enemyMissileStandby;
         const enemyMissileQueued = enemy.queuedAction === 'missile';
         const enemyMissileInFlight = (enemy.activeMissiles || []).some(m => m.active && !m.exploded);
@@ -18038,9 +18044,9 @@ window.AirArenaAI = {
         );
         const roll = this.clamp(horizontalBias * 0.42, -Math.PI / 4, Math.PI / 4);
         const breakSide = ((typeof GameContext !== 'undefined' && GameContext.getFaction && GameContext.getFaction(teamId) === 'blue') || String(teamId).startsWith('blue')) ? -1 : 1;
-        let hasArmedMissile = (self.pylons || []).some(p => p.state === 'armed');
-        const hasStandbyMissile = (self.pylons || []).some(p => p.state === 'standby');
-        const hasPoweringMissile = (self.pylons || []).some(p => p.state === 'powering');
+        let hasArmedMissile = (self.pylons || []).some(p => isFoxPylonEarly(p) && p.state === 'armed');
+        const hasStandbyMissile = (self.pylons || []).some(p => isFoxPylonEarly(p) && p.state === 'standby');
+        const hasPoweringMissile = (self.pylons || []).some(p => isFoxPylonEarly(p) && p.state === 'powering');
         // powering counts — opening ambush leaves seekers mid-boot for one turn (H2).
         let hasAnyMissile = hasArmedMissile || hasStandbyMissile || hasPoweringMissile;
         // Geometry want ≠ live SMS: drop conflicting powering/armed and power wanted type (on live team).
@@ -18057,9 +18063,9 @@ window.AirArenaAI = {
         );
         if (missileTypeSwitch.switched) {
             const pylonsNow = ((liveSelf && liveSelf.pylons) || self.pylons || []);
-            hasArmedMissile = pylonsNow.some((p) => p && p.state === 'armed');
+            hasArmedMissile = pylonsNow.some((p) => isFoxPylonEarly(p) && p.state === 'armed');
             hasAnyMissile = hasArmedMissile
-                || pylonsNow.some((p) => p && (p.state === 'standby' || p.state === 'powering'));
+                || pylonsNow.some((p) => isFoxPylonEarly(p) && (p.state === 'standby' || p.state === 'powering'));
             // Keep snapshot pylons in sync when self is a plain battleState copy.
             if (self.pylons && liveSelf && liveSelf.pylons && self.pylons !== liveSelf.pylons) {
                 self.pylons = liveSelf.pylons;
@@ -18087,9 +18093,9 @@ window.AirArenaAI = {
             typeof GameContext.stateMachine.beginFox2OpeningPowerUp === 'function'
         ) {
             GameContext.stateMachine.beginFox2OpeningPowerUp(teamId, 2);
-            hasArmedMissile = (self.pylons || []).some(p => p.state === 'armed');
+            hasArmedMissile = (self.pylons || []).some(p => isFoxPylonEarly(p) && p.state === 'armed');
             hasAnyMissile = hasArmedMissile
-                || (self.pylons || []).some(p => p.state === 'standby' || p.state === 'powering');
+                || (self.pylons || []).some(p => isFoxPylonEarly(p) && (p.state === 'standby' || p.state === 'powering'));
         }
         const energyCritical = self.stalled || self.ap < tuning.energyCriticalAp;
         const energyLow = self.ap < tuning.lowAp;
@@ -23840,8 +23846,13 @@ altitude,
         const openSkyFactor = urbanPressure ? 1.0 : 1.25;
         const hBias = this.clamp(-local.x * (1.15 * openSkyFactor), -1, 1);
         const vBias = this.clamp(local.y * (0.75 * openSkyFactor), -0.65, 0.65);
-        const hasArmedMissile = (self.pylons || []).some(p => p.state === 'armed');
-        const hasAnyMissile = hasArmedMissile || (self.pylons || []).some(p => p.state === 'standby' || p.state === 'powering');
+        const isFoxPylonCand = (p) => {
+            if (!p) return false;
+            const wt = typeof pylonWeaponType === 'function' ? pylonWeaponType(p) : (p.weaponType || 'fox2');
+            return wt !== 'bomb' && wt !== 'rocket';
+        };
+        const hasArmedMissile = (self.pylons || []).some(p => isFoxPylonCand(p) && p.state === 'armed');
+        const hasAnyMissile = hasArmedMissile || (self.pylons || []).some(p => isFoxPylonCand(p) && (p.state === 'standby' || p.state === 'powering'));
         const missileLosBlocked = this.hasObstacleBetween(selfPos, enemyPos);
 
         const baseGunIntent = baseAction.queueAction === 'gun' || baseAction.state === 'gunAttack';
@@ -23849,7 +23860,25 @@ altitude,
         const pressGunWindow = dist < tuning.gunRange + (urbanPressure ? 15 : 25) && angle < tuning.gunAngle * (urbanPressure ? 1.15 : 1.4);
         const mslMin = this.missileMinOr(tuning);
         const mslMax = this.missileMaxOr(tuning);
-        const pressMissileWindow = hasArmedMissile && !missileLosBlocked && dist > mslMin * 0.9 && dist < mslMax * (urbanPressure ? 0.79 : 0.92) && angle < (urbanPressure ? 26 : 34);
+        const candMissileType = (baseAction && baseAction.missileType)
+            || (baseAction && baseAction.debug && baseAction.debug.aiMissileType)
+            || this.pickAiMissileType(self, dist, angle);
+        let fox2PressAngleOk = true;
+        if (candMissileType !== 'fox1' && hasArmedMissile && !missileLosBlocked && liveSelf && liveSelf.wrapper) {
+            const foeIdCand = this.getEnemyId(teamId);
+            const liveFoeCand = (typeof GameContext !== 'undefined' && GameContext.getTeam)
+                ? GameContext.getTeam(foeIdCand) : null;
+            const fox2Check = this.canCommitFox2Launch({
+                shooterPos: selfPos,
+                shooterQuat: (liveSelf.wrapper.userData && liveSelf.wrapper.userData.logicalQuat) || liveSelf.wrapper.quaternion,
+                enemyPos: (liveFoeCand && liveFoeCand.wrapper && liveFoeCand.wrapper.position) || enemyPos,
+                enemyQuat: liveFoeCand && liveFoeCand.wrapper
+                    ? ((liveFoeCand.wrapper.userData && liveFoeCand.wrapper.userData.logicalQuat) || liveFoeCand.wrapper.quaternion)
+                    : null
+            });
+            fox2PressAngleOk = !!fox2Check.ok;
+        }
+        const pressMissileWindow = hasArmedMissile && !missileLosBlocked && dist > mslMin * 0.9 && dist < mslMax * (urbanPressure ? 0.79 : 0.92) && angle < (urbanPressure ? 26 : 34) && fox2PressAngleOk;
         const aggression = tuning.hybridAggression * openSkyFactor;
         let pressQueue = 'none';
         if (baseGunIntent && pressGunWindow) {
@@ -24562,6 +24591,29 @@ altitude,
                         1
                     )
                 });
+            } else if (safeAction.queueAction === 'missile' && ownMissileType !== 'fox1') {
+                // Always apply FOX-2 launch-angle gate for FOX-2-only aircraft too (not just FOX-1 mixed racks).
+                const foeId = this.getEnemyId(teamId);
+                const foe = (typeof GameContext !== 'undefined' && GameContext.getTeam)
+                    ? GameContext.getTeam(foeId)
+                    : null;
+                const foePose = typeof fox2ReadLaunchPose === 'function'
+                    ? fox2ReadLaunchPose(foe)
+                    : {
+                        pos: foe && foe.wrapper ? foe.wrapper.position : null,
+                        quat: foe && foe.wrapper ? ((foe.wrapper.userData && foe.wrapper.userData.logicalQuat) || foe.wrapper.quaternion) : null
+                    };
+                this.gateFox2MissileShoot(teamId, team, safeAction, {
+                    missileType: ownMissileType,
+                    aiMissileType: ownMissileType,
+                    enemyPos: foePose.pos,
+                    enemyQuat: foePose.quat,
+                    turnNo: Number(
+                        (typeof GameContext !== 'undefined' && GameContext.state && GameContext.state.currentTurn) ||
+                        (dbg && dbg.turn) ||
+                        1
+                    )
+                });
             }
         }
 
@@ -24578,17 +24630,32 @@ altitude,
             }
         }
 
-        // Rocket VT / Impact + bomb — soft overlay after FOX-1; never rewrites stick geometry.
+        // Late headroom / combat-band seals must not undo soft nest |jx|/thr (T150).
+        // Finalize stick + bank target BEFORE stores overlay so rocket/bomb aim solves against the actual turn maneuver.
+        if (safeAction) this.clampSoftUrbanStick(safeAction);
+        if (safeAction) this.applyBankTarget(teamId, safeAction);
+
+        // Rocket VT / Impact + bomb — soft overlay after FOX-1 & stick finalization; never rewrites stick geometry.
         if (safeAction && team && typeof AirArenaA2GStoresDoctrine !== 'undefined') {
             this.applyStoresDoctrineOverlay(safeAction, teamId, team);
         }
 
-        // Late headroom / combat-band seals must not undo soft nest |jx|/thr (T150).
-        if (safeAction) this.clampSoftUrbanStick(safeAction);
-        if (safeAction) this.applyBankTarget(teamId, safeAction);
-
         GameContext.stateMachine.applyPilotAction(teamId, safeAction);
         return safeAction;
+    },
+
+    /**
+     * Build a shallow clone of team whose pathPoints / pathQuats reflect the candidate
+     * maneuver for this turn (instead of stale straight-ahead pathPoints from end of last turn).
+     */
+    buildPlannedTeamForStores(team, action, bankTarget = false) {
+        if (!team || !action || !team.wrapper || typeof simulateFlight !== 'function') return team;
+        const sim = this.simulateBanked(team, [action], bankTarget);
+        if (!sim || !Array.isArray(sim.points) || sim.points.length < 2) return team;
+        return Object.assign({}, team, {
+            pathPoints: sim.points,
+            pathQuats: sim.quats
+        });
     },
 
     /**
@@ -24599,6 +24666,7 @@ altitude,
         if (!action || !team || typeof AirArenaA2GStoresDoctrine === 'undefined') return action;
         const Doc = AirArenaA2GStoresDoctrine;
         if (!Doc.weaponAiEnabled('rocket') && !Doc.weaponAiEnabled('bomb')) return action;
+        const plannedTeam = this.buildPlannedTeamForStores(team, action, false);
         // Strike path already picked bomb/Impact against a ground target — do not steal for A2A VT.
         if (action.state === 'wingmanStrike' || this.getWingmanOrder(teamId) === 'strike') {
             if (action.queueAction === 'bomb' || action.queueAction === 'rocket') return action;
@@ -24608,7 +24676,7 @@ altitude,
                 const selfPos = team.wrapper && team.wrapper.position;
                 const gt = AirArenaGroundTargets.resolveStrikeTarget(teamId, leadId, selfPos);
                 if (gt) {
-                    const commit = Doc.pickStrikeStoresCommit(action, team, gt, {
+                    const commit = Doc.pickStrikeStoresCommit(action, plannedTeam, gt, {
                         distance: Number(action.debug && action.debug.distance)
                     });
                     if (commit) return Doc.applyStoresCommit(action, commit);
@@ -24629,14 +24697,26 @@ altitude,
         if (!Number.isFinite(dist) && selfPos && foePos) dist = selfPos.distanceTo(foePos);
         let ang = Number(dbg.angleDeg);
         let localZ = Number(dbg.targetLocalZ);
-        if ((!Number.isFinite(ang) || !Number.isFinite(localZ)) && selfPos && foePos && team.wrapper) {
+        let frontAspect = false;
+        if (selfPos && foePos && team.wrapper) {
             const to = foePos.clone().sub(selfPos);
             if (to.lengthSq() > 1e-8) {
-                const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(team.wrapper.quaternion).normalize();
-                ang = fwd.angleTo(to.clone().normalize()) * 180 / Math.PI;
-                const local = to.clone().normalize()
-                    .applyQuaternion(team.wrapper.quaternion.clone().invert());
-                localZ = local.z;
+                const toNorm = to.clone().normalize();
+                if (!Number.isFinite(ang) || !Number.isFinite(localZ)) {
+                    const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(team.wrapper.quaternion).normalize();
+                    ang = fwd.angleTo(toNorm) * 180 / Math.PI;
+                    const local = toNorm.clone()
+                        .applyQuaternion(team.wrapper.quaternion.clone().invert());
+                    localZ = local.z;
+                }
+                if (foe && foe.wrapper) {
+                    const foeQ = (foe.wrapper.userData && foe.wrapper.userData.logicalQuat) || foe.wrapper.quaternion;
+                    if (foeQ) {
+                        const foeFwd = new THREE.Vector3(0, 0, 1).applyQuaternion(foeQ).normalize();
+                        // Enemy nose pointing toward shooter => front-aspect IR shot.
+                        frontAspect = foeFwd.dot(toNorm) < -0.35;
+                    }
+                }
             }
         }
         const gunR = this.gunRangeOr(tuning);
@@ -24647,10 +24727,12 @@ altitude,
             && this.fox1SequelByTeam[teamId].active)
             || this.hasOwnFox1InFlight(team);
 
-        const commit = Doc.pickStoresCommit(action, team, foe, {
+        const commit = Doc.pickStoresCommit(action, plannedTeam, foe, {
             distance: dist,
             angleDeg: ang,
             localZ,
+            frontAspect,
+            fox2LaunchHold: !!dbg.fox2LaunchHold,
             lineOfSightBlocked: !!dbg.losBlocked,
             missileMinRange: this.missileMinOr(tuning),
             missileMaxRange: this.missileMaxOr(tuning),

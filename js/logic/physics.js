@@ -55,7 +55,7 @@ function simulateFlight(teamObj, chain) {
     simObj.position.copy(teamObj.wrapper.position); 
     simObj.quaternion.copy(teamObj.wrapper.userData.logicalQuat);
     
-    let activeAP = teamObj.ap || 120; 
+    let activeAP = Number.isFinite(Number(teamObj.ap)) ? Number(teamObj.ap) : 120; 
     let points = [simObj.position.clone()]; 
     let quats = [simObj.quaternion.clone()];
     const FRAMES = 30; 

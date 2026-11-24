@@ -137,12 +137,19 @@ function precomputeGunRoundStops(id, t, ctx) {
 
 function resolveGunsForStep(step, ratio, ctx) {
     const B = (typeof AirArenaGunBallistics !== 'undefined') ? AirArenaGunBallistics : null;
-    combatActiveIds().forEach(id => {
-        let t = teams[id]; let enemy = combatEnemyOf(id);
-        if (!enemy || t.isDestroyed || enemy.isDestroyed || ctx.death[id] !== -1) return;
+    const allIds = combatActiveIds();
+    allIds.forEach(id => {
+        let t = teams[id];
+        if (!t || t.isDestroyed || ctx.death[id] !== -1) return;
 
         if (t.chain && t.chain.length > 0 && t.chain[0].fire === 'gun') {
             if (step === 0 && B) precomputeGunRoundStops(id, t, ctx);
+
+            const myFac = combatFactionOf(id);
+            const enemyTargets = allIds
+                .map((eid) => teams[eid])
+                .filter((et) => et && !et.isDestroyed && ctx.death[et.id] === -1 && combatFactionOf(et.id) !== myFac && et.pathPoints && et.pathPoints.length);
+            if (!enemyTargets.length) return;
 
             const throttle = (t.chain[0].throttle != null) ? t.chain[0].throttle : (t.throttle || 2);
             const params = B ? B.resolveGunParams(t.type || 'mig21', throttle) : null;
@@ -152,7 +159,7 @@ function resolveGunsForStep(step, ratio, ctx) {
             let dRange = params ? params.dRange : ((typeof GUN_RANGE !== 'undefined' ? GUN_RANGE : 35) * stats.gunRangeMult);
             let dAngle = params ? params.dAngle : ((typeof GUN_ANGLE !== 'undefined' ? GUN_ANGLE : Math.PI/12) * stats.gunAngleMult);
 
-            let p1 = getPosAt(ratio, t.pathPoints); let p2 = getPosAt(ratio, enemy.pathPoints);
+            let p1 = getPosAt(ratio, t.pathPoints);
             let q1 = getQuatAt(ratio, t.pathQuats); 
             
             let el = params ? params.elevation : (CONFIG.weapons['gun'].elevation || 0);
@@ -161,24 +168,36 @@ function resolveGunsForStep(step, ratio, ctx) {
                 ? B.computeMuzzleWorldPos(p1, q1, params.centerMuzzle, new THREE.Vector3())
                 : p1.clone().add(new THREE.Vector3(0, -0.12, 0.45).applyQuaternion(q1));
 
-            // 判斷是否打中敵機（與彈道預覽線、飛行曳光彈共用同一組彈道方程）
-            let vecToEnemy = new THREE.Vector3().subVectors(p2, gunMuzzlePos);
-            let forwardDist = vecToEnemy.dot(fwd);
+            let muzzleSpeed = params ? params.muzzleSpeed : (dRange * 2.0);
+            let gravity = params ? params.gravity : (CONFIG.rules.gravity * (CONFIG.weapons['gun'].gravityMult !== undefined ? CONFIG.weapons['gun'].gravityMult : 1.0));
+            let acVel = B ? B.sampleAircraftVelocity(ratio, t.pathPoints, new THREE.Vector3()) : new THREE.Vector3();
+            let v0 = B
+                ? B.computeBulletVelocity(q1, acVel, muzzleSpeed, el, 0, 0, new THREE.Vector3())
+                : fwd.clone().multiplyScalar(muzzleSpeed);
+            let closingSpeed = Math.max(1.0, v0.dot(fwd));
+            const gunCfg = CONFIG.weapons.gun || {};
 
-            if (forwardDist > 0 && forwardDist <= dRange) {
-                let muzzleSpeed = params ? params.muzzleSpeed : (dRange * 2.0);
-                let gravity = params ? params.gravity : (CONFIG.rules.gravity * (CONFIG.weapons['gun'].gravityMult !== undefined ? CONFIG.weapons['gun'].gravityMult : 1.0));
-                let acVel = B ? B.sampleAircraftVelocity(ratio, t.pathPoints, new THREE.Vector3()) : new THREE.Vector3();
-                let v0 = B
-                    ? B.computeBulletVelocity(q1, acVel, muzzleSpeed, el, 0, 0, new THREE.Vector3())
-                    : fwd.clone().multiplyScalar(muzzleSpeed);
-                let closingSpeed = Math.max(1.0, v0.dot(fwd));
+            // Check every living hostile in 2v2 (sorted nearest along bore so bullets hit closest jet first).
+            let hitCandidates = [];
+            for (let ei = 0; ei < enemyTargets.length; ei++) {
+                const enemy = enemyTargets[ei];
+                const p2 = getPosAt(ratio, enemy.pathPoints);
+                const vecToEnemy = new THREE.Vector3().subVectors(p2, gunMuzzlePos);
+                const forwardDist = vecToEnemy.dot(fwd);
+                if (forwardDist > 0 && forwardDist <= dRange) {
+                    hitCandidates.push({ enemy, p2, forwardDist });
+                }
+            }
+            if (!hitCandidates.length) return;
+            hitCandidates.sort((a, b) => a.forwardDist - b.forwardDist);
+
+            for (let ci = 0; ci < hitCandidates.length; ci++) {
+                const { enemy, p2, forwardDist } = hitCandidates[ci];
                 let timeSinceSpawn = forwardDist / closingSpeed;
                 let expectedBulletPos = B
                     ? B.evalBallisticPoint(gunMuzzlePos, v0, gravity, timeSinceSpawn, new THREE.Vector3())
                     : gunMuzzlePos.clone().add(fwd.clone().multiplyScalar(forwardDist)).add(new THREE.Vector3(0, -0.5 * gravity * timeSinceSpawn * timeSinceSpawn, 0));
 
-                const gunCfg = CONFIG.weapons.gun || {};
                 const hitRadius = typeof gunHitRadiusAt === 'function'
                     ? gunHitRadiusAt(forwardDist, dAngle, gunCfg)
                     : Math.min(1.75, Math.max(0.65, forwardDist * Math.tan(dAngle)));
@@ -208,13 +227,18 @@ function resolveGunsForStep(step, ratio, ctx) {
                             hitChance = Math.max(0, 1 - falloffPer * ((forwardDist - falloffStart) / falloffBand));
                         }
                         if (hitChance < 1 && Math.random() > hitChance) {
-                            return;
+                            continue;
                         }
-                        ctx.hp[enemy.id] -= (GUN_DAMAGE / 100);
-                        ctx.log[enemy.id].damageTaken += (GUN_DAMAGE / 100);
+                        const gunStepDmg = GUN_DAMAGE / 100;
+                        ctx.hp[enemy.id] -= gunStepDmg;
+                        ctx.log[enemy.id].damageTaken += gunStepDmg;
                         if (!Array.isArray(ctx.log[enemy.id].damageSteps)) ctx.log[enemy.id].damageSteps = [];
                         ctx.log[enemy.id].damageSteps.push(step);
                         recordCombatHit(ctx, enemy.id, id, 'gun', step);
+                        if (!ctx.log.weaponDamageDealt) ctx.log.weaponDamageDealt = {};
+                        if (!ctx.log.weaponDamageDealt[id]) ctx.log.weaponDamageDealt[id] = {};
+                        ctx.log.weaponDamageDealt[id].gun = (ctx.log.weaponDamageDealt[id].gun || 0) + gunStepDmg;
+                        ctx.log.weaponDamageDealt[id].gunSteps = (ctx.log.weaponDamageDealt[id].gunSteps || 0) + 1;
 
                         // Clamp nearest tracer round stop time so bullets terminate on the enemy fuselage
                         if (B && ctx.log[id] && Array.isArray(ctx.log[id].gunStops)) {
@@ -255,6 +279,7 @@ function resolveGunsForStep(step, ratio, ctx) {
                                 seed
                             });
                         }
+                        break; // Round struck the nearest hostile along the stream.
                     }
                 }
             }
@@ -421,6 +446,9 @@ function resolveMissilesForStep(step, ratio, ctx) {
                         ctx.log[victimId].damageSteps.push(step);
                     }
                     recordCombatHit(ctx, victimId, id, mType, step);
+                    if (!ctx.log.weaponDamageDealt) ctx.log.weaponDamageDealt = {};
+                    if (!ctx.log.weaponDamageDealt[id]) ctx.log.weaponDamageDealt[id] = {};
+                    ctx.log.weaponDamageDealt[id][mType] = (ctx.log.weaponDamageDealt[id][mType] || 0) + damage;
                     finishLiveMissileShot(t, activeM, 'hit');
                 } else if (isMissileCrashedIntoBuilding) {
                     finishLiveMissileShot(t, activeM, 'building');

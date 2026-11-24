@@ -541,7 +541,9 @@
         return { aoa: Math.max(pitchRate, pathAoa), speed };
     }
 
-    function updateLeFog(fx, aoa, c, now) {
+    const _invWrapperQ = (typeof THREE !== 'undefined' && THREE.Quaternion) ? new THREE.Quaternion() : null;
+
+    function updateLeFog(fx, aoa, c, now, wrapper) {
         const span = Math.max(1e-3, c.aoaFogFull - c.aoaFogStart);
         let t = (aoa - c.aoaFogStart) / span;
         t = Math.max(0, Math.min(1, t));
@@ -549,6 +551,9 @@
         const pulse = 0.92 + 0.08 * Math.sin(now * 0.009);
         const opacity = t * c.leFogMaxOpacity * pulse;
         const camQ = (typeof camera !== 'undefined' && camera) ? camera.quaternion : null;
+        if (camQ && wrapper && wrapper.quaternion && _invWrapperQ) {
+            _invWrapperQ.copy(wrapper.quaternion).invert().multiply(camQ);
+        }
 
         fx.fogSprites.forEach((spr, i) => {
             if (opacity < 0.02) {
@@ -562,8 +567,31 @@
             }
             const grow = c.leFogScale * (0.7 + 0.55 * t) * (0.9 + 0.15 * ((i % 3) / 2));
             spr.scale.setScalar(grow);
-            if (camQ) spr.quaternion.copy(camQ);
+            if (camQ) {
+                if (wrapper && wrapper.quaternion && _invWrapperQ) {
+                    spr.quaternion.copy(_invWrapperQ);
+                } else {
+                    spr.quaternion.copy(camQ);
+                }
+            }
         });
+    }
+
+    function isAliveAtCursor(id, uNow) {
+        if (uNow == null || typeof battleLog === 'undefined' || !Array.isArray(battleLog) || !battleLog.length) {
+            return true;
+        }
+        const stepsPerTurn = (typeof CONFIG !== 'undefined' && CONFIG.rules && Number(CONFIG.rules.stepsPerTurn)) || 100;
+        const turnIdx = Math.min(battleLog.length - 1, Math.max(0, Math.floor(uNow)));
+        const frac = Math.max(0, Math.min(1, uNow - turnIdx));
+        const stepIdx = Math.min(stepsPerTurn, Math.floor(frac * stepsPerTurn));
+        const log = battleLog[turnIdx];
+        if (!log || !log[id] || !Array.isArray(log[id].pts) || log[id].pts.length < 2) return false;
+        if (log.hpTrack && Array.isArray(log.hpTrack[id]) && log.hpTrack[id].length > 0) {
+            const hp = Number(log.hpTrack[id][Math.min(log.hpTrack[id].length - 1, stepIdx)]);
+            if (Number.isFinite(hp) && hp <= 0) return false;
+        }
+        return true;
     }
 
     function activeIds() {
@@ -583,13 +611,15 @@
 
         const uNow = currentTimelineCursor();
         const inFlightAnim = isFlightAnimActive();
+        const isReplay = !!(typeof window !== 'undefined' && window.replayMode);
         const splitView = !!(typeof window !== 'undefined' && window.AirArenaMultiView && window.AirArenaMultiView.isSplit && window.AirArenaMultiView.isSplit());
 
         ensureSharedMats();
         const ids = activeIds();
         ids.forEach((id) => {
             const team = teams[id];
-            if (!team || !team.wrapper || team.isDestroyed || team.matchActive === false || !team.wrapper.visible) {
+            const aliveNow = isReplay ? isAliveAtCursor(id, uNow) : !(team && team.isDestroyed);
+            if (!team || !team.wrapper || !aliveNow || team.matchActive === false || !team.wrapper.visible) {
                 if (team && team.wrapper && team.wrapper.userData.condensation) {
                     hideAllMeshes(team.wrapper.userData.condensation);
                 }
@@ -650,7 +680,7 @@
                 : { stallFactor: team.stalled ? 1 : 0, forwardSpeed: speed };
             const fogGate = (1 - smooth01(0.18, 0.45, stallNow.stallFactor)) * smooth01(4.5, 9.5, stallNow.forwardSpeed);
             fx.aoa = aoa;
-            updateLeFog(fx, (speed > 0.03 && fogGate > 0.05) ? aoa * fogGate : 0, c, now);
+            updateLeFog(fx, (speed > 0.03 && fogGate > 0.05) ? aoa * fogGate : 0, c, now, team.wrapper);
 
             if (!fx.prevPos) fx.prevPos = team.wrapper.position.clone();
             else fx.prevPos.copy(team.wrapper.position);

@@ -492,7 +492,10 @@
             // Current-turn barrel-locked muzzle flash (only when this plane is alive & firing)
             const curLog = battleLogRef[turnIdx];
             const curEntry = curLog && curLog[id];
-            const isFiringNow = !!(curEntry && Array.isArray(curEntry.chain) && curEntry.chain.length > 0
+            const curHpArr = curLog && curLog.hpTrack && Array.isArray(curLog.hpTrack[id]) ? curLog.hpTrack[id] : null;
+            const aliveAtCurStep = !curHpArr || curHpArr.length === 0
+                || Number(curHpArr[Math.min(curHpArr.length - 1, trackIdx)]) > 0;
+            const isFiringNow = !!(aliveAtCurStep && curEntry && Array.isArray(curEntry.chain) && curEntry.chain.length > 0
                 && curEntry.chain[0].fire === 'gun' && curEntry.pts && curEntry.pts.length >= 2
                 && team.wrapper && team.wrapper.visible);
 
@@ -575,10 +578,16 @@
 
                 const params = B.resolveGunParams(acType, entry.chain[0].throttle);
                 const gunStops = Array.isArray(entry.gunStops) ? entry.gunStops : null;
+                const pastHpArr = pastLog && pastLog.hpTrack && Array.isArray(pastLog.hpTrack[id]) ? pastLog.hpTrack[id] : null;
 
                 for (let b = 0; b < rounds; b++) {
                     if (tracerCount >= MAX_TRACERS) break;
                     const tSpawn = B.roundSpawnTime(b, rounds);
+                    // Truncate rounds scheduled after the shooter died mid-turn.
+                    if (pastHpArr && pastHpArr.length > 0) {
+                        const spawnStep = Math.min(pastHpArr.length - 1, Math.max(0, Math.floor(tSpawn * stepsPerTurn)));
+                        if (Number(pastHpArr[spawnStep]) <= 0) continue;
+                    }
                     const dt = animProgress - tSpawn + age;
                     if (dt <= 0.0005 || dt > maxFlight) continue;
 
@@ -667,7 +676,10 @@
                 if (ageFrames < 0 || ageFrames > 34) continue;
 
                 const surf = trig.surface || 'aircraft';
-                const rng = mulberry32(Number(trig.seed) || (j * 2654435761 + (Number(trig.step) || 1)));
+                const baseSeed = (Number(trig.seed) || (j * 2654435761 + (Number(trig.step) || 1))) >>> 0;
+                const rngFlash = mulberry32((baseSeed ^ 0x9e3779b1) >>> 0);
+                const rngPuff = mulberry32((baseSeed ^ 0x85ebca77) >>> 0);
+                const rngSpark = mulberry32((baseSeed ^ 0xc2b2ae3d) >>> 0);
                 const basePos = trig.pos;
 
                 // Surface normal (default up for ground, toward shooter for aircraft)
@@ -697,7 +709,7 @@
                         surf === 'ground' ? Math.max(vcfg.groundY + fScale * 0.35, basePos.y + 0.12) : basePos.y + _tmpA.y * 0.08,
                         basePos.z + _tmpA.z * 0.08
                     );
-                    orientBillboard(fm, rng() * Math.PI * 2);
+                    orientBillboard(fm, rngFlash() * Math.PI * 2);
                     fm.scale.set(fScale, fScale, 1);
                     fm.material.color.setHex(surf === 'aircraft' ? 0xfff3c4 : (surf === 'building' ? 0xffc66e : 0xffaa44));
                     fm.material.opacity = Math.pow(1 - t, 1.45);
@@ -716,11 +728,11 @@
                         const w = (0.45 + 1.35 * ease);
                         const h = (0.75 + 2.05 * ease);
                         pm.position.set(
-                            basePos.x + (rng() - 0.5) * 0.25,
+                            basePos.x + (rngPuff() - 0.5) * 0.25,
                             vcfg.groundY + h * 0.42,
-                            basePos.z + (rng() - 0.5) * 0.25
+                            basePos.z + (rngPuff() - 0.5) * 0.25
                         );
-                        orientBillboard(pm, (rng() - 0.5) * 0.25);
+                        orientBillboard(pm, (rngPuff() - 0.5) * 0.25);
                         pm.scale.set(w, h, 1);
                         pm.material.color.setHex(t < 0.2 ? 0xa6835c : 0x726453);
                         pm.material.opacity = smoothstep(0, 0.1, t) * Math.pow(1 - t, 1.35) * 0.78;
@@ -732,7 +744,7 @@
                             basePos.y + _tmpA.y * (0.25 + 1.1 * ease) + 0.35 * ease,
                             basePos.z + _tmpA.z * (0.25 + 1.1 * ease)
                         );
-                        orientBillboard(pm, rng() * Math.PI * 2 + t * 0.8);
+                        orientBillboard(pm, rngPuff() * Math.PI * 2 + t * 0.8);
                         pm.scale.set(sz, sz, 1);
                         pm.material.color.setHex(0xb8b2a8);
                         pm.material.opacity = smoothstep(0, 0.1, t) * Math.pow(1 - t, 1.4) * 0.72;
@@ -745,7 +757,7 @@
                             basePos.y + _tmpB.y * ageFrames * 0.9,
                             basePos.z + _tmpB.z * ageFrames * 0.9
                         );
-                        orientBillboard(pm, rng() * Math.PI * 2 + t * 1.4);
+                        orientBillboard(pm, rngPuff() * Math.PI * 2 + t * 1.4);
                         pm.scale.set(sz, sz, 1);
                         pm.material.color.setHex(t < 0.25 ? 0x6b3a1c : 0x2c2926);
                         pm.material.opacity = smoothstep(0, 0.08, t) * Math.pow(1 - t, 1.35) * 0.68;
@@ -766,15 +778,15 @@
                     for (let k = 0; k < nSparks; k++) {
                         if (sparkCount >= MAX_HIT_SPARKS) break;
                         // Random unit hemisphere biased around surface normal
-                        let rx = (rng() - 0.5) * 2;
-                        let ry = (rng() - 0.5) * 2;
-                        let rz = (rng() - 0.5) * 2;
+                        let rx = (rngSpark() - 0.5) * 2;
+                        let ry = (rngSpark() - 0.5) * 2;
+                        let rz = (rngSpark() - 0.5) * 2;
                         const rLen = Math.hypot(rx, ry, rz) || 1;
                         rx /= rLen; ry /= rLen; rz /= rLen;
                         if (rx * _tmpA.x + ry * _tmpA.y + rz * _tmpA.z < 0) {
                             rx = -rx; ry = -ry; rz = -rz;
                         }
-                        const spd = (surf === 'aircraft' ? 0.16 : 0.13) * (0.55 + rng() * 1.15);
+                        const spd = (surf === 'aircraft' ? 0.16 : 0.13) * (0.55 + rngSpark() * 1.15);
                         const vx0 = (rx * 0.65 + _tmpA.x * 0.55) * spd;
                         const vy0 = (ry * 0.65 + _tmpA.y * 0.55) * spd;
                         const vz0 = (rz * 0.65 + _tmpA.z * 0.55) * spd;

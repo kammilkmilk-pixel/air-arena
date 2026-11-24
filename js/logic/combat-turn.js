@@ -146,6 +146,41 @@ function executeTurnSimultaneously() {
                     activeIds: ids
                 });
             }
+            if (typeof AirArenaGroundTargets !== 'undefined' && typeof AirArenaGroundTargets.toSerializable === 'function') {
+                ctx.log.groundTargetsState = AirArenaGroundTargets.toSerializable();
+            }
+            if (typeof GameContext !== 'undefined' && GameContext.state && Array.isArray(GameContext.state.globalChaff)) {
+                ctx.log.globalChaffEnd = GameContext.state.globalChaff.map((c) => ({
+                    pos: c.pos && c.pos.clone ? c.pos.clone() : c.pos,
+                    vel: c.vel && c.vel.clone ? c.vel.clone() : c.vel,
+                    ageSteps: c.ageSteps,
+                    teamId: c.teamId
+                }));
+            }
+            // Authoritative per-seat post-launch snapshot for Guest netplay synchronization.
+            ctx.log.seatEndState = {};
+            ids.forEach((id) => {
+                const t = teams[id];
+                if (!t) return;
+                ctx.log.seatEndState[id] = {
+                    hp: Math.max(0, Number(ctx.hp[id] != null ? ctx.hp[id] : t.hp) || 0),
+                    throttle: Number(t.throttle != null ? t.throttle : 2),
+                    flareAmmo: Number(t.flareAmmo != null ? t.flareAmmo : 0),
+                    chaffAmmo: Number(t.chaffAmmo != null ? t.chaffAmmo : 0),
+                    rocketFuze: t.rocketFuze || 'vt',
+                    pylons: Array.isArray(t.pylons)
+                        ? t.pylons.map((p) => ({
+                            id: p.id,
+                            weaponType: p.weaponType,
+                            state: p.state,
+                            ammo: p.ammo,
+                            ammoMax: p.ammoMax,
+                            emptySinceTurn: p.emptySinceTurn,
+                            emptyPod: !!(p.emptyPod || (p.mesh && p.mesh.userData && p.mesh.userData.emptyPod))
+                        }))
+                        : []
+                };
+            });
             if (typeof window !== 'undefined') {
                 window.AirArenaHitchLast = Object.assign({}, window.AirArenaHitchLast || {}, ctx.log.hitch);
             }
@@ -262,14 +297,49 @@ function finishTurnSimultaneously() {
                 );
             }
 
-            const finalPos = (t.flightCurve && t.pathQuats && t.pathQuats.length)
-                ? t.flightCurve.getPointAt(1.0)
-                : (t.wrapper ? t.wrapper.position.clone() : null);
-            const finalQuat = (t.pathQuats && t.pathQuats.length)
-                ? getQuatAt(1.0, t.pathQuats)
-                : (t.wrapper && t.wrapper.userData.logicalQuat
-                    ? t.wrapper.userData.logicalQuat.clone()
-                    : (t.wrapper ? t.wrapper.quaternion.clone() : null));
+            const logBlock = lastLog && lastLog[id] ? lastLog[id] : null;
+            const seatSnap = lastLog && lastLog.seatEndState ? lastLog.seatEndState[id] : null;
+            const isNetGuest = typeof AirArenaNetplay !== 'undefined' && AirArenaNetplay.isGuest && AirArenaNetplay.isGuest();
+            const logPts = (logBlock && Array.isArray(logBlock.pts) && logBlock.pts.length) ? logBlock.pts : null;
+            const logQuats = (logBlock && Array.isArray(logBlock.quats) && logBlock.quats.length) ? logBlock.quats : null;
+
+            // Track full-match stall turns and per-weapon damage dealt / gun hit turns for telemetry & export.
+            if (logBlock && logBlock.stalled) {
+                t.stallTurns = (Number(t.stallTurns) || 0) + 1;
+            }
+            if (lastLog && lastLog.weaponDamageDealt && lastLog.weaponDamageDealt[id]) {
+                const wd = lastLog.weaponDamageDealt[id];
+                if (!t.damageDealtByWeapon) t.damageDealtByWeapon = { gun: 0, fox1: 0, fox2: 0, rocket: 0, bomb: 0 };
+                ['gun', 'fox1', 'fox2', 'rocket', 'bomb'].forEach((k) => {
+                    if (Number(wd[k]) > 0) t.damageDealtByWeapon[k] = Number(((t.damageDealtByWeapon[k] || 0) + Number(wd[k])).toFixed(2));
+                });
+                if (Number(wd.gun) > 0 || Number(wd.gunSteps) > 0) {
+                    t.gunHitTurns = (Number(t.gunHitTurns) || 0) + 1;
+                    t.gunHitSteps = (Number(t.gunHitSteps) || 0) + (Number(wd.gunSteps) || 0);
+                }
+            }
+            if (logBlock && logBlock.wasFlaresArmed) {
+                t.flaresExpended = (Number(t.flaresExpended) || 0) + 1;
+            }
+            if (logBlock && logBlock.wasChaffArmed) {
+                t.chaffExpended = (Number(t.chaffExpended) || 0) + 1;
+            }
+
+            const toVec3 = (v) => (v && typeof v.clone === 'function' ? v.clone() : (v ? new THREE.Vector3(v.x || 0, v.y || 0, v.z || 0) : null));
+            const toQuat = (q) => (q && typeof q.clone === 'function' ? q.clone() : (q ? new THREE.Quaternion(q.x || 0, q.y || 0, q.z || 0, q.w != null ? q.w : 1) : null));
+
+            const finalPos = logPts
+                ? toVec3(logPts[logPts.length - 1])
+                : ((t.flightCurve && t.pathQuats && t.pathQuats.length)
+                    ? t.flightCurve.getPointAt(1.0)
+                    : (t.wrapper ? t.wrapper.position.clone() : null));
+            const finalQuat = logQuats
+                ? toQuat(logQuats[logQuats.length - 1])
+                : ((t.pathQuats && t.pathQuats.length)
+                    ? getQuatAt(1.0, t.pathQuats)
+                    : (t.wrapper && t.wrapper.userData.logicalQuat
+                        ? t.wrapper.userData.logicalQuat.clone()
+                        : (t.wrapper ? t.wrapper.quaternion.clone() : null)));
             
             if (t.isDestroyed || destroyedByLog) {
                 t.isDestroyed = true;
@@ -318,16 +388,53 @@ function finishTurnSimultaneously() {
             
             GameContext.stateMachine.setPostTurnPose(id, finalPos, finalQuat);
 
-            let finalStepAP = (t.chain && t.chain.length > 0 && typeof t.chain[0].resultingAP === 'number' && !isNaN(t.chain[0].resultingAP)) ? t.chain[0].resultingAP : simulateFlight(t, t.chain && t.chain.length > 0 ? t.chain : [{yaw:0, pitch:0, roll:0, throttle:t.throttle}]).finalAP;
+            const authChain = (logBlock && Array.isArray(logBlock.chain) && logBlock.chain.length > 0)
+                ? logBlock.chain
+                : (t.chain && t.chain.length > 0 ? t.chain : null);
+            const authThrottle = (authChain && authChain[0] && authChain[0].throttle != null)
+                ? Number(authChain[0].throttle)
+                : (seatSnap && Number.isFinite(Number(seatSnap.throttle)) ? Number(seatSnap.throttle) : t.throttle);
+            if (isNetGuest && Number.isFinite(authThrottle)) t.throttle = authThrottle;
+
+            let finalStepAP = (authChain && typeof authChain[0].resultingAP === 'number' && !isNaN(authChain[0].resultingAP))
+                ? authChain[0].resultingAP
+                : (logBlock && Number.isFinite(Number(logBlock.endAP))
+                    ? Number(logBlock.endAP)
+                    : simulateFlight(t, authChain || [{ yaw: 0, pitch: 0, roll: 0, throttle: authThrottle }]).finalAP);
             let stats = (typeof getThrottleStats === 'function')
-                ? getThrottleStats(t.throttle, t.type || 'mig21')
-                : (CONFIG.aircrafts[t.type || 'mig21'].throttleStats[Math.round(t.throttle)] || { thrust: 15, heat: 0 });
-            let heatDelta = (t.chain && t.chain.length > 0 && typeof t.chain[0].heatDelta === 'number') ? t.chain[0].heatDelta : stats.heat;
+                ? getThrottleStats(authThrottle, t.type || 'mig21')
+                : (CONFIG.aircrafts[t.type || 'mig21'].throttleStats[Math.round(authThrottle)] || { thrust: 15, heat: 0 });
+            let heatDelta = (authChain && typeof authChain[0].heatDelta === 'number') ? authChain[0].heatDelta : stats.heat;
             
             GameContext.stateMachine.updateHeat(id, heatDelta);
             GameContext.stateMachine.updateAP(id, finalStepAP, stats.thrust);
-            const firedGun = !!(t.chain && t.chain.length > 0 && t.chain[0].fire === 'gun');
+            const firedGun = !!(authChain && authChain[0].fire === 'gun');
             GameContext.stateMachine.settleGunHeat(id, firedGun);
+
+            // Sync authoritative ordnance & countermeasure state onto Guest.
+            if (isNetGuest && seatSnap) {
+                if (Number.isFinite(Number(seatSnap.hp))) t.hp = Math.max(0, Number(seatSnap.hp));
+                if (Number.isFinite(Number(seatSnap.flareAmmo))) t.flareAmmo = Math.max(0, Number(seatSnap.flareAmmo));
+                if (Number.isFinite(Number(seatSnap.chaffAmmo))) t.chaffAmmo = Math.max(0, Number(seatSnap.chaffAmmo));
+                t.flaresArmed = false;
+                t.chaffArmed = false;
+                if (seatSnap.rocketFuze) t.rocketFuze = seatSnap.rocketFuze;
+                if (Array.isArray(seatSnap.pylons) && Array.isArray(t.pylons)) {
+                    seatSnap.pylons.forEach((sp) => {
+                        const localP = t.pylons.find((p) => p && p.id === sp.id);
+                        if (!localP) return;
+                        if (sp.weaponType) localP.weaponType = sp.weaponType;
+                        if (sp.state) localP.state = sp.state;
+                        if (sp.ammo !== undefined) localP.ammo = sp.ammo;
+                        if (sp.ammoMax !== undefined) localP.ammoMax = sp.ammoMax;
+                        if (sp.emptySinceTurn !== undefined) localP.emptySinceTurn = sp.emptySinceTurn;
+                        if (sp.emptyPod !== undefined) {
+                            localP.emptyPod = !!sp.emptyPod;
+                            if (localP.mesh && localP.mesh.userData) localP.mesh.userData.emptyPod = !!sp.emptyPod;
+                        }
+                    });
+                }
+            }
             GameContext.stateMachine.resetPlanningChain(id);
             let freshRes = simulateFlight(t, t.chain); t.pathPoints = freshRes.points; t.pathQuats = freshRes.quats;
             GameContext.stateMachine.resetTurnStatus(id);
@@ -374,12 +481,35 @@ function finishTurnSimultaneously() {
                     return heat > 0;
                 })
                 .map((f) => ({
-                    pos: f.pos.clone(),
-                    vel: f.vel ? f.vel.clone() : new THREE.Vector3(0, -0.0005, 0),
+                    pos: f.pos && typeof f.pos.clone === 'function' ? f.pos.clone() : new THREE.Vector3(f.pos.x || 0, f.pos.y || 0, f.pos.z || 0),
+                    vel: f.vel
+                        ? (typeof f.vel.clone === 'function' ? f.vel.clone() : new THREE.Vector3(f.vel.x || 0, f.vel.y || 0, f.vel.z || 0))
+                        : new THREE.Vector3(0, -0.0005, 0),
                     age: Number(f.age) + 1,
                     teamId: f.teamId
                 }));
             GameContext.stateMachine.setGlobalFlares(carried);
+
+            // Sync authoritative ground target & chaff state on Guest netplay.
+            const isNetGuestEnd = typeof AirArenaNetplay !== 'undefined' && AirArenaNetplay.isGuest && AirArenaNetplay.isGuest();
+            if (isNetGuestEnd && lastLog && Array.isArray(lastLog.groundTargetsState)
+                && typeof AirArenaGroundTargets !== 'undefined' && typeof AirArenaGroundTargets.hydrate === 'function') {
+                AirArenaGroundTargets.hydrate(lastLog.groundTargetsState);
+            }
+            if (isNetGuestEnd && lastLog && Array.isArray(lastLog.globalChaffEnd)
+                && GameContext.stateMachine && typeof GameContext.stateMachine.setGlobalChaff === 'function') {
+                const carriedChaff = lastLog.globalChaffEnd
+                    .filter((c) => c && c.pos)
+                    .map((c) => ({
+                        pos: typeof c.pos.clone === 'function' ? c.pos.clone() : new THREE.Vector3(c.pos.x || 0, c.pos.y || 0, c.pos.z || 0),
+                        vel: c.vel
+                            ? (typeof c.vel.clone === 'function' ? c.vel.clone() : new THREE.Vector3(c.vel.x || 0, c.vel.y || 0, c.vel.z || 0))
+                            : new THREE.Vector3(0, 0.01, 0),
+                        ageSteps: Number(c.ageSteps) || 0,
+                        teamId: c.teamId
+                    }));
+                GameContext.stateMachine.setGlobalChaff(carriedChaff);
+            }
         }
     } catch (error) { console.error("回合結算錯誤：", error); }
 
