@@ -29,6 +29,8 @@ function pylonsForLoadout(loadout) {
     if (loadout === 'gun-priority') return ['empty', 'empty', 'empty', 'empty'];
     if (loadout === 'fox1-priority') return ['fox1', 'fox1', 'fox1', 'fox1'];
     if (loadout === 'fox2-priority') return ['fox2', 'fox2', 'fox2', 'fox2'];
+    if (loadout === 'fox2-rocket') return ['rocket', 'fox2', 'fox2', 'rocket'];
+    if (loadout === 'strike') return ['bomb', 'fox2', 'fox2', 'rocket'];
     return defaultPylonLoadout();
 }
 

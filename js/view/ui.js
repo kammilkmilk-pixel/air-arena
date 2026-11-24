@@ -454,8 +454,9 @@ function uiReadMatchSetupFromDom() {
             pylons: [1, 2, 3, 4].map((n) => {
                 const el = document.getElementById(`match-pylon-${def.id}-${n}`);
                 const raw = el ? el.value : 'fox2';
-                if (raw === 'fox1') return 'fox1';
-                if (raw === 'empty') return 'empty';
+                if (raw === 'fox1' || raw === 'fox2' || raw === 'bomb' || raw === 'rocket' || raw === 'empty') {
+                    return raw;
+                }
                 return 'fox2';
             })
         };
@@ -508,11 +509,15 @@ function uiRenderMatchSeatList() {
         const pilotSelect = '';
         const pylonSelects = [0, 1, 2, 3].map((i) => {
             const raw = pylons[i];
-            const w = raw === 'fox1' ? 'fox1' : (raw === 'empty' ? 'empty' : 'fox2');
+            const w = (raw === 'fox1' || raw === 'fox2' || raw === 'bomb' || raw === 'rocket' || raw === 'empty')
+                ? raw
+                : 'fox2';
             return `<select id="match-pylon-${def.id}-${i + 1}" class="match-pylon-select" aria-label="${def.label} pylon ${i + 1}"${def.live ? '' : ' disabled'}>
                 <option value="empty"${w === 'empty' ? ' selected' : ''}>P${i + 1} 空</option>
                 <option value="fox2"${w === 'fox2' ? ' selected' : ''}>P${i + 1} FOX-2</option>
                 <option value="fox1"${w === 'fox1' ? ' selected' : ''}>P${i + 1} FOX-1</option>
+                <option value="rocket"${w === 'rocket' ? ' selected' : ''}>P${i + 1} 火箭</option>
+                <option value="bomb"${w === 'bomb' ? ' selected' : ''}>P${i + 1} 炸彈</option>
             </select>`;
         }).join('');
         return `
@@ -522,6 +527,8 @@ function uiRenderMatchSeatList() {
                 ${controlSelect}
                 <select id="match-loadout-${def.id}" aria-label="${def.label} loadout"${def.live ? '' : ' disabled'}>
                     <option value="standard"${seat.loadout === 'standard' ? ' selected' : ''}>標準</option>
+                    <option value="fox2-rocket"${seat.loadout === 'fox2-rocket' ? ' selected' : ''}>FOX-2+火箭</option>
+                    <option value="strike"${seat.loadout === 'strike' ? ' selected' : ''}>對地打擊</option>
                     <option value="gun-priority"${seat.loadout === 'gun-priority' ? ' selected' : ''}>機砲</option>
                     <option value="fox2-priority"${seat.loadout === 'fox2-priority' ? ' selected' : ''}>FOX-2</option>
                     <option value="fox1-priority"${seat.loadout === 'fox1-priority' ? ' selected' : ''}>FOX-1</option>
@@ -617,18 +624,29 @@ function uiBindMatchSetupOnce() {
                     if (el) el.value = types[n - 1] || 'fox2';
                 });
             };
-            if (preset === 'standard') {
-                applyPylons(
-                    (typeof defaultPylonLoadout === 'function')
-                        ? defaultPylonLoadout()
-                        : ['fox1', 'fox2', 'fox2', 'fox1']
-                );
+            if (typeof pylonsForLoadout === 'function') {
+                applyPylons(pylonsForLoadout(preset));
+            } else if (preset === 'standard') {
+                applyPylons(['fox1', 'fox2', 'fox2', 'fox1']);
+            } else if (preset === 'fox2-rocket') {
+                applyPylons(['rocket', 'fox2', 'fox2', 'rocket']);
+            } else if (preset === 'strike') {
+                applyPylons(['bomb', 'fox2', 'fox2', 'rocket']);
             } else if (preset === 'gun-priority') {
                 applyPylons(['empty', 'empty', 'empty', 'empty']);
             } else if (preset === 'fox1-priority') {
                 applyPylons(['fox1', 'fox1', 'fox1', 'fox1']);
             } else if (preset === 'fox2-priority') {
                 applyPylons(['fox2', 'fox2', 'fox2', 'fox2']);
+            }
+        } else if (e.target && String(e.target.id || '').indexOf('match-pylon-') === 0) {
+            // Customizing a single pylon leaves strict preset overrides so user picks persist on ENGAGE.
+            const m = String(e.target.id).match(/^match-pylon-(.+)-([1-4])$/);
+            if (m) {
+                const loadoutEl = document.getElementById(`match-loadout-${m[1]}`);
+                if (loadoutEl && (loadoutEl.value === 'gun-priority' || loadoutEl.value === 'fox1-priority' || loadoutEl.value === 'fox2-priority')) {
+                    loadoutEl.value = 'standard';
+                }
             }
         }
         uiReadMatchSetupFromDom();
@@ -1240,6 +1258,20 @@ function uiBeginMatchOrShowSetup() {
             return;
         }
         const defaults = GameContext.createDefaultMatchConfig('1v1');
+        try {
+            const params = new URLSearchParams(window.location.search || '');
+            const urlLoadout = params.get('loadout');
+            if (urlLoadout) {
+                const sanitized = GameContext.sanitizeMatchLoadout(urlLoadout);
+                const pylons = (typeof pylonsForLoadout === 'function')
+                    ? pylonsForLoadout(sanitized)
+                    : GameContext.sanitizePylonLoadout(null);
+                Object.keys(defaults.seats || {}).forEach((sid) => {
+                    defaults.seats[sid].loadout = sanitized;
+                    defaults.seats[sid].pylons = pylons.slice();
+                });
+            }
+        } catch (_) { /* ignore */ }
         GameContext.stateMachine.applyMatchConfig(defaults);
         if (typeof window.AirArenaScenario !== 'undefined' && window.AirArenaScenario.isActive()) {
             window.AirArenaScenario.apply();

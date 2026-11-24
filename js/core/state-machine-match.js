@@ -287,6 +287,16 @@ window.StateMachineMatchApi = {
                         : (seat.loadout === 'fox1-priority'
                             ? ['fox1', 'fox1', 'fox1', 'fox1']
                             : ['fox2', 'fox2', 'fox2', 'fox2']));
+            } else if (seat.loadout === 'fox2-rocket' || seat.loadout === 'strike') {
+                const hasA2gCustom = Array.isArray(pylons) && pylons.length >= 4
+                    && pylons.some((w) => w === 'bomb' || w === 'rocket' || w === 'empty');
+                if (!hasA2gCustom) {
+                    pylons = (typeof pylonsForLoadout === 'function')
+                        ? pylonsForLoadout(seat.loadout)
+                        : (seat.loadout === 'strike'
+                            ? ['bomb', 'fox2', 'fox2', 'rocket']
+                            : ['rocket', 'fox2', 'fox2', 'rocket']);
+                }
             } else if (seat.loadout === 'standard') {
                 // Migrate legacy 4×FOX-2 / empty "standard" seats to 2×F1+2×F2.
                 const allFox2 = Array.isArray(pylons) && pylons.length >= 4 && pylons.every((w) => w === 'fox2');

@@ -131,7 +131,7 @@ window.GameContext = {
     },
 
     sanitizeMatchLoadout(loadout) {
-        const allowed = ['standard', 'gun-priority', 'fox2-priority', 'fox1-priority'];
+        const allowed = ['standard', 'gun-priority', 'fox2-priority', 'fox1-priority', 'fox2-rocket', 'strike'];
         return allowed.includes(loadout) ? loadout : 'standard';
     },
 
