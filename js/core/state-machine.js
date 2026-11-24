@@ -404,6 +404,8 @@ GameContext.stateMachine = {
         for (let i = 0; i < t.pylons.length; i++) {
             const p = t.pylons[i];
             if (!p || p.state === 'empty') continue;
+            const wt = typeof pylonWeaponType === 'function' ? pylonWeaponType(p) : p.weaponType;
+            if (wt === 'bomb' || wt === 'rocket') continue;
             if (armedIds.length >= count) break;
             if (p.state === 'standby' || p.state === 'powering' || p.state === 'armed') {
                 p.state = 'armed';
@@ -443,6 +445,8 @@ GameContext.stateMachine = {
         for (let i = 0; i < t.pylons.length; i++) {
             const p = t.pylons[i];
             if (!p || p.state === 'empty') continue;
+            const wt = typeof pylonWeaponType === 'function' ? pylonWeaponType(p) : p.weaponType;
+            if (wt === 'bomb' || wt === 'rocket') continue;
             if (started.length + already.length >= count) break;
             if (p.state === 'standby') {
                 if (this.beginPylonPowerUp(teamId, p.id) === 'powering') started.push(p.id);
@@ -761,12 +765,17 @@ GameContext.stateMachine = {
         t.singleMissileShot = !!action.singleMissile;
 
         if (action.powerPylons && t.pylons) {
-            // Prefer powering pylons matching desired missile type (fox1 vs fox2) without mixing.
+            // Prefer powering pylons matching desired missile type (fox1 vs fox2) without mixing; never power bomb/rocket.
+            const isFoxPylon = (p) => {
+                if (!p) return false;
+                const wt = typeof pylonWeaponType === 'function' ? pylonWeaponType(p) : p.weaponType;
+                return wt !== 'bomb' && wt !== 'rocket';
+            };
             const wantType = action.missileType
                 ? (typeof sanitizePylonWeapon === 'function' ? sanitizePylonWeapon(action.missileType) : action.missileType)
                 : null;
-            let standbyPylons = t.pylons.filter(p => p.state === 'standby');
-            if (wantType) {
+            let standbyPylons = t.pylons.filter(p => p && p.state === 'standby' && isFoxPylon(p));
+            if (wantType && wantType !== 'bomb' && wantType !== 'rocket') {
                 const typed = standbyPylons.filter(p =>
                     (typeof pylonWeaponType === 'function' ? pylonWeaponType(p) : p.weaponType) === wantType
                 );
@@ -776,7 +785,7 @@ GameContext.stateMachine = {
             if (liveType && wantType && liveType !== wantType && typeof dropConflictingPylonPower === 'function') {
                 dropConflictingPylonPower(t, wantType);
             }
-            const alreadyLive = t.pylons.filter(p => p.state === 'armed' || p.state === 'powering').length;
+            const alreadyLive = t.pylons.filter(p => isFoxPylon(p) && (p.state === 'armed' || p.state === 'powering')).length;
             const maxPower = Math.max(1, Math.min(2, Number(action.powerPylonCount) || 2));
             const want = Math.max(0, Math.min(maxPower, maxPower - alreadyLive));
             for (let i = 0; i < want && i < standbyPylons.length; i++) {
@@ -1311,7 +1320,8 @@ GameContext.stateMachine = {
                 }
                 // One-turn powering → armed (H2 FSM). Not gated on scene existence.
                 if (p.state === 'powering') p.state = 'armed';
-                if (p.mesh) p.mesh.visible = (p.state !== 'empty');
+                const keepEmptyPod = !!(p.emptyPod || (p.mesh && p.mesh.userData && p.mesh.userData.emptyPod));
+                if (p.mesh) p.mesh.visible = (p.state !== 'empty' || keepEmptyPod);
             });
         }
     }

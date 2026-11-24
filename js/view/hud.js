@@ -1726,9 +1726,15 @@ window.updateDynamicHUD = function() {
             && typeof AirArenaBomb.estimateReleaseState === 'function'
             && typeof AirArenaBomb.computeBallisticPath === 'function') {
             const rel = AirArenaBomb.estimateReleaseState(t);
-            if (rel) {
-                const path = AirArenaBomb.computeBallisticPath(rel.pos, rel.vel, {});
-                if (path && path.impact) bombImpact = path.impact;
+            if (rel && rel.pos && rel.vel) {
+                const sig = `${t.id || ''}|${rel.pos.x.toFixed(2)},${rel.pos.y.toFixed(2)},${rel.pos.z.toFixed(2)}|${rel.vel.x.toFixed(2)},${rel.vel.y.toFixed(2)},${rel.vel.z.toFixed(2)}`;
+                if (t._hudBombCcipCache && t._hudBombCcipCache.sig === sig) {
+                    bombImpact = t._hudBombCcipCache.impact;
+                } else {
+                    const path = AirArenaBomb.computeBallisticPath(rel.pos, rel.vel, {});
+                    bombImpact = (path && path.impact) ? path.impact.clone() : null;
+                    t._hudBombCcipCache = { sig, impact: bombImpact };
+                }
             }
         }
         const aimWorld = bombImpact || myGhostPos.clone().add(myGhostForward.clone().multiplyScalar(42));

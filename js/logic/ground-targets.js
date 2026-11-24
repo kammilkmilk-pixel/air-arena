@@ -118,6 +118,10 @@
         while (_group.children.length) {
             const ch = _group.children[0];
             _group.remove(ch);
+            if (ch.material) {
+                const mats = Array.isArray(ch.material) ? ch.material : [ch.material];
+                mats.forEach((m) => { try { m.dispose(); } catch (_) { /* ignore */ } });
+            }
         }
         targets.forEach((t) => {
             if (!t || t.destroyed) return;
@@ -298,11 +302,22 @@
 
     function hydrate(listIn) {
         clear();
-        targets = normalizeList(listIn || []).map((t) => {
-            const row = { ...t };
-            row.destroyed = !!t.destroyed || (Number(t.hp) <= 0);
-            row.hp = row.destroyed ? 0 : Math.max(0, Number(t.hp) || row.hpMax);
-            return row;
+        const rawArr = Array.isArray(listIn) ? listIn : [];
+        targets = rawArr.map((raw, i) => {
+            const norm = normalizeGroundTarget(raw, i);
+            const rawHpMax = (raw && raw.hpMax != null && Number.isFinite(Number(raw.hpMax)))
+                ? Math.max(1, Number(raw.hpMax))
+                : norm.hpMax;
+            const rawHp = (raw && raw.hp != null && Number.isFinite(Number(raw.hp)))
+                ? Math.max(0, Math.min(rawHpMax, Number(raw.hp)))
+                : rawHpMax;
+            const destroyed = !!(raw && raw.destroyed) || rawHp <= 0;
+            return {
+                ...norm,
+                hpMax: rawHpMax,
+                hp: destroyed ? 0 : rawHp,
+                destroyed
+            };
         });
         syncVisuals();
         return list({ includeDestroyed: true });

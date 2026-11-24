@@ -111,6 +111,7 @@
     }
 
     function withRocketFuze(team, fuze, fn) {
+        const hadOwn = !!(team && Object.prototype.hasOwnProperty.call(team, 'rocketFuze'));
         const prev = team ? team.rocketFuze : undefined;
         if (team && typeof AirArenaRocket !== 'undefined' && AirArenaRocket.setTeamFuzeMode) {
             AirArenaRocket.setTeamFuzeMode(team, fuze);
@@ -120,10 +121,15 @@
         try {
             return fn();
         } finally {
-            if (team && typeof AirArenaRocket !== 'undefined' && AirArenaRocket.setTeamFuzeMode) {
-                AirArenaRocket.setTeamFuzeMode(team, prev === 'impact' ? 'impact' : 'vt');
-            } else if (team && prev != null) {
-                team.rocketFuze = prev;
+            if (team) {
+                if (prev === undefined) {
+                    if (hadOwn) team.rocketFuze = undefined;
+                    else delete team.rocketFuze;
+                } else if (typeof AirArenaRocket !== 'undefined' && AirArenaRocket.setTeamFuzeMode) {
+                    AirArenaRocket.setTeamFuzeMode(team, prev);
+                } else {
+                    team.rocketFuze = prev;
+                }
             }
         }
     }
@@ -357,14 +363,27 @@
     }
 
     function missileOutOfEnvelope(ctx = {}) {
+        if (ctx.fox2LaunchHold) return true;
         const dist = Number(ctx.distance);
         const ang = Number(ctx.angleDeg);
         const mslMin = Number(ctx.missileMinRange);
         const mslMax = Number(ctx.missileMaxRange);
         if (!Number.isFinite(dist) || !Number.isFinite(mslMin) || !Number.isFinite(mslMax)) return false;
-        if (dist < mslMin * 0.92 || dist > mslMax * 0.98) return true;
-        const softAng = Number(ctx.missileAngleDeg) || 27;
-        if (Number.isFinite(ang) && ang > softAng * 1.15) return true;
+        if (dist < mslMin || dist > mslMax * 0.98) return true;
+        const cfg = readConfig();
+        const mType = ctx.aiMissileType === 'fox1' ? 'fox1' : 'fox2';
+        const mun = cfg && cfg.doctrine && cfg.doctrine.munition && cfg.doctrine.munition[mType];
+        let launchCapDeg = Number(mun && mun.maxLaunchAngleDeg);
+        if (!Number.isFinite(launchCapDeg)) {
+            launchCapDeg = mType === 'fox1' ? 18 : 10;
+        }
+        if (mType === 'fox2' && ctx.frontAspect) {
+            const wpn = cfg && cfg.weapons && cfg.weapons.fox2;
+            const mult = (wpn && Number.isFinite(Number(wpn.frontAspectSeekerAngleMult)))
+                ? Number(wpn.frontAspectSeekerAngleMult) : 0.4;
+            launchCapDeg *= mult;
+        }
+        if (Number.isFinite(ang) && ang > launchCapDeg) return true;
         return false;
     }
 

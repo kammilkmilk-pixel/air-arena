@@ -857,12 +857,19 @@ function chaffCameraOcclusionFade(cloudPos, cloudRadius) {
         if (craftDist < 1.5) continue;
         const dirLen = craftDist;
         camToCraft.multiplyScalar(1 / dirLen);
-        const camToCloud = _chaffCamOcclusion.camToCloud.subVectors(cloudPos, camPos);
+        const camToCloud = _chaffCamOcclusion.camToCloud.set(
+            (cloudPos.x || 0) - camPos.x,
+            (cloudPos.y || 0) - camPos.y,
+            (cloudPos.z || 0) - camPos.z
+        );
         const along = camToCloud.dot(camToCraft);
         // Must lie strictly between camera and aircraft
         if (along < 1.0 || along > dirLen - 0.5) continue;
         _chaffCamOcclusion.closest.copy(camPos).addScaledVector(camToCraft, along);
-        const lateral = cloudPos.distanceTo(_chaffCamOcclusion.closest);
+        const dxC = (cloudPos.x || 0) - _chaffCamOcclusion.closest.x;
+        const dyC = (cloudPos.y || 0) - _chaffCamOcclusion.closest.y;
+        const dzC = (cloudPos.z || 0) - _chaffCamOcclusion.closest.z;
+        const lateral = Math.hypot(dxC, dyC, dzC);
         if (lateral > influenceR) continue;
         const center = 1 - lateral / influenceR;
         // Stronger fade when cloud is large relative to remaining craft depth
@@ -1008,8 +1015,27 @@ function updateSpatialHelpers() {
     } else { ghostBeam.visible = false; }
 }
 
+const _ghostMatCache = { red: null, blue: null };
+function getSharedGhostMat(faction) {
+    const key = faction === 'blue' ? 'blue' : 'red';
+    if (!_ghostMatCache[key]) {
+        _ghostMatCache[key] = new THREE.MeshBasicMaterial({
+            color: key === 'blue' ? 0x00bcd4 : 0xff0055,
+            transparent: true,
+            opacity: 0.35,
+            side: THREE.DoubleSide,
+            depthWrite: false
+        });
+    }
+    return _ghostMatCache[key];
+}
+
 function drawTrajectoryLine(teamObj) {
-    if (trajectoryMeshes[teamObj.id]) { scene.remove(trajectoryMeshes[teamObj.id]); trajectoryMeshes[teamObj.id] = null; }
+    if (trajectoryMeshes[teamObj.id]) {
+        scene.remove(trajectoryMeshes[teamObj.id]);
+        if (trajectoryMeshes[teamObj.id].geometry) trajectoryMeshes[teamObj.id].geometry.dispose();
+        trajectoryMeshes[teamObj.id] = null;
+    }
     if (teamObj.pathPoints.length < 2) { if (teamObj.id === tAct) window.ghostWrapper.visible = false; return; }
     
     let pathLen = 0; 
@@ -1092,14 +1118,8 @@ function drawTrajectoryLine(teamObj) {
             window.ghostPlaneMesh.position.set(0, 0, 0);
             window.ghostPlaneMesh.quaternion.set(0, 0, 0, 1);
             
-            let teamColor = ((GameContext.getFaction && GameContext.getFaction(teamObj.id)) === 'blue') ? 0x00bcd4 : 0xff0055;
-            let ghostMat = new THREE.MeshBasicMaterial({
-                color: teamColor,
-                transparent: true,
-                opacity: 0.35,              
-                side: THREE.DoubleSide,
-                depthWrite: false
-            });
+            let factionKey = ((GameContext.getFaction && GameContext.getFaction(teamObj.id)) === 'blue') ? 'blue' : 'red';
+            let ghostMat = getSharedGhostMat(factionKey);
 
             window.ghostPlaneMesh.traverse(c => {
                 let isExhaust = c.userData.isExhaustComponent || 
@@ -1211,42 +1231,62 @@ function updateGunPreview(teamObj) {
     }
 }
 
+function disposePylonLineMesh(p) {
+    if (!p || !p.lineMesh) return;
+    scene.remove(p.lineMesh);
+    if (p.lineMesh.geometry) p.lineMesh.geometry.dispose();
+    if (p.lineMesh.material) p.lineMesh.material.dispose();
+    p.lineMesh = null;
+}
+
 function updateMissilePreview(teamObj) {
     if (!teamObj.pylons) return;
     const enemyId = (GameContext.getTargetId && GameContext.getTargetId(teamObj.id))
         || (GameContext.getNearestHostileId && GameContext.getNearestHostileId(teamObj.id))
         || (String(teamObj.id).startsWith('red') ? 'blue' : 'red');
     const enemyObj = teams[enemyId]; 
-    if (isAnimating || window.replayMode) { teamObj.pylons.forEach(p => { if (p.lineMesh) { scene.remove(p.lineMesh); p.lineMesh = null; } }); return; }
+    if (isAnimating || window.replayMode) { teamObj.pylons.forEach(disposePylonLineMesh); return; }
     if (!enemyObj || !enemyObj.wrapper || enemyObj.isDestroyed) {
-        teamObj.pylons.forEach(p => { if (p.lineMesh) { scene.remove(p.lineMesh); p.lineMesh = null; } });
+        teamObj.pylons.forEach(disposePylonLineMesh);
         return;
     }
 
     let hasPath = teamObj.pathPoints && teamObj.pathPoints.length > 0;
+    const stepsPerTurn = (CONFIG && CONFIG.rules && Number(CONFIG.rules.stepsPerTurn)) || 100;
     teamObj.pylons.forEach(p => {
-        if(p.lineMesh) { scene.remove(p.lineMesh); p.lineMesh = null; }
+        disposePylonLineMesh(p);
+        const wt = typeof pylonWeaponType === 'function' ? pylonWeaponType(p) : (p.weaponType || 'fox2');
+        const keepEmptyPod = !!(p.emptyPod || (p.mesh && p.mesh.userData && p.mesh.userData.emptyPod));
+        if (wt === 'bomb' || wt === 'rocket') {
+            if (p.mesh) p.mesh.visible = (p.state !== 'empty' || keepEmptyPod);
+            return;
+        }
         let isFiringNow = p.state === 'armed' && teamObj.wpnQueued && teamObj.weapon === 'missile';
         let activeM = teamObj.activeMissiles ? teamObj.activeMissiles.find(m => m.pylonId === p.id) : null;
         let isFlying = activeM && activeM.active;
 
         if (p.mesh) { let glowMesh = p.mesh.children.find(child => child.geometry && child.geometry.type === "SphereGeometry"); if (glowMesh) glowMesh.visible = false; }
-        if (!isFiringNow && !isFlying) { if (p.mesh) p.mesh.visible = (p.state !== 'empty'); return; }
+        if (!isFiringNow && !isFlying) { if (p.mesh) p.mesh.visible = (p.state !== 'empty' || keepEmptyPod); return; }
         if (p.mesh) p.mesh.visible = false;
 
         let mPos, mQuat, mAP;
         if (isFiringNow && !isFlying) {
             let launchQuat = hasPath ? teamObj.pathQuats[0] : teamObj.wrapper.quaternion;
             let visualLineOffset = new THREE.Vector3(0, -0.5, 0.2); let worldOffset = p.localPosition.clone().add(visualLineOffset).applyQuaternion(launchQuat);
-            mPos = (hasPath ? teamObj.pathPoints[0].clone() : teamObj.wrapper.position.clone()).add(worldOffset); mQuat = launchQuat.clone(); mAP = MISSILE_MAX_AP;
+            mPos = (hasPath ? teamObj.pathPoints[0].clone() : teamObj.wrapper.position.clone()).add(worldOffset); mQuat = launchQuat.clone();
+            const wcfg = typeof getMissileWeaponConfig === 'function'
+                ? getMissileWeaponConfig(wt)
+                : (CONFIG && CONFIG.weapons && (CONFIG.weapons[wt] || CONFIG.weapons.fox2));
+            const cfgMaxAp = wcfg && Number(wcfg.maxAp);
+            mAP = Number.isFinite(cfgMaxAp) ? cfgMaxAp : MISSILE_MAX_AP;
         } else { mPos = activeM.pos.clone(); mQuat = activeM.quat.clone(); mAP = activeM.ap; }
 
         let mPoints = [mPos.clone()]; let simPos = mPos.clone(); let simQuat = mQuat.clone(); let simAP = mAP;
         const previewSources = (typeof buildMissileHeatSources === 'function')
             ? buildMissileHeatSources(teamObj.id, null, [])
             : null;
-        for (let step = 0; step <= 100; step++) { 
-            let ratio = step / 100;
+        for (let step = 0; step <= stepsPerTurn; step++) { 
+            let ratio = step / stepsPerTurn;
             // Rebuild aircraft poses along paths for no-IFF preview when possible
             let heatSources = previewSources;
             if (typeof buildMissileHeatSources === 'function') {
@@ -1277,7 +1317,8 @@ function updateMissilePreview(teamObj) {
 function renderCombatFrame(currentLog, animProgress) {
     if (!currentLog || !battleLog) return;
     let turnIdx = battleLog.indexOf(currentLog); if (turnIdx === -1) return;
-    let trackIdx = Math.min(100, Math.floor(animProgress * 100));
+    const stepsPerTurn = (CONFIG && CONFIG.rules && Number(CONFIG.rules.stepsPerTurn)) || 100;
+    let trackIdx = Math.min(stepsPerTurn, Math.floor(animProgress * stepsPerTurn));
 
     // Trim forward path ribbon so ONLY the remaining segment ahead of the aircraft stays red/cyan;
     // the flown wake behind the aircraft is rendered in white by condensation-vfx.js.
@@ -1321,7 +1362,7 @@ function renderCombatFrame(currentLog, animProgress) {
     
     if (turnIdx > 0 && battleLog[turnIdx - 1] && battleLog[turnIdx - 1].vfxTriggers) {
         battleLog[turnIdx - 1].vfxTriggers.forEach(t => {
-            let pastAge = (100 - t.step) + trackIdx;
+            let pastAge = (stepsPerTurn - t.step) + trackIdx;
             vfxToRender.push({ trigger: t, ageFrames: pastAge });
         });
     }
@@ -1678,7 +1719,7 @@ function renderCombatFrame(currentLog, animProgress) {
                         } else {
                             let prevTurnIdx = turnIdx - 1;
                             if (prevTurnIdx >= 0 && battleLog[prevTurnIdx] && battleLog[prevTurnIdx][`${id}MslTracks`] && battleLog[prevTurnIdx][`${id}MslTracks`][p.id]) {
-                                let prevTracks = battleLog[prevTurnIdx][`${id}MslTracks`][p.id]; let prevStep = 100 + pastStep; 
+                                let prevTracks = battleLog[prevTurnIdx][`${id}MslTracks`][p.id]; let prevStep = stepsPerTurn + pastStep; 
                                 if (prevStep >= 0 && prevTracks[prevStep] && prevTracks[prevStep].pos) { htmlPos = prevTracks[prevStep].pos.clone(); histQuat = prevTracks[prevStep].quat; }
                             }
                         }
@@ -2224,7 +2265,6 @@ initCityMapModel();
         }
         if (state.tapeTex) {
             state.tapeTex.offset.x = (performance.now() * 0.00009) % 1;
-            state.tapeTex.needsUpdate = true;
         }
     }
 

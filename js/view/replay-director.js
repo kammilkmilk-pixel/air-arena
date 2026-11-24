@@ -175,7 +175,19 @@
         if (!log || !log.destroyed) return -1;
         const d = log.destroyed[id];
         if (typeof d === 'number' && Number.isFinite(d) && d >= 0) return d;
-        if (d === true) return 50;
+        if (d === true) {
+            if (log.killedBy && log.killedBy[id] && typeof log.killedBy[id].step === 'number') {
+                return log.killedBy[id].step;
+            }
+            if (log.hpTrack && Array.isArray(log.hpTrack[id]) && log.hpTrack[id].length > 0) {
+                const hpArr = log.hpTrack[id];
+                if (Number(hpArr[0]) <= 0) return -1; // Already destroyed before this turn began.
+                for (let k = 1; k < hpArr.length; k++) {
+                    if (Number(hpArr[k]) <= 0) return k;
+                }
+            }
+            return 50;
+        }
         return -1;
     }
 
@@ -318,14 +330,23 @@
         // 1) Kills / crashes in this turn (highest drama!)
         for (let i = 0; i < roster.length; i++) {
             const victim = roster[i];
+            if (!log[victim] || !Array.isArray(log[victim].pts) || log[victim].pts.length < 2) continue;
+            // Skip aircraft that were already destroyed in an earlier turn (e.g. 2v2 post-kill turns).
+            const prevLog = turnIdx > 0 ? battleLog[turnIdx - 1] : null;
+            if (prevLog && prevLog.destroyed && prevLog.destroyed[victim]
+                && !(log.destroyed && typeof log.destroyed[victim] === 'number')) {
+                continue;
+            }
             const dStep = getDeathStep(log, victim);
             if (dStep < 0) continue;
             const delta = step - dStep;
             if (delta >= -28 && delta <= 55) {
                 const kb = log.killedBy && log.killedBy[victim];
-                const killer = (kb && kb.by && posById[kb.by]) ? kb.by : null;
+                const killerId = kb && (kb.attackerId || kb.by);
+                const killer = (killerId && posById[killerId]) ? killerId : null;
                 const cause = (kb && kb.weapon) || (log.deathCause && log.deathCause[victim]) || 'crash';
                 const killPos = samplePos(log[victim] && log[victim].pts, Math.min(1, dStep / 100));
+                if (!killPos) continue;
                 if (cause === 'gun' && killer) {
                     candidates.push({
                         priority: 98,
@@ -1132,9 +1153,13 @@
     function updateReplayCamera(battleLog, turnIdx, progress, dtMs, opts) {
         bindManualOverrideListeners();
         if (!runtime.enabled) {
-            syncHud();
+            if (runtime.lastHudEnabled !== false) {
+                runtime.lastHudEnabled = false;
+                syncHud();
+            }
             return null;
         }
+        runtime.lastHudEnabled = true;
         if (typeof camera === 'undefined' || !camera || typeof controls === 'undefined' || !controls) {
             return null;
         }
@@ -1151,7 +1176,8 @@
             || (runtime.activePrimaryId !== shot.primaryId && shot.mode !== 'tactical_wide')
             || (runtime.activeShotKey !== shotKey && shot.mode === 'tactical_wide')
             || (runtime.activeMode === 'tactical_wide' && shot.mode !== 'tactical_wide')
-            || (runtime.activeMode === 'missile' || shot.mode === 'missile');
+            || (runtime.activeMode !== shot.mode && (runtime.activeMode === 'missile' || shot.mode === 'missile'))
+            || (shot.mode === 'missile' && runtime.activeShotKey !== shotKey);
 
         if (hardCut) {
             camera.position.set(pose.camPos.x, pose.camPos.y, pose.camPos.z);

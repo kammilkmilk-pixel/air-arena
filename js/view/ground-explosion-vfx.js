@@ -676,7 +676,15 @@
 
         for (let b = 0; b < blastCount; b++) {
             const { trig, ageFrames, spec, seed } = activeBlasts[b];
-            const rng = mulberry32(seed);
+            // Per-layer independent PRNG streams prevent particle teleportation when early layers expire.
+            const rngShock = mulberry32((seed ^ 0x9e3779b1) >>> 0);
+            const rngDust = mulberry32((seed ^ 0x85ebca77) >>> 0);
+            const rngCollar = mulberry32((seed ^ 0xc2b2ae3d) >>> 0);
+            const rngFlash = mulberry32((seed ^ 0x27d4eb2f) >>> 0);
+            const rngFire = mulberry32((seed ^ 0x165667b1) >>> 0);
+            const rngPlume = mulberry32((seed ^ 0xd3a2646c) >>> 0);
+            const rngClods = mulberry32((seed ^ 0xfd7046c5) >>> 0);
+            const rngHot = mulberry32((seed ^ 0xb55a4f09) >>> 0);
             const s = spec.scale;
             const R = spec.radius;
             const baseX = trig.pos.x;
@@ -714,7 +722,7 @@
                 const m = pools.shockRings[slot];
                 const diam = R * (0.45 + 2.15 * easeOutQuart(t));
                 m.position.set(baseX, groundY + 0.085, baseZ);
-                m.rotation.set(-Math.PI / 2, 0, rng() * Math.PI * 2);
+                m.rotation.set(-Math.PI / 2, 0, rngShock() * Math.PI * 2);
                 m.scale.set(diam, diam, 1);
                 m.material.color.setHex(t < 0.35 ? 0xffe9ba : 0xd8a878);
                 m.material.opacity = Math.pow(1 - t, 1.65) * 0.42;
@@ -725,7 +733,7 @@
                 const m = pools.dustRings[slot];
                 const diam = R * (0.55 + 1.55 * easeOutQuart(t));
                 m.position.set(baseX, groundY + 0.075, baseZ);
-                m.rotation.set(-Math.PI / 2, 0, rng() * Math.PI * 2);
+                m.rotation.set(-Math.PI / 2, 0, rngDust() * Math.PI * 2);
                 m.scale.set(diam, diam, 1);
                 m.material.color.setHex(0x7c6e5b);
                 m.material.opacity = smoothstep(0, 0.14, t) * Math.pow(1 - t, 1.5) * 0.44;
@@ -745,12 +753,12 @@
                     const isInner = i < innerCount;
                     const ringIdx = isInner ? i : (i - innerCount);
                     const ringN = isInner ? innerCount : outerCount;
-                    const ang = (ringIdx / ringN) * Math.PI * 2 + (isInner ? 0.25 : 0) + (rng() - 0.5) * 0.32;
-                    const delay = isInner ? Math.floor(rng() * 2.5) : (1 + Math.floor(rng() * 4));
-                    const speedMul = 0.82 + rng() * 0.36;
-                    const sizeMul = 0.85 + rng() * 0.42;
-                    const spin0 = (rng() - 0.5) * 0.38; // small tilt keeps bottom-feather aligned to ground
-                    const liftMul = 0.7 + rng() * 0.55;
+                    const ang = (ringIdx / ringN) * Math.PI * 2 + (isInner ? 0.25 : 0) + (rngCollar() - 0.5) * 0.32;
+                    const delay = isInner ? Math.floor(rngCollar() * 2.5) : (1 + Math.floor(rngCollar() * 4));
+                    const speedMul = 0.82 + rngCollar() * 0.36;
+                    const sizeMul = 0.85 + rngCollar() * 0.42;
+                    const spin0 = (rngCollar() - 0.5) * 0.38; // small tilt keeps bottom-feather aligned to ground
+                    const liftMul = 0.7 + rngCollar() * 0.55;
 
                     const localAge = ageFrames - delay;
                     if (localAge < 0 || localAge >= c.collarLife) continue;
@@ -804,7 +812,7 @@
                 const m = pools.flashes[slot];
                 const diam = (3.8 + 4.4 * easeOutQuart(t)) * s;
                 m.position.set(baseX, baseY + Math.max(0.95 * s, diam * 0.34), baseZ);
-                orientBillboard(m, rng() * Math.PI * 2);
+                orientBillboard(m, rngFlash() * Math.PI * 2);
                 m.scale.set(diam, diam, 1);
                 m.material.opacity = Math.pow(1 - t, 2.0) * 0.92;
                 m.visible = m.material.opacity > 0.02;
@@ -826,13 +834,13 @@
                 for (let i = 0; i < c.fireballLobes; i++) {
                     if (fireIdx >= pools.fireLobes.length) break;
                     const isCore = i < 4;
-                    const ang = (i / Math.max(1, c.fireballLobes - 4)) * Math.PI * 2 + rng() * 0.75;
-                    const delay = isCore ? i * 0.9 : Math.floor(rng() * 3.8);
-                    const spread = isCore ? (0.18 + rng() * 0.38) : (0.65 + rng() * 0.92);
-                    const riseSpeed = isCore ? (2.8 + i * 1.1) : (1.15 + rng() * 1.85);
-                    const sizeMul = isCore ? (1.35 - i * 0.1) : (0.95 + rng() * 0.5);
-                    const rot0 = rng() * Math.PI * 2;
-                    const rotSpd = (rng() - 0.5) * 0.065;
+                    const ang = (i / Math.max(1, c.fireballLobes - 4)) * Math.PI * 2 + rngFire() * 0.75;
+                    const delay = isCore ? i * 0.9 : Math.floor(rngFire() * 3.8);
+                    const spread = isCore ? (0.18 + rngFire() * 0.38) : (0.65 + rngFire() * 0.92);
+                    const riseSpeed = isCore ? (2.8 + i * 1.1) : (1.15 + rngFire() * 1.85);
+                    const sizeMul = isCore ? (1.35 - i * 0.1) : (0.95 + rngFire() * 0.5);
+                    const rot0 = rngFire() * Math.PI * 2;
+                    const rotSpd = (rngFire() - 0.5) * 0.065;
 
                     const localAge = ageFrames - delay;
                     if (localAge < 0 || localAge >= c.fireLife) continue;
@@ -884,14 +892,14 @@
                     const isCap = i >= stemN;
                     const capIdx = i - stemN;
                     const ang = isCap
-                        ? (capIdx / Math.max(1, c.plumeCount - stemN)) * Math.PI * 2 + (rng() - 0.5) * 0.42
-                        : (i / stemN) * Math.PI * 2 + rng() * 0.6;
-                    const delay = isCap ? (3 + Math.floor(rng() * 9)) : (2 + i * 1.8);
-                    const sizeMul = isCap ? (1.15 + rng() * 0.55) : (0.95 + rng() * 0.42);
-                    const targetH = isCap ? (4.6 + rng() * 4.8) : (0.9 + i * 0.78 + rng() * 0.55);
-                    const capSpread = isCap ? (1.65 + rng() * 2.45) : (0.45 + rng() * 0.65);
-                    const rot0 = (rng() - 0.5) * 0.75; // keep sunlit tops facing skyward!
-                    const rotSpd = (rng() - 0.5) * 0.018;
+                        ? (capIdx / Math.max(1, c.plumeCount - stemN)) * Math.PI * 2 + (rngPlume() - 0.5) * 0.42
+                        : (i / stemN) * Math.PI * 2 + rngPlume() * 0.6;
+                    const delay = isCap ? (3 + Math.floor(rngPlume() * 9)) : (2 + i * 1.8);
+                    const sizeMul = isCap ? (1.15 + rngPlume() * 0.55) : (0.95 + rngPlume() * 0.42);
+                    const targetH = isCap ? (4.6 + rngPlume() * 4.8) : (0.9 + i * 0.78 + rngPlume() * 0.55);
+                    const capSpread = isCap ? (1.65 + rngPlume() * 2.45) : (0.45 + rngPlume() * 0.65);
+                    const rot0 = (rngPlume() - 0.5) * 0.75; // keep sunlit tops facing skyward!
+                    const rotSpd = (rngPlume() - 0.5) * 0.018;
 
                     const localAge = ageFrames - delay;
                     if (localAge < 0 || localAge >= c.plumeLife) continue;
@@ -940,18 +948,18 @@
             // -----------------------------------------------------------------
             if (ageFrames < c.clodLife) {
                 const g = 0.025;
-                const fillChunks = (count, isHot) => {
+                const fillChunks = (count, isHot, chunkRng) => {
                     for (let i = 0; i < count; i++) {
                         if (!isHot && clodIdx >= pools.maxClods) break;
                         if (isHot && hotIdx >= pools.maxHotChunks) break;
 
-                        const ang = rng() * Math.PI * 2;
-                        const horizSpd = (0.08 + rng() * 0.25) * s * (isHot ? 1.25 : 1.0);
-                        const upSpd = (0.18 + rng() * 0.34) * s * (isHot ? 1.15 : 1.0);
-                        const sz = (isHot ? (0.42 + rng() * 0.55) : (0.55 + rng() * 0.95)) * s;
-                        const rx = rng() * 6.28, ry = rng() * 6.28, rz = rng() * 6.28;
-                        const rsx = (rng() - 0.5) * 0.42;
-                        const rsy = (rng() - 0.5) * 0.42;
+                        const ang = chunkRng() * Math.PI * 2;
+                        const horizSpd = (0.08 + chunkRng() * 0.25) * s * (isHot ? 1.25 : 1.0);
+                        const upSpd = (0.18 + chunkRng() * 0.34) * s * (isHot ? 1.15 : 1.0);
+                        const sz = (isHot ? (0.42 + chunkRng() * 0.55) : (0.55 + chunkRng() * 0.95)) * s;
+                        const rx = chunkRng() * 6.28, ry = chunkRng() * 6.28, rz = chunkRng() * 6.28;
+                        const rsx = (chunkRng() - 0.5) * 0.42;
+                        const rsy = (chunkRng() - 0.5) * 0.42;
                         const lifeLim = isHot ? c.clodLife * 0.52 : c.clodLife;
 
                         if (ageFrames >= lifeLim) continue;
@@ -989,8 +997,8 @@
                         }
                     }
                 };
-                fillChunks(c.clodCount, false);
-                fillChunks(c.hotChunkCount, true);
+                fillChunks(c.clodCount, false, rngClods);
+                fillChunks(c.hotChunkCount, true, rngHot);
             }
         }
 

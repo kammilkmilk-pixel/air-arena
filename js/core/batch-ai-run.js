@@ -86,11 +86,12 @@
         };
     }
 
-    const LOADOUTS = Object.freeze(['standard', 'gun-priority', 'fox2-priority', 'fox1-priority']);
+    const LOADOUTS = Object.freeze(['standard', 'gun-priority', 'fox2-priority', 'fox1-priority', 'fox2-rocket', 'strike']);
 
     function sanitizeLoadout(raw) {
         const id = String(raw || 'standard').trim().toLowerCase();
         if (id === 'fox2-only' || id === 'fox2only' || id === 'fox2') return 'fox2-priority';
+        if (id === 'rocket' || id === 'fox2rocket') return 'fox2-rocket';
         return LOADOUTS.indexOf(id) >= 0 ? id : 'standard';
     }
 
@@ -98,7 +99,23 @@
         if (loadout === 'gun-priority') return ['empty', 'empty', 'empty', 'empty'];
         if (loadout === 'fox1-priority') return ['fox1', 'fox1', 'fox1', 'fox1'];
         if (loadout === 'fox2-priority') return ['fox2', 'fox2', 'fox2', 'fox2'];
+        if (loadout === 'fox2-rocket') return ['rocket', 'fox2', 'fox2', 'rocket'];
+        if (loadout === 'strike') return ['bomb', 'fox2', 'fox2', 'rocket'];
         return ['fox1', 'fox2', 'fox2', 'fox1'];
+    }
+
+    function detectLoadoutFromRoster(roster, fallbackLoadout) {
+        const units = roster && roster.units;
+        if (!units || typeof units !== 'object') return fallbackLoadout;
+        const firstId = Object.keys(units)[0];
+        const pylons = firstId && units[firstId] && units[firstId].aircraft && units[firstId].aircraft.pylons;
+        if (!Array.isArray(pylons) || pylons.length === 0) return fallbackLoadout;
+        const sig = pylons.map((p) => (p && p.weaponType) ? String(p.weaponType) : 'empty');
+        for (const name of LOADOUTS) {
+            const preset = pylonsForLoadout(name);
+            if (preset.length === sig.length && preset.every((w, i) => w === sig[i])) return name;
+        }
+        return 'custom';
     }
 
     function sanitizeBrain(raw) {
@@ -303,7 +320,7 @@
             facingMix: !!o.facingMix,
             fox2AmbushSeed: o.fox2AmbushSeed,
             chaseYawDeg: Math.round(chaseHeadingRad(o.batchIndex) * 180 / Math.PI),
-            loadout: o.loadout || 'standard'
+            loadout: detectLoadoutFromRoster(next, o.loadout || 'standard')
         };
         return next;
     }

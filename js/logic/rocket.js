@@ -410,6 +410,11 @@
         // Lightweight signature cache so 3D preview + 2D HUD share one solve per input state.
         const tp = team.wrapper.position;
         const ep = liveEnemy ? liveEnemy.wrapper.position : null;
+        const eq = liveEnemy ? liveEnemy.wrapper.quaternion : null;
+        const ePts = liveEnemy && Array.isArray(liveEnemy.pathPoints) && liveEnemy.pathPoints.length >= 2
+            ? liveEnemy.pathPoints : null;
+        const eMid = ePts ? ePts[Math.floor(ePts.length * 0.5)] : null;
+        const eEnd = ePts ? ePts[ePts.length - 1] : null;
         const endPt = (team.pathPoints && team.pathPoints.length)
             ? team.pathPoints[team.pathPoints.length - 1]
             : tp;
@@ -419,7 +424,15 @@
             endPt.x.toFixed(2), endPt.y.toFixed(2), endPt.z.toFixed(2),
             Number(team.joyX || 0).toFixed(3), Number(team.joyY || 0).toFixed(3),
             Number(team.pendingRoll || team.roll || 0).toFixed(3), Number(team.throttle || 4).toFixed(2),
-            ep ? `${ep.x.toFixed(2)},${ep.y.toFixed(2)},${ep.z.toFixed(2)},${(liveEnemy.flightLength || 0).toFixed(2)}` : 'noE'
+            ep
+                ? [
+                    ep.x.toFixed(2), ep.y.toFixed(2), ep.z.toFixed(2),
+                    eq ? `${eq.x.toFixed(2)},${eq.y.toFixed(2)},${eq.z.toFixed(2)},${eq.w.toFixed(2)}` : 'nq',
+                    eMid ? `${eMid.x.toFixed(2)},${eMid.y.toFixed(2)},${eMid.z.toFixed(2)}` : 'nm',
+                    eEnd ? `${eEnd.x.toFixed(2)},${eEnd.y.toFixed(2)},${eEnd.z.toFixed(2)}` : 'ne',
+                    (liveEnemy.flightLength || 0).toFixed(2)
+                ].join(',')
+                : 'noE'
         ].join('|');
         // Multi-slot: HUD lock check, LCOS pipper and 3D preview may solve against different
         // enemy inputs in one frame; a single slot made them evict each other every frame.
@@ -773,6 +786,7 @@
                     Number((typeof GameContext !== 'undefined' && GameContext.state && GameContext.state.currentTurn) || 1)
                 );
                 // Keep pod mesh visible as empty nest; individual rockets are depleted.
+                pod.emptyPod = true;
                 if (pod.mesh) pod.mesh.visible = true;
                 pod.mesh && (pod.mesh.userData.emptyPod = true);
             }
@@ -927,7 +941,9 @@
                         }
                     }
 
+                    let hitAnyAircraft = false;
                     const applyBlast = (vid) => {
+                        if (vid === id) return;
                         const vt = teams[vid];
                         if (!vt || vt.isDestroyed || !vt.pathPoints) return;
                         const vPos = (typeof getPosAt === 'function')
@@ -937,9 +953,18 @@
                         if (r.pos.distanceTo(vPos) <= blastR) {
                             if (ctx.hp[vid] != null) {
                                 ctx.hp[vid] = Math.max(0, ctx.hp[vid] - damage);
-                                if (ctx.log.hpTrack && ctx.log.hpTrack[vid]) {
-                                    ctx.log.hpTrack[vid][step] = (ctx.log.hpTrack[vid][step] || 0) + damage;
+                                if (ctx.log[vid]) {
+                                    ctx.log[vid].damageTaken = (Number(ctx.log[vid].damageTaken) || 0) + damage;
+                                    if (!Array.isArray(ctx.log[vid].damageSteps)) ctx.log[vid].damageSteps = [];
+                                    ctx.log[vid].damageSteps.push(step);
                                 }
+                                if (typeof recordCombatHit === 'function') {
+                                    recordCombatHit(ctx, vid, id, 'rocket', step);
+                                }
+                                if (!ctx.log.weaponDamageDealt) ctx.log.weaponDamageDealt = {};
+                                if (!ctx.log.weaponDamageDealt[id]) ctx.log.weaponDamageDealt[id] = {};
+                                ctx.log.weaponDamageDealt[id].rocket = (ctx.log.weaponDamageDealt[id].rocket || 0) + damage;
+                                hitAnyAircraft = true;
                             }
                         }
                     };
@@ -947,6 +972,15 @@
                     ids.forEach((vid) => {
                         if (vid === fuse.victimId) return;
                         applyBlast(vid);
+                    });
+                    if (!Array.isArray(t.rocketShots)) t.rocketShots = [];
+                    t.rocketShots.push({
+                        turn: (ctx.log && ctx.log.turn) || 0,
+                        fuze: r.fuze || (r.vt ? 'vt' : 'impact'),
+                        reason: fuse.reason || 'unknown',
+                        hit: hitAnyAircraft,
+                        victimId: fuse.victimId || null,
+                        step
                     });
                 }
             });
@@ -1469,6 +1503,24 @@
             const smoke = m.userData && m.userData.smoke;
             if (dispose) {
                 if (m.parent) m.parent.remove(m);
+                if (typeof m.traverse === 'function') {
+                    const sharedBodyGeos = new Set();
+                    if (typeof missileMeshBase !== 'undefined' && missileMeshBase && typeof missileMeshBase.traverse === 'function') {
+                        missileMeshBase.traverse((n) => { if (n.geometry) sharedBodyGeos.add(n.geometry); });
+                    }
+                    if (typeof rocketMeshBase !== 'undefined' && rocketMeshBase && typeof rocketMeshBase.traverse === 'function') {
+                        rocketMeshBase.traverse((n) => { if (n.geometry) sharedBodyGeos.add(n.geometry); });
+                    }
+                    m.traverse((ch) => {
+                        if (ch.geometry && !sharedBodyGeos.has(ch.geometry)) {
+                            try { ch.geometry.dispose(); } catch (_) { /* ignore */ }
+                        }
+                        if (ch.material) {
+                            const mats = Array.isArray(ch.material) ? ch.material : [ch.material];
+                            mats.forEach((mt) => { try { mt.dispose(); } catch (_) { /* ignore */ } });
+                        }
+                    });
+                }
                 if (smoke) {
                     if (smoke.parent) smoke.parent.remove(smoke);
                     if (smoke.geometry) smoke.geometry.dispose();

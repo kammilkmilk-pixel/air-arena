@@ -481,6 +481,21 @@
         const nowMs = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
         const uNow = currentTimelineCursor();
         const isFlight = uNow !== null;
+        const isReplay = !!(typeof window !== 'undefined' && window.replayMode);
+        const stepsPerTurn = (typeof CONFIG !== 'undefined' && CONFIG.rules && Number(CONFIG.rules.stepsPerTurn)) || 100;
+        const isAliveAtCursor = (id) => {
+            if (uNow == null || typeof battleLog === 'undefined' || !Array.isArray(battleLog) || !battleLog.length) return true;
+            const tIdx = Math.min(battleLog.length - 1, Math.max(0, Math.floor(uNow)));
+            const frac = Math.max(0, Math.min(1, uNow - tIdx));
+            const sIdx = Math.min(stepsPerTurn, Math.floor(frac * stepsPerTurn));
+            const log = battleLog[tIdx];
+            if (!log || !log[id] || !Array.isArray(log[id].pts) || log[id].pts.length < 2) return false;
+            if (log.hpTrack && Array.isArray(log.hpTrack[id]) && log.hpTrack[id].length > 0) {
+                const hp = Number(log.hpTrack[id][Math.min(log.hpTrack[id].length - 1, sIdx)]);
+                if (Number.isFinite(hp) && hp <= 0) return false;
+            }
+            return true;
+        };
         const ids = activeIds();
 
         // Upper-wing turbulent separation spawn stations (left/right inner & mid wing + tailplane)
@@ -494,7 +509,8 @@
         for (let ii = 0; ii < ids.length; ii++) {
             const id = ids[ii];
             const team = teams[id];
-            if (!team || !team.wrapper || team.isDestroyed || team.matchActive === false || !team.wrapper.visible) {
+            const aliveNow = isReplay ? isAliveAtCursor(id) : !(team && team.isDestroyed);
+            if (!team || !team.wrapper || !aliveNow || team.matchActive === false || !team.wrapper.visible) {
                 hideTeamPool(id);
                 resetModelPivot(team);
                 seatStallState[id] = 0;
