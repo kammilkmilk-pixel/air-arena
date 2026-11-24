@@ -537,6 +537,7 @@ function finishTurnSimultaneously() {
                 if (humanIds.includes(GameContext.getActiveTeamId())) nextControlTeam = GameContext.getActiveTeamId();
                 if (typeof selectTeam === 'function') selectTeam(nextControlTeam);
             }
+            GameContext.state.phase = 'planning';
             window.dispatchEvent(new CustomEvent('EnginePhaseChanged', { detail: { phase: 'planning', turn: currentTurn, wreckFall: true } }));
             scheduleWreckFallTurn(450);
             return;
@@ -546,6 +547,7 @@ function finishTurnSimultaneously() {
             if (teams[id] && teams[id].isDestroyed) GameContext.stateMachine.markDestroyedFlightState(id);
         });
         clearWreckFallAutoTimer();
+        GameContext.state.phase = 'game_over';
         window.dispatchEvent(new CustomEvent('EnginePhaseChanged', { detail: { phase: 'game_over', winner: winner } }));
         return; 
     }
@@ -556,6 +558,7 @@ function finishTurnSimultaneously() {
         const winner = 'DRAW (回合上限)';
         if (lastLog) lastLog.winner = winner;
         clearWreckFallAutoTimer();
+        GameContext.state.phase = 'game_over';
         window.dispatchEvent(new CustomEvent('EnginePhaseChanged', { detail: { phase: 'game_over', winner } }));
         return;
     }
@@ -571,5 +574,6 @@ function finishTurnSimultaneously() {
         if (humanIds.includes(GameContext.getActiveTeamId())) nextControlTeam = GameContext.getActiveTeamId();
         selectTeam(nextControlTeam);
     }
+    GameContext.state.phase = 'planning';
     window.dispatchEvent(new CustomEvent('EnginePhaseChanged', { detail: { phase: 'planning', turn: currentTurn } }));
 }

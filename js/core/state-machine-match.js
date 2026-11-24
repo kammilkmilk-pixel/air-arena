@@ -355,6 +355,7 @@ window.StateMachineMatchApi = {
         }
 
         GameContext.state.matchReady = true;
+        GameContext.state.phase = 'planning';
         if (window.AirArenaMultiView && typeof window.AirArenaMultiView.resetTo === 'function') {
             const prefer = (GameContext.getActiveTeamId && GameContext.getActiveTeamId()) || 'red';
             window.AirArenaMultiView.resetTo(prefer);

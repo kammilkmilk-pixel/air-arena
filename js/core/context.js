@@ -25,6 +25,7 @@ window.GameContext = {
         teams: null,
         activeTeamId: 'red',
         currentTurn: 1,
+        phase: 'planning',
         isAnimating: false,
         animProgress: 0,
         pastTrajectories: [],

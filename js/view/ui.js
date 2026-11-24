@@ -164,16 +164,56 @@ async function uiRunPendingAIAndMaybeResolve() {
         uiShowComputingOverlay(pendingAi.length ? 'NPC 決策中…' : '戰術結算中…');
         await uiYieldPaint();
 
-        for (let i = 0; i < pendingAi.length; i++) {
-            const id = pendingAi[i];
-            uiSetComputeSub(`NPC 決策 ${String(id).toUpperCase()} (${i + 1}/${pendingAi.length})…`);
-            const t0 = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
-            uiRunAI(id);
-            const dt = ((typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now()) - t0;
-            if (!window.AirArenaHitchLast) window.AirArenaHitchLast = {};
-            window.AirArenaHitchLast.decide = window.AirArenaHitchLast.decide || {};
-            window.AirArenaHitchLast.decide[id] = Math.round(dt);
-            await uiYieldPaint();
+        // WEGO simultaneous planning: snapshot turn-start state before any AI seat commits,
+        // and mask live queuedAction so neither modern nor baseline brains can peek at another
+        // seat's current-turn weapon/missile submission.
+        const turnStartSnapshot = (GameContext && GameContext.getSerializableBattleState)
+            ? GameContext.getSerializableBattleState()
+            : null;
+        if (turnStartSnapshot && turnStartSnapshot.teams) {
+            Object.keys(turnStartSnapshot.teams).forEach((tid) => {
+                const st = turnStartSnapshot.teams[tid];
+                if (st) st.queuedAction = 'none';
+            });
+        }
+        const stashedLiveQueued = {};
+        living.forEach((tid) => {
+            const t = teams[tid];
+            if (!t) return;
+            stashedLiveQueued[tid] = t.queuedAction;
+            t.queuedAction = 'none';
+        });
+
+        const plannedBatch = [];
+        try {
+            for (let i = 0; i < pendingAi.length; i++) {
+                const id = pendingAi[i];
+                uiSetComputeSub(`NPC 決策 ${String(id).toUpperCase()} (${i + 1}/${pendingAi.length})…`);
+                const t0 = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+                const planned = uiPlanAI(id, turnStartSnapshot);
+                if (planned && planned.deferred && planned.action) {
+                    plannedBatch.push({ id, action: planned.action });
+                } else if (teams[id]) {
+                    // Legacy baseline brain called applyPilotAction directly: stash its queuedAction
+                    // and re-mask until all pending seats finish planning.
+                    stashedLiveQueued[id] = teams[id].queuedAction;
+                    teams[id].queuedAction = 'none';
+                }
+                const dt = ((typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now()) - t0;
+                if (!window.AirArenaHitchLast) window.AirArenaHitchLast = {};
+                window.AirArenaHitchLast.decide = window.AirArenaHitchLast.decide || {};
+                window.AirArenaHitchLast.decide[id] = Math.round(dt);
+                await uiYieldPaint();
+            }
+        } finally {
+            Object.keys(stashedLiveQueued).forEach((tid) => {
+                if (teams[tid]) teams[tid].queuedAction = stashedLiveQueued[tid];
+            });
+        }
+
+        // Batch-commit all planned AI actions simultaneously after planning completes.
+        for (let i = 0; i < plannedBatch.length; i++) {
+            uiCommitAIAction(plannedBatch[i].id, plannedBatch[i].action);
         }
 
         if (GameContext.areAllLivingReady && GameContext.areAllLivingReady()) {
@@ -1797,6 +1837,39 @@ function uiToggleAI(teamId) {
         t.aiEnabled ? '#ffbb00' : '#00ff88'
     );
     if (uiAreBothTeamsAI()) uiScheduleBothAITurn();
+}
+function uiCommitAIAction(teamId, action) {
+    const t = teams[teamId];
+    if (!t || !action) return false;
+    if (GameContext && GameContext.stateMachine && typeof GameContext.stateMachine.applyPilotAction === 'function') {
+        GameContext.stateMachine.applyPilotAction(teamId, action);
+    }
+    uiAppendAIDecisionTrail(teamId, action);
+    uiAppendAIDebugTrace(teamId, action);
+    updateDashboardUI(t);
+    if (!t.ready) uiRefreshPreview(t);
+    uiRefreshAIDebugPanel();
+    return true;
+}
+function uiPlanAI(teamId, battleStateSnapshot = null) {
+    const t = teams[teamId];
+    if (!t || !t.aiEnabled || t.ready || t.isDestroyed || GameContext.isAnimating() || GameContext.isReplayMode()) return null;
+    const brain = (window.AirArenaAIRegistry && window.AirArenaAIRegistry.getPilotForTeam)
+        ? window.AirArenaAIRegistry.getPilotForTeam(teamId)
+        : window.AirArenaAI;
+    if (!brain) return null;
+    if (typeof brain.plan === 'function') {
+        const action = brain.plan(teamId, battleStateSnapshot);
+        return action ? { deferred: true, action } : null;
+    }
+    if (typeof brain.run !== 'function') return null;
+    const action = brain.run(teamId);
+    uiAppendAIDecisionTrail(teamId, action);
+    uiAppendAIDebugTrace(teamId, action);
+    updateDashboardUI(t);
+    if (!t.ready) uiRefreshPreview(t);
+    uiRefreshAIDebugPanel();
+    return action ? { deferred: false, action } : null;
 }
 function uiRunAI(teamId) {
     const t = teams[teamId];

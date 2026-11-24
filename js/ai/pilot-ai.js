@@ -55,6 +55,8 @@ window.AirArenaAI = {
     missilePrepStreakMemory: {},
     /** H7: consecutive AP-losing soft urban escapes → force energyRecover. */
     escapeBleedMemory: {},
+    /** 3-turn sliding window of coverDist per team for closing-rate abort. */
+    coverDistHistory: {},
     raycaster: new THREE.Raycaster(),
     tuningDefaults: null,
 
@@ -2788,10 +2790,25 @@ window.AirArenaAI = {
      */
     wantsTableEscapeStickOwner(coverInfo = {}, opts = {}) {
         const cover = coverInfo || {};
+        if (opts.closingRateAbort || (opts.teamId && this.isCoverClosingAbortActive(opts.teamId, opts.turnNo))) {
+            return false;
+        }
         if (opts.teamId && this.isTableStickLingerClear(cover, opts)) {
             this.clearTableStickOwnerLinger(opts.teamId);
         }
         const oh = this.classifyUrbanOverhead(cover, opts);
+        const hrVal = Number(oh.headroom != null ? oh.headroom : (opts.headroom != null ? opts.headroom : cover.headroom));
+        const trueTableChoke = oh.choke === 'tableUndercroft' || oh.choke === 'tightUndercroft';
+        const openSkyBesideTall =
+            !trueTableChoke &&
+            (oh.class === 'besideTall' || oh.class === 'facadeClose') &&
+            Number.isFinite(hrVal) &&
+            hrVal >= 20 &&
+            Number.isFinite(Number(opts.altitude)) &&
+            Number(opts.altitude) >= 28;
+        if (openSkyBesideTall) {
+            return false;
+        }
         if (oh.class === 'openBowl' || oh.class === 'clear') {
             // Linger still owns low-alt slab-edge flicker (T150 blue2 roof +1.2 @alt6 → dirt smash).
             const linger = opts.teamId && this.tableStickOwnerLinger[opts.teamId];
@@ -3329,6 +3346,13 @@ window.AirArenaAI = {
 
     applyTableEscapeStickOwner(stick, opts = {}) {
         if (!stick || stick.routeGate) return stick;
+        if (opts.closingRateAbort || (opts.teamId && this.isCoverClosingAbortActive(opts.teamId, opts.turnNo))) {
+            if (opts.teamId) {
+                this.clearTableStickOwnerLinger(opts.teamId);
+                this.clearGlueEscapeLock(opts.teamId);
+            }
+            return stick;
+        }
         const cover = opts.coverInfo || {
             roofClearance: opts.roofClearance,
             distance: opts.coverDistance,
@@ -6235,8 +6259,15 @@ window.AirArenaAI = {
         // T150 undercroft: lateral skim — never climb into slab; bank harder than open facade.
         // Soft rebalance: dirt-pull joyY only when overhead is actually clear — tableUndercroft /
         // true negative roof often reports huge headroom above the slab while airframe is trapped.
+        const hrVal = Number(opts.headroom != null ? opts.headroom : coverInfo.headroom);
+        const openSkyBesideTall =
+            !tableChoke &&
+            !trueUnder &&
+            Number.isFinite(hrVal) &&
+            hrVal >= 20;
         const undercroftSkim =
             !bowlExit &&
+            !openSkyBesideTall &&
             (
                 tableChoke ||
                 trueUnder ||
@@ -6435,8 +6466,10 @@ window.AirArenaAI = {
                     mode: 'scoreClimb',
                     branch: 'climb',
                     joyX: this.clamp(side * climbAuth, -0.48, 0.48),
-                    joyY: Math.max(climbFloor, alt < 36 ? 0.52 : 0.4),
-                    reason: 'Scored escape: climb-biased exit'
+                    joyY: Math.max(climbFloor, openSkyBesideTall ? 0.58 : (alt < 36 ? 0.52 : 0.4)),
+                    reason: openSkyBesideTall
+                        ? 'Scored escape: open-sky climb-over tall facade'
+                        : 'Scored escape: climb-biased exit'
                 },
                 {
                     mode: 'scoreLevel',
@@ -6446,8 +6479,22 @@ window.AirArenaAI = {
                     reason: 'Scored escape: level-hold exit'
                 }
             );
+            const curAp = Number.isFinite(Number(opts.ap))
+                ? Number(opts.ap)
+                : (team && Number.isFinite(Number(team.ap)) ? Number(team.ap) : 120);
+            if (curAp > 160 && Number.isFinite(dist) && dist < 18) {
+                prototypes.push({
+                    mode: 'scoreDecelTurn',
+                    branch: 'side',
+                    throttle: 2,
+                    joyX: this.clamp(side * 0.84, -0.88, 0.88),
+                    joyY: Math.max(climbFloor, openSkyBesideTall ? 0.36 : 0.24),
+                    reason: 'Scored escape: high-AP decel tight turn'
+                });
+            }
         } else {
-            // Soft level skim only — still lateral-heavy under slab.
+            // Soft level skim under slab — but when upward raycast proves open sky (>=20m) or high AP close to wall,
+            // still let evaluateActionSafety test climb-over and decel-turn with real 3D raycasts.
             prototypes.push({
                 mode: 'scoreLevel',
                 branch: 'level',
@@ -6455,6 +6502,28 @@ window.AirArenaAI = {
                 joyY: skimY,
                 reason: 'Scored escape: undercroft level skim'
             });
+            if (Number.isFinite(hrVal) && hrVal >= 20) {
+                prototypes.push({
+                    mode: 'scoreClimb',
+                    branch: 'climb',
+                    joyX: this.clamp(side * 0.36, -0.48, 0.48),
+                    joyY: Math.max(climbFloor, 0.58),
+                    reason: 'Scored escape: open-sky climb-over (headroom clear)'
+                });
+            }
+            const curApSlab = Number.isFinite(Number(opts.ap))
+                ? Number(opts.ap)
+                : (team && Number.isFinite(Number(team.ap)) ? Number(team.ap) : 120);
+            if (curApSlab > 160 && Number.isFinite(dist) && dist < 18) {
+                prototypes.push({
+                    mode: 'scoreDecelTurn',
+                    branch: 'side',
+                    throttle: 2,
+                    joyX: this.clamp(side * 0.84, -0.88, 0.88),
+                    joyY: Number.isFinite(hrVal) && hrVal >= 20 ? Math.max(climbFloor, 0.32) : skimY,
+                    reason: 'Scored escape: high-AP decel tight turn'
+                });
+            }
         }
         if (bowlExit) {
             // Soft bank + climb: exit the ring without thrashing into a wall.
@@ -6530,7 +6599,7 @@ window.AirArenaAI = {
             const proto = prototypes[i];
             const candidate = {
                 ...base,
-                throttle: thr,
+                throttle: proto.throttle != null ? proto.throttle : thr,
                 joyX: proto.joyX,
                 joyY: proto.joyY,
                 roll: this.clamp(proto.joyX * Math.PI / 10, -Math.PI / 10, Math.PI / 10),
@@ -7689,8 +7758,21 @@ window.AirArenaAI = {
         if (!action || typeof action !== 'object') return action;
         if (this.isHardEnergyExemptState(action.state)) return action;
 
-        const softEscape = this.isSoftObstacleEscapeState(action.state);
         const ap = Number(ctx.ap);
+        const activeStallNow = !!ctx.stalled || (Number.isFinite(ap) && ap < 45);
+        if (
+            activeStallNow &&
+            (
+                action.state === 'energyRecover' ||
+                action.state === 'stallBreakout' ||
+                action.state === 'stallRecoverNoRoll'
+            )
+        ) {
+            action.throttle = 5;
+            return action;
+        }
+
+        const softEscape = this.isSoftObstacleEscapeState(action.state);
         const critFloor = Number(ctx.energyCriticalAp);
         const lowApFloor = Number(ctx.lowAp || 65);
         const energyBad = !!ctx.energyCritical
@@ -8268,14 +8350,19 @@ window.AirArenaAI = {
         return this.isFacadeClosingScore(coverInfo) && forwardY < -0.48;
     },
 
-    /** Diverge side for merge break: relative lateral first, else faction so AI vs AI don't share one bank. */
+    /**
+     * Diverge side for merge break: FAR 91.113(e) right-turn rule (+1 body frame) for head-on
+     * encounters so both opposing jets break away in world space instead of steering into each other.
+     */
     getMidairDivergeSide(ctx = {}) {
         const localX = ctx.localToEnemy ? Number(ctx.localToEnemy.x) : 0;
+        const headOn = Number(ctx.headOnFactor);
+        if (Number.isFinite(headOn) && headOn > 0.35) {
+            if (Number.isFinite(localX) && Math.abs(localX) > 0.28) return Math.sign(localX);
+            return 1;
+        }
         if (Number.isFinite(localX) && Math.abs(localX) > 0.1) return Math.sign(localX);
-        const faction = ctx.faction || (ctx.teamId && GameContext.getFaction && GameContext.getFaction(ctx.teamId));
-        if (faction === 'blue') return -1;
-        if (faction === 'red') return 1;
-        return Math.sign(ctx.breakSide || 1) || 1;
+        return 1;
     },
 
     /**
@@ -8385,6 +8472,22 @@ window.AirArenaAI = {
         reasonExtra += ` | divergeHold=${diverge.held} until=${diverge.untilTurn} des=${diverge.desired}`;
         let joyX = this.clamp(side * auth, -1, 1);
         let joyYOut = joyY;
+        const headOnMerge = Number.isFinite(Number(ctx.headOnFactor)) && Number(ctx.headOnFactor) > 0.35;
+        if (headOnMerge && !divePullPriority && !intoBldg) {
+            const faction = ctx.faction
+                || (ctx.teamId && typeof GameContext !== 'undefined' && GameContext.getFaction && GameContext.getFaction(ctx.teamId))
+                || (String(ctx.teamId || '').startsWith('blue') ? 'blue' : 'red');
+            const blueSafeDescend =
+                altitude >= 25 &&
+                !(Number.isFinite(roof) && roof < 8) &&
+                !(Number.isFinite(cov) && cov < 16);
+            if (faction === 'blue') {
+                joyYOut = blueSafeDescend ? -0.18 : Math.max(joyY, 0.16);
+            } else {
+                joyYOut = Math.max(joyY, blueSafeDescend ? 0.26 : 0.36);
+            }
+            reasonExtra += ` | vSplit=${faction === 'blue' ? (blueSafeDescend ? 'down' : 'upLow') : 'up'}`;
+        }
         const thr = this.pickThrottleForTurn(heat > 76 ? 3 : 4, joyX, {
             heat,
             ap: ctx.ap,
@@ -9458,8 +9561,15 @@ window.AirArenaAI = {
             !!coverInfo.corridorClear;
         const divingIntoDirt = altitude < 22 && selfPitch != null && selfPitch < -0.08;
         const noseHigh = selfPitch != null && selfPitch > 0.2;
+        const activeStallBand = Number.isFinite(Number(selfAp)) && Number(selfAp) < 45;
         if (energyRecoverStates.has(action.state) || energyBad) {
-            if (divingIntoDirt) {
+            if (activeStallBand && energyRecoverStates.has(action.state)) {
+                action.throttle = 5;
+                if (divingIntoDirt && action.joyY < 0.32) action.joyY = 0.32;
+                else if (noseHigh && coverInfo.collisionRisk !== 'high' && !this.isHardBuildingContact(coverInfo) && action.joyY > 0.08) {
+                    action.joyY = 0.08;
+                }
+            } else if (divingIntoDirt) {
                 if (action.joyY < 0.32) action.joyY = 0.32;
                 if (
                     typeof action.throttle === 'number' &&
@@ -9723,6 +9833,63 @@ window.AirArenaAI = {
 
     clearGlueEscapeLock(teamId) {
         if (this.glueEscapeMemory[teamId]) delete this.glueEscapeMemory[teamId];
+    },
+
+    /**
+     * 3-turn sliding window tracking coverDist per team for closing-rate abort.
+     * Fires when coverDist drops > 3m/turn for 2 consecutive turns and current coverDist < 16m.
+     */
+    noteCoverDistHistory(teamId, coverDist, turnNo = 1) {
+        if (!teamId) return { closingAbort: false, curDist: null, drops: 0 };
+        if (!this.coverDistHistory) this.coverDistHistory = {};
+        const t = Math.max(1, Number(turnNo) || 1);
+        const d = Number(coverDist);
+        if (!Number.isFinite(d)) return { closingAbort: false, curDist: null, drops: 0 };
+        let hist = this.coverDistHistory[teamId];
+        if (!Array.isArray(hist)) hist = [];
+        if (hist.length && t < hist[hist.length - 1].turn) {
+            hist = [];
+        }
+        if (hist.length && hist[hist.length - 1].turn === t) {
+            hist[hist.length - 1].dist = d;
+        } else {
+            hist.push({ turn: t, dist: d });
+            if (hist.length > 3) hist = hist.slice(-3);
+        }
+        this.coverDistHistory[teamId] = hist;
+        let closingAbort = false;
+        let drops = 0;
+        if (hist.length >= 3) {
+            const [a, b, c] = hist;
+            const consecutive = (b.turn - a.turn) <= 2 && (c.turn - b.turn) <= 2;
+            const d1 = a.dist - b.dist;
+            const d2 = b.dist - c.dist;
+            if (consecutive && d1 > 3 && d2 > 3) drops = 2;
+            else if (consecutive && d2 > 3) drops = 1;
+            if (drops >= 2 && c.dist < 16) closingAbort = true;
+        }
+        if (closingAbort) {
+            this.clearGlueEscapeLock(teamId);
+            this.clearTableStickOwnerLinger(teamId);
+        }
+        return { closingAbort, curDist: d, drops };
+    },
+
+    isCoverClosingAbortActive(teamId, turnNo = 1) {
+        if (!teamId || !this.coverDistHistory) return false;
+        const hist = this.coverDistHistory[teamId];
+        if (!Array.isArray(hist) || hist.length < 3) return false;
+        const t = Math.max(1, Number(turnNo) || 1);
+        const [a, b, c] = hist;
+        if (Math.abs(t - c.turn) > 1) return false;
+        const consecutive = (b.turn - a.turn) <= 2 && (c.turn - b.turn) <= 2;
+        return consecutive && (a.dist - b.dist) > 3 && (b.dist - c.dist) > 3 && c.dist < 16;
+    },
+
+    clearCoverDistHistory(teamId) {
+        if (this.coverDistHistory && this.coverDistHistory[teamId]) {
+            delete this.coverDistHistory[teamId];
+        }
     },
 
     /**
@@ -10994,13 +11161,57 @@ window.AirArenaAI = {
             const slabSilhouette = oh.slabBlocked;
             const trueTableClose = oh.class === 'tableClose';
             const deepSlab = oh.class === 'tableWide' || oh.class === 'tableClose';
-            const yieldTable = this.shouldYieldClimbOutToTableEscape(cover, coverOpts);
+            const headroomNow = Number.isFinite(Number(cover.headroom))
+                ? Number(cover.headroom)
+                : Number(oh.headroom);
+            const trueUndercroft =
+                cover.hardChokeKind === 'tableUndercroft' ||
+                cover.hardChokeKind === 'tightUndercroft' ||
+                (Number.isFinite(headroomNow) && headroomNow < 14);
+            const openSkyOverhead =
+                !trueUndercroft &&
+                Number.isFinite(headroomNow) &&
+                headroomNow >= 20;
+            const closingAbort = !!(teamId && this.isCoverClosingAbortActive(teamId, turnNo));
+            const liveTeamClimb = (teamId && typeof GameContext !== 'undefined' && GameContext.getTeam)
+                ? GameContext.getTeam(teamId)
+                : null;
+            const apClimb = liveTeamClimb && Number.isFinite(Number(liveTeamClimb.ap))
+                ? Number(liveTeamClimb.ap)
+                : NaN;
+            if (closingAbort) {
+                this.clearGlueEscapeLock(teamId);
+                this.clearTableStickOwnerLinger(teamId);
+                const awayX = this.getAwayFromMeshSide(cover, null) || sideSign || 1;
+                const abortJoyX = this.clamp(awayX * 0.85, -0.92, 0.92);
+                const abortJoyY = openSkyOverhead ? 0.56 : (steepDive ? 0.42 : 0.24);
+                return {
+                    state: 'postGroundClimbOut',
+                    statusText: `NPC: 逼近熔斷脫離 ${altitude.toFixed(1)}m`,
+                    throttle: Number.isFinite(apClimb) && apClimb < 65 ? 4 : 2,
+                    joyX: abortJoyX,
+                    joyY: abortJoyY,
+                    pitchCmd: -maxPitchCmd * (openSkyOverhead ? 0.56 : 0.28),
+                    roll: this.clamp(abortJoyX * Math.PI / 6, -Math.PI / 6, Math.PI / 6),
+                    weapon: 'gun',
+                    queueAction: 'none',
+                    ready: true,
+                    closingRateAbort: true,
+                    navMode: 'closingRateAbort',
+                    dirtPullFloor: true,
+                    diveLevelPull: true,
+                    reason: `Nav climb-out closing-rate abort (${source}): release tableOwner + hard turn away (hr=${Number.isFinite(headroomNow) ? headroomNow.toFixed(0) : 'n/a'})`
+                };
+            }
+            const yieldTable = !openSkyOverhead && this.shouldYieldClimbOutToTableEscape(cover, coverOpts);
             const highEscape = !yieldTable && this.wantsHighFacadeEscape(altitude, cover, coverOpts);
-            // Priority 3: high silhouette may soft-climb; priority 2 close table never openSky.
+            // Priority 3: high silhouette / open-sky besideTall (headroom >= 20m) may climb-over;
+            // only true undercroft (headroom < 14m or tableUndercroft) forces skim.
             const openSky =
                 !trueTableClose &&
                 !yieldTable &&
                 (
+                    openSkyOverhead ||
                     (bowlOpen && !slabSilhouette && !(deepSlab && altitude < 48)) ||
                     (highEscape && !steepDive) ||
                     (oh.class === 'openBowl' && !deepSlab)
@@ -11009,8 +11220,10 @@ window.AirArenaAI = {
                 steepDive &&
                 Number.isFinite(covNow) &&
                 covNow < 18;
-            // C: neg roof / fwd collapse / mid-recover cov — never openSky climb into nest (postGroundClimbOut).
+            // C: neg roof / fwd collapse / mid-recover cov — only veto openSky climb when truly undercroft
+            // (never misclassify open-sky besideTall with headroom >= 20m as an undercroft ceiling).
             const nestTightClimb =
+                !openSkyOverhead &&
                 Number.isFinite(covNow) &&
                 covNow < 20 &&
                 (
@@ -11025,30 +11238,49 @@ window.AirArenaAI = {
                         Number(cover.forwardDistance) < 10)
                 );
             if (openSky && !diveIntoFace && !nestTightClimb) {
-                const sideX = sideSign || 1;
-                return {
-                    state: 'postGroundClimbOut',
-                    statusText: highEscape
-                        ? `NPC: 高空立面脫出 ${altitude.toFixed(1)}m`
-                        : `NPC: 開空立面軟爬 ${altitude.toFixed(1)}m`,
-                    throttle: heat > 82 ? 3 : 4,
-                    joyX: this.clamp(sideX * (highEscape ? 0.55 : 0.42), -0.62, 0.62),
-                    joyY: Math.max(
+                const awayX = this.getAwayFromMeshSide(cover, null) || sideSign || 1;
+                const fastCloseFacade =
+                    openSkyOverhead &&
+                    Number.isFinite(covNow) &&
+                    covNow < 18 &&
+                    Number.isFinite(apClimb) &&
+                    apClimb > 160;
+                const sideX = fastCloseFacade ? awayX : (sideSign || awayX || 1);
+                const climbJoyX = fastCloseFacade
+                    ? this.clamp(sideX * 0.84, -0.92, 0.92)
+                    : this.clamp(sideX * (highEscape ? 0.55 : 0.42), -0.62, 0.62);
+                const climbJoyY = openSkyOverhead
+                    ? (fastCloseFacade ? 0.56 : Math.max(0.56, altitude < 45 ? 0.64 : 0.54))
+                    : Math.max(
                         steepDive ? 0.48 : (highEscape ? 0.32 : 0.48),
                         altitude < 40 ? 0.52 : (highEscape ? 0.28 : 0.42)
-                    ),
-                    pitchCmd: -maxPitchCmd * (highEscape ? 0.32 : 0.42),
-                    roll: this.clamp(sideX * 0.42 * Math.PI / 12, -Math.PI / 12, Math.PI / 12),
+                    );
+                return {
+                    state: 'postGroundClimbOut',
+                    statusText: fastCloseFacade
+                        ? `NPC: 減速急轉越頂 ${altitude.toFixed(1)}m`
+                        : (highEscape
+                            ? `NPC: 高空立面脫出 ${altitude.toFixed(1)}m`
+                            : `NPC: 開空立面越頂 ${altitude.toFixed(1)}m`),
+                    throttle: fastCloseFacade ? 2 : (heat > 82 ? 3 : 4),
+                    joyX: climbJoyX,
+                    joyY: climbJoyY,
+                    pitchCmd: -maxPitchCmd * (openSkyOverhead ? 0.56 : (highEscape ? 0.32 : 0.42)),
+                    roll: this.clamp(climbJoyX * (fastCloseFacade ? Math.PI / 6 : Math.PI / 12), -Math.PI / 6, Math.PI / 6),
                     weapon: 'gun',
                     queueAction: 'none',
                     ready: true,
-                    navMode: highEscape ? 'highFacadeEscape' : 'openSkyFacadeExit',
+                    navMode: fastCloseFacade
+                        ? 'openSkyDecelTurnOver'
+                        : (highEscape ? 'highFacadeEscape' : 'openSkyFacadeExit'),
                     dirtPullFloor: true,
                     diveLevelPull: true,
-                    pitchScale: highEscape ? 0.42 : 0.5,
-                    reason: highEscape
-                        ? `Nav climb-out high escape (${source}): thr4 bank + soft climb (ban weak skim)`
-                        : `Nav climb-out open-sky facade (${source}): soft bank + climb (ban nest unload)`
+                    pitchScale: openSkyOverhead ? 0.56 : (highEscape ? 0.42 : 0.5),
+                    reason: fastCloseFacade
+                        ? `Nav climb-out open-sky high-AP decel turn (${source}): thr2 away-bank + climb-over (hr=${headroomNow.toFixed(0)})`
+                        : (highEscape
+                            ? `Nav climb-out high escape (${source}): thr4 bank + climb (ban weak skim)`
+                            : `Nav climb-out open-sky facade (${source}): bank + climb-over (hr=${Number.isFinite(headroomNow) ? headroomNow.toFixed(0) : 'open'})`)
                 };
             }
             // Priority 1 on skim path: steep dive gets real level, not joyY=0.16 (T120).
@@ -13161,45 +13393,301 @@ window.AirArenaAI = {
         };
     },
 
-    evaluateActionSafety(teamId, action, continuationActions = []) {
+    /**
+     * Inertial 1-turn travel distance estimate for another aircraft (WEGO-fair: no enemy path peeking).
+     */
+    estimateOtherAircraftTurnDist(other) {
+        if (!other) return 5.5;
+        const ap = Number.isFinite(Number(other.ap)) ? Number(other.ap) : (Number(other.speed) || 120);
+        const thr = Math.max(1, Math.min(5, Number(other.throttle) || 4));
+        const baseThrust = thr >= 4.5 ? 180 : (thr >= 3.5 ? 65 : (thr >= 2.5 ? 30 : 5));
+        const speedMult = thr >= 4.5 ? 2.5 : (thr >= 3.5 ? 1.5 : (thr >= 2.5 ? 1.1 : 0.8));
+        return Math.max(0.6, Math.max(5, ap + baseThrust) * 0.015 * speedMult);
+    },
+
+    /**
+     * 2-Turn Point-of-No-Return check: starting from end of Turn 1, test up to 3 conservative
+     * escape continuations (awayLeft, awayRight, climbOver). Short-circuits as soon as ANY one
+     * clears buildings and ground (minAlt >= 3). Returns true if ALL 3 hit buildings or dirt.
+     */
+    isTwoTurnBuildingTrap(team, finalPos, finalQuat, finalAP, obstacles, defaultSide = 1) {
+        if (!team || !finalPos || !finalQuat || !Array.isArray(obstacles) || !obstacles.length) return false;
+        if (typeof simulateFlight !== 'function') return false;
+
+        // Spatial broadphase: only consider buildings within 55m of Turn-1 end position.
+        const nearEntries = [];
+        const sMinX = finalPos.x - 55, sMaxX = finalPos.x + 55;
+        const sMinY = finalPos.y - 45, sMaxY = finalPos.y + 45;
+        const sMinZ = finalPos.z - 55, sMaxZ = finalPos.z + 55;
+        for (let j = 0; j < obstacles.length; j++) {
+            const b = new THREE.Box3();
+            this.fillObstacleWorldBox(obstacles[j], b);
+            if (b.max.x >= sMinX && b.min.x <= sMaxX && b.max.y >= sMinY && b.min.y <= sMaxY && b.max.z >= sMinZ && b.min.z <= sMaxZ) {
+                nearEntries.push({ obj: obstacles[j], box: b });
+            }
+        }
+        if (!nearEntries.length) return false;
+
+        const virtualTeam = {
+            ...team,
+            ap: Number.isFinite(Number(finalAP)) ? Number(finalAP) : team.ap,
+            wrapper: {
+                position: finalPos.clone(),
+                quaternion: finalQuat.clone(),
+                userData: { logicalQuat: finalQuat.clone() }
+            }
+        };
+        const side = Math.sign(Number(defaultSide) || 1) || 1;
+        const escapeContinuations = [
+            { throttle: 2, joyX: side * 0.78, joyY: 0.14, roll: side * Math.PI / 6, queueAction: 'none' },
+            { throttle: 2, joyX: -side * 0.78, joyY: 0.14, roll: -side * Math.PI / 6, queueAction: 'none' },
+            { throttle: 4, joyX: side * 0.32, joyY: 0.62, roll: side * Math.PI / 10, queueAction: 'none' }
+        ];
+        const move = new THREE.Vector3();
+        const segOverlaps = (pA, pB, pad) => {
+            const aMinX = Math.min(pA.x, pB.x) - pad, aMaxX = Math.max(pA.x, pB.x) + pad;
+            const aMinY = Math.min(pA.y, pB.y) - pad, aMaxY = Math.max(pA.y, pB.y) + pad;
+            const aMinZ = Math.min(pA.z, pB.z) - pad, aMaxZ = Math.max(pA.z, pB.z) + pad;
+            let segHits = null;
+            for (let j = 0; j < nearEntries.length; j++) {
+                const bx = nearEntries[j].box;
+                if (bx.max.x >= aMinX && bx.min.x <= aMaxX && bx.max.y >= aMinY && bx.min.y <= aMaxY && bx.max.z >= aMinZ && bx.min.z <= aMaxZ) {
+                    if (!segHits) segHits = [];
+                    segHits.push(nearEntries[j].obj);
+                }
+            }
+            return segHits;
+        };
+        for (let c = 0; c < escapeContinuations.length; c++) {
+            const cont = escapeContinuations[c];
+            const sim2 = this.simulateBanked(virtualTeam, [cont], false);
+            const pts2 = (sim2 && sim2.points) ? sim2.points : [];
+            let hit2 = false;
+            let minAlt2 = Infinity;
+            let prevPt = pts2.length ? pts2[0] : null;
+            if (prevPt && prevPt.y < minAlt2) minAlt2 = prevPt.y;
+            for (let i = 2; i < pts2.length; i += 2) {
+                const idx = Math.min(i, pts2.length - 1);
+                const curPt = pts2[idx];
+                if (curPt.y < minAlt2) minAlt2 = curPt.y;
+                const segHits = segOverlaps(prevPt, curPt, 0.1);
+                if (segHits) {
+                    move.subVectors(curPt, prevPt);
+                    const d = move.length();
+                    if (d > 0.0001) {
+                        this.raycaster.set(prevPt, move.divideScalar(d));
+                        this.raycaster.near = 0;
+                        this.raycaster.far = d;
+                        if (this.raycaster.intersectObjects(segHits, true).length > 0) {
+                            hit2 = true;
+                            break;
+                        }
+                    }
+                }
+                prevPt = curPt;
+            }
+            if (!hit2 && pts2.length >= 2 && prevPt !== pts2[pts2.length - 1]) {
+                const lastPt = pts2[pts2.length - 1];
+                if (lastPt.y < minAlt2) minAlt2 = lastPt.y;
+                const segHits = segOverlaps(prevPt, lastPt, 0.1);
+                if (segHits) {
+                    move.subVectors(lastPt, prevPt);
+                    const d = move.length();
+                    if (d > 0.0001) {
+                        this.raycaster.set(prevPt, move.divideScalar(d));
+                        this.raycaster.near = 0;
+                        this.raycaster.far = d;
+                        if (this.raycaster.intersectObjects(segHits, true).length > 0) hit2 = true;
+                    }
+                }
+            }
+            if (!hit2 && minAlt2 >= 3) {
+                return false;
+            }
+        }
+        return true;
+    },
+
+    evaluateActionSafety(teamId, action, continuationActions = [], opts = {}) {
         const team = (typeof GameContext !== 'undefined' && GameContext.getTeam) ? GameContext.getTeam(teamId) : null;
         const enemy = (typeof GameContext !== 'undefined' && GameContext.getTeam) ? GameContext.getTeam(this.getEnemyId(teamId)) : null;
         if (!team || !team.wrapper || typeof simulateFlight !== 'function') {
-            return { score: 0, safe: true, minAltitude: null, buildingHit: false, finalAP: null };
+            return {
+                score: 0, safe: true, minAltitude: null, buildingHit: false,
+                twoTurnBuildingHit: false, twoTurnTrap: false,
+                nearMissHard: false, midairHit: false,
+                minEnemySep: Infinity, minAllySep: Infinity, finalAP: null
+            };
         }
 
         const sim = this.simulateBanked(team, [action, ...continuationActions], this.bankTargetAction(action));
         const points = sim.points || [];
+        const quats = sim.quats || [];
         const obstacles = this.getObstacles();
         let minAltitude = Infinity;
         let buildingHit = false;
         let nearestBuilding = Infinity;
-        const box = new THREE.Box3();
+        let wingMarginHit = false;
         const clamped = new THREE.Vector3();
+        const wingProbe = new THREE.Vector3();
+        const rightVec = new THREE.Vector3();
+        const upVec = new THREE.Vector3();
+        const moveVec = new THREE.Vector3();
 
-        for (let i = 0; i < points.length; i++) {
-            minAltitude = Math.min(minAltitude, points[i].y);
-            for (let j = 0; j < obstacles.length; j++) {
-                this.fillObstacleWorldBox(obstacles[j], box);
-                box.clampPoint(points[i], clamped);
-                nearestBuilding = Math.min(nearestBuilding, clamped.distanceTo(points[i]));
-                // AABB contain is soft proximity only — fat boxes false-positive in gaps.
-                // Hard buildingHit comes from segment raycast against real meshes below.
+        // Spatial broadphase over cached obstacle world AABBs: eliminates full-city raycasts.
+        const broadEntries = [];
+        const rayEntries = [];
+        if (obstacles.length > 0 && points.length > 0) {
+            let tMinX = Infinity, tMinY = Infinity, tMinZ = Infinity;
+            let tMaxX = -Infinity, tMaxY = -Infinity, tMaxZ = -Infinity;
+            for (let i = 0; i < points.length; i++) {
+                const p = points[i];
+                if (p.x < tMinX) tMinX = p.x;
+                if (p.x > tMaxX) tMaxX = p.x;
+                if (p.y < tMinY) tMinY = p.y;
+                if (p.y > tMaxY) tMaxY = p.y;
+                if (p.z < tMinZ) tMinZ = p.z;
+                if (p.z > tMaxZ) tMaxZ = p.z;
             }
-            if (i > 0 && obstacles.length > 0) {
-                const move = points[i].clone().sub(points[i - 1]);
-                const dist = move.length();
-                if (dist > 0.0001) {
-                    this.raycaster.set(points[i - 1], move.normalize());
-                    this.raycaster.near = 0;
-                    this.raycaster.far = dist;
-                    if (this.raycaster.intersectObjects(obstacles, true).length > 0) buildingHit = true;
+            const bMinX = tMinX - 28, bMaxX = tMaxX + 28;
+            const bMinY = tMinY - 28, bMaxY = tMaxY + 28;
+            const bMinZ = tMinZ - 28, bMaxZ = tMaxZ + 28;
+            const cMinX = tMinX - 5.5, cMaxX = tMaxX + 5.5;
+            const cMinY = tMinY - 5.5, cMaxY = tMaxY + 5.5;
+            const cMinZ = tMinZ - 5.5, cMaxZ = tMaxZ + 5.5;
+            for (let j = 0; j < obstacles.length; j++) {
+                const b = new THREE.Box3();
+                this.fillObstacleWorldBox(obstacles[j], b);
+                if (b.max.x >= bMinX && b.min.x <= bMaxX && b.max.y >= bMinY && b.min.y <= bMaxY && b.max.z >= bMinZ && b.min.z <= bMaxZ) {
+                    const entry = { obj: obstacles[j], box: b };
+                    broadEntries.push(entry);
+                    if (b.max.x >= cMinX && b.min.x <= cMaxX && b.max.y >= cMinY && b.min.y <= cMaxY && b.max.z >= cMinZ && b.min.z <= cMaxZ) {
+                        rayEntries.push(entry);
+                    }
                 }
             }
         }
 
+        for (let i = 0; i < points.length; i++) {
+            const pt = points[i];
+            if (pt.y < minAltitude) minAltitude = pt.y;
+            let stepNearest = Infinity;
+            for (let j = 0; j < broadEntries.length; j++) {
+                broadEntries[j].box.clampPoint(pt, clamped);
+                const dObs = clamped.distanceTo(pt);
+                if (dObs < stepNearest) stepNearest = dObs;
+                if (dObs < nearestBuilding) nearestBuilding = dObs;
+            }
+            // Wingspan / fuselage margin check (±1.6m lateral, ±0.8m vertical) only when close to a facade.
+            if (!wingMarginHit && stepNearest < 4.5 && rayEntries.length > 0) {
+                const q = quats[i] || team.wrapper.quaternion;
+                rightVec.set(1, 0, 0).applyQuaternion(q).normalize();
+                upVec.set(0, 1, 0).applyQuaternion(q).normalize();
+                const offsets = [
+                    [rightVec, 1.6],
+                    [rightVec, -1.6],
+                    [upVec, 0.8],
+                    [upVec, -0.8]
+                ];
+                for (let o = 0; o < offsets.length && !wingMarginHit; o++) {
+                    wingProbe.copy(pt).addScaledVector(offsets[o][0], offsets[o][1]);
+                    for (let j = 0; j < rayEntries.length; j++) {
+                        rayEntries[j].box.clampPoint(wingProbe, clamped);
+                        if (clamped.distanceTo(wingProbe) < 0.35) {
+                            wingMarginHit = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            if (!buildingHit && i > 0 && rayEntries.length > 0) {
+                const prev = points[i - 1];
+                const aMinX = Math.min(prev.x, pt.x) - 0.05, aMaxX = Math.max(prev.x, pt.x) + 0.05;
+                const aMinY = Math.min(prev.y, pt.y) - 0.05, aMaxY = Math.max(prev.y, pt.y) + 0.05;
+                const aMinZ = Math.min(prev.z, pt.z) - 0.05, aMaxZ = Math.max(prev.z, pt.z) + 0.05;
+                let segObs = null;
+                for (let j = 0; j < rayEntries.length; j++) {
+                    const bx = rayEntries[j].box;
+                    if (bx.max.x >= aMinX && bx.min.x <= aMaxX && bx.max.y >= aMinY && bx.min.y <= aMaxY && bx.max.z >= aMinZ && bx.min.z <= aMaxZ) {
+                        if (!segObs) segObs = [];
+                        segObs.push(rayEntries[j].obj);
+                    }
+                }
+                if (segObs) {
+                    moveVec.subVectors(pt, prev);
+                    const dist = moveVec.length();
+                    if (dist > 0.0001) {
+                        this.raycaster.set(prev, moveVec.divideScalar(dist));
+                        this.raycaster.near = 0;
+                        this.raycaster.far = dist;
+                        if (this.raycaster.intersectObjects(segObs, true).length > 0) buildingHit = true;
+                    }
+                }
+            }
+        }
+
+        // Trajectory separation vs all living enemies (inertial extrapolation — WEGO fair)
+        // and same-faction allies (radio-shared planned path when available, else inertial).
+        let minEnemySep = Infinity;
+        let minAllySep = Infinity;
+        const turn1Count = Math.min(points.length, 31);
+        if (turn1Count >= 2 && typeof GameContext !== 'undefined' && GameContext.getTeam) {
+            const myFaction = (GameContext.getFaction && GameContext.getFaction(teamId))
+                || (String(teamId).startsWith('blue') ? 'blue' : 'red');
+            const livingIds = (GameContext.getLivingTeamIds && GameContext.getLivingTeamIds())
+                || (GameContext.getRosterIds && GameContext.getRosterIds())
+                || ['red', 'red2', 'blue', 'blue2'];
+            const otherTrajs = [];
+            for (let k = 0; k < livingIds.length; k++) {
+                const oid = livingIds[k];
+                if (!oid || oid === teamId) continue;
+                const other = GameContext.getTeam(oid);
+                if (!other || other.isDestroyed || other.matchActive === false || !other.wrapper || !other.wrapper.position) continue;
+                const oFaction = (GameContext.getFaction && GameContext.getFaction(oid))
+                    || (String(oid).startsWith('blue') ? 'blue' : 'red');
+                const isAlly = oFaction === myFaction;
+                const oQ = (other.wrapper.userData && other.wrapper.userData.logicalQuat) || other.wrapper.quaternion;
+                const oFwd = new THREE.Vector3(0, 0, 1).applyQuaternion(oQ).normalize();
+                const oTurnDist = this.estimateOtherAircraftTurnDist(other);
+                const useAllyPath = isAlly && other.ready && Array.isArray(other.pathPoints) && other.pathPoints.length >= 2 && typeof getPosAt === 'function';
+                otherTrajs.push({
+                    isAlly,
+                    startPos: other.wrapper.position,
+                    fwd: oFwd,
+                    turnDist: oTurnDist,
+                    pathPoints: useAllyPath ? other.pathPoints : null
+                });
+            }
+            if (otherTrajs.length > 0) {
+                const sepSamples = 20;
+                const oPos = new THREE.Vector3();
+                for (let s = 0; s <= sepSamples; s++) {
+                    const frac = s / sepSamples;
+                    const idx = Math.min(turn1Count - 1, Math.round(frac * (turn1Count - 1)));
+                    const myPt = points[idx];
+                    for (let k = 0; k < otherTrajs.length; k++) {
+                        const ot = otherTrajs[k];
+                        if (ot.pathPoints) {
+                            const gp = getPosAt(frac, ot.pathPoints);
+                            oPos.copy(gp);
+                        } else {
+                            oPos.copy(ot.startPos).addScaledVector(ot.fwd, ot.turnDist * frac);
+                        }
+                        const sep = myPt.distanceTo(oPos);
+                        if (ot.isAlly) {
+                            if (sep < minAllySep) minAllySep = sep;
+                        } else if (sep < minEnemySep) {
+                            minEnemySep = sep;
+                        }
+                    }
+                }
+            }
+        }
+        const midairHit = minEnemySep < 3.0;
+        const nearMissHard = nearestBuilding < 2.2 || wingMarginHit;
+
         const finalPos = points.length ? points[points.length - 1] : team.wrapper.position;
-        const finalQuat = sim.quats && sim.quats.length ? sim.quats[sim.quats.length - 1] : team.wrapper.quaternion;
+        const finalQuat = quats.length ? quats[quats.length - 1] : team.wrapper.quaternion;
         const finalForward = new THREE.Vector3(0, 0, 1).applyQuaternion(finalQuat).normalize();
         const startForward = new THREE.Vector3(0, 0, 1).applyQuaternion(team.wrapper.quaternion).normalize();
         const finalForwardY = finalForward.y;
@@ -13218,13 +13706,41 @@ window.AirArenaAI = {
         const sink = (Number.isFinite(minAltitude) && Number.isFinite(startAlt))
             ? Math.max(0, startAlt - minAltitude)
             : 0;
+
+        // 2-Turn lookahead for point-of-no-return building traps in urban envelope.
+        let twoTurnBuildingHit = false;
+        if (
+            continuationActions.length === 0 &&
+            !opts.skipTwoTurn &&
+            !buildingHit &&
+            broadEntries.length > 0 &&
+            (nearestBuilding < 22 || (nearestBuilding < 28 && Number.isFinite(startAlt) && startAlt < 65))
+        ) {
+            const turn1Pos = points[Math.max(0, turn1Count - 1)] || finalPos;
+            const turn1Quat = quats[Math.max(0, turn1Count - 1)] || finalQuat;
+            twoTurnBuildingHit = this.isTwoTurnBuildingTrap(
+                team,
+                turn1Pos,
+                turn1Quat,
+                finalAP,
+                obstacles,
+                Math.sign(Number(action.joyX) || 1) || 1
+            );
+        }
+        const twoTurnTrap = twoTurnBuildingHit;
+
         let score = 100;
         if (buildingHit) score -= 220;
+        if (twoTurnTrap) score -= 200;
+        if (midairHit) score -= 260;
+        else if (minEnemySep < 6.0) score -= 90;
+        if (minAllySep < 5.0) score -= 60;
         if (minAltitude < 3) score -= 220;
         else if (minAltitude < 10) score -= 120;
         else if (minAltitude < 14) score -= 90;
         else if (minAltitude < 18) score -= 65;
-        if (nearestBuilding < 4) score -= 140;
+        if (nearMissHard) score -= 160;
+        else if (nearestBuilding < 4) score -= 140;
         else if (nearestBuilding < 10) score -= 55;
         // Graded AP survival: punish burn before the stall floor (mid-low hard-turn death spiral).
         if (finalAP < 45) score -= 120;
@@ -13249,9 +13765,15 @@ window.AirArenaAI = {
 
         return {
             score: Number(score.toFixed(1)),
-            safe: score > 0 && !buildingHit && minAltitude >= 3 && finalAP >= (Number((typeof CONFIG !== 'undefined' && CONFIG.rules && CONFIG.rules.stallSpeedAP) || 35)) && !climbLoopRisk,
+            safe: score > 0 && !buildingHit && !twoTurnTrap && !midairHit && minAltitude >= 3 && finalAP >= (Number((typeof CONFIG !== 'undefined' && CONFIG.rules && CONFIG.rules.stallSpeedAP) || 35)) && !climbLoopRisk,
             minAltitude: Number((Number.isFinite(minAltitude) ? minAltitude : -1).toFixed(1)),
             buildingHit,
+            twoTurnBuildingHit,
+            twoTurnTrap,
+            nearMissHard,
+            midairHit,
+            minEnemySep: Number((Number.isFinite(minEnemySep) ? minEnemySep : 999).toFixed(1)),
+            minAllySep: Number((Number.isFinite(minAllySep) ? minAllySep : 999).toFixed(1)),
             nearestBuilding: Number((Number.isFinite(nearestBuilding) ? nearestBuilding : -1).toFixed(1)),
             finalAP: Number(finalAP.toFixed(1)),
             startAP: Number(startAP.toFixed(1)),
@@ -13763,10 +14285,19 @@ window.AirArenaAI = {
             (typeof GameContext !== 'undefined' && GameContext.state && GameContext.state.currentTurn) || 1
         ));
         const glueLock = this.getGlueEscapeLock(teamId, turnNow);
+        const closingRateAbort = !!(action.closingRateAbort || this.isCoverClosingAbortActive(teamId, turnNow));
+        if (closingRateAbort || originalEval.buildingHit || originalEval.twoTurnBuildingHit) {
+            this.clearGlueEscapeLock(teamId);
+        }
         // T72 D/G: while glue-escape locked, keep T38/embed stick — stall/preempt must not steal.
+        // Never allow glueLock to bypass safetyFilter when buildingHit / twoTurnBuildingHit / closingRateAbort.
         if (
             glueLock.active &&
             !action.pullOver &&
+            !originalEval.buildingHit &&
+            !originalEval.twoTurnBuildingHit &&
+            !originalEval.midairHit &&
+            !closingRateAbort &&
             (
                 action.state === 'obstacleEmergencyEscape' ||
                 action.state === 'obstacleEnergyClimb' ||
@@ -13855,7 +14386,14 @@ window.AirArenaAI = {
             return action;
         }
         // T69: rim protect — do not let stall/unclimb steal inward+descend near hard.
-        if (action.state === 'airspaceAvoid' && action.airspaceRimProtect) {
+        // Never bypass safetyFilter if predicted path hits a building or 2-turn trap.
+        if (
+            action.state === 'airspaceAvoid' &&
+            action.airspaceRimProtect &&
+            !originalEval.buildingHit &&
+            !originalEval.twoTurnBuildingHit &&
+            !originalEval.midairHit
+        ) {
             action.debug = {
                 ...(action.debug || {}),
                 safety: {
@@ -13908,6 +14446,7 @@ window.AirArenaAI = {
             'mergeBreak',
             'antiLoopBreak',
             'gunAttack',
+            'rocketLeadAttack',
             'missileAttack',
             'missilePrep',
             'openingRoofDash',
@@ -13955,11 +14494,17 @@ window.AirArenaAI = {
             Number(action.joyY || 0) >= 0.45 &&
             Math.abs(Number(action.joyX || 0)) < 0.35;
         // Protect survival stick through predicted ground smash / stall sink (T30 dive, T29 stall-flat).
-        // Never early-protect a climb-into-mesh stick — must compete with lateral escape.
-        const hardProtectOk = !originalEval.buildingHit && !climbIntoMesh && (
-            (groundSurvivalStates.has(action.state) && nearDirtSurvival) ||
-            (originalEval.minAltitude === null || originalEval.minAltitude >= 8)
-        );
+        // Never early-protect a climb-into-mesh, buildingHit, twoTurnTrap, midairHit, or closingRateAbort stick.
+        const hardProtectOk =
+            !originalEval.buildingHit &&
+            !originalEval.twoTurnBuildingHit &&
+            !originalEval.midairHit &&
+            !closingRateAbort &&
+            !climbIntoMesh &&
+            (
+                (groundSurvivalStates.has(action.state) && nearDirtSurvival) ||
+                (originalEval.minAltitude === null || originalEval.minAltitude >= 8)
+            );
         if ((protectedStates.has(action.state) || offensiveProtected) && hardProtectOk) {
             if (groundSurvivalStates.has(action.state) && nearDirtSurvival) {
                 if (embedMeshCrisis || hardContact) {
@@ -14011,7 +14556,14 @@ window.AirArenaAI = {
             };
             return action;
         }
-        if (!stallTrapNow && originalEval.safe && originalEval.score > 20) {
+        if (
+            !stallTrapNow &&
+            !originalEval.twoTurnBuildingHit &&
+            !originalEval.midairHit &&
+            !closingRateAbort &&
+            originalEval.safe &&
+            originalEval.score > 20
+        ) {
             action.debug = {
                 ...(action.debug || {}),
                 safety: {
@@ -17357,6 +17909,317 @@ window.AirArenaAI = {
         };
     },
 
+    /**
+     * Build a shallow enemy proxy with pathPoints stripped so AI gun/rocket ballistic
+     * lead solvers use only inertial extrapolation (WEGO simultaneous-planning fair).
+     */
+    buildWegoSafeEnemyProxy(enemy) {
+        if (!enemy || !enemy.wrapper) return enemy;
+        return Object.assign({}, enemy, {
+            pathPoints: null,
+            pathQuats: null,
+            flightLength: this.estimateOtherAircraftTurnDist(enemy)
+        });
+    },
+
+    /**
+     * 1-Turn Gun Boresight Intercept Check:
+     * Simulates our planned turn maneuver and samples 10 steps across the turn,
+     * comparing ballistic bullet position against inertial enemy extrapolation.
+     * Returns { ok: hits >= 1, hits, minMissDist, bestRatio }.
+     */
+    checkGunBoresightIntercept(teamId, team, action, enemy, opts = {}) {
+        if (!team || !team.wrapper || !action || !enemy || !enemy.wrapper || typeof simulateFlight !== 'function') {
+            return { ok: true, hits: 1, minMissDist: 0, bestRatio: 0.5, skipped: true };
+        }
+        const sim = this.simulateBanked(team, [action], this.bankTargetAction(action));
+        const pts = sim && sim.points;
+        const quats = sim && sim.quats;
+        if (!Array.isArray(pts) || pts.length < 2 || !Array.isArray(quats) || quats.length < 2) {
+            return { ok: false, hits: 0, minMissDist: Infinity, bestRatio: 0 };
+        }
+        const B = (typeof AirArenaGunBallistics !== 'undefined') ? AirArenaGunBallistics : null;
+        const gunCfg = (typeof CONFIG !== 'undefined' && CONFIG.weapons && CONFIG.weapons.gun) ? CONFIG.weapons.gun : {};
+        const throttle = (action.throttle != null) ? action.throttle : (team.throttle || 4);
+        const params = (B && B.resolveGunParams) ? B.resolveGunParams(team.type || 'mig21', throttle) : null;
+        const dRange = params ? params.dRange : ((typeof GUN_RANGE !== 'undefined' ? GUN_RANGE : 35) * 1.25);
+        const dAngle = params ? params.dAngle : (typeof GUN_ANGLE !== 'undefined' ? GUN_ANGLE : Math.PI / 12);
+        const el = params ? params.elevation : (gunCfg.elevation || 0);
+        const muzzleSpeed = params ? params.muzzleSpeed : (dRange * 2.0);
+        const gravity = params
+            ? params.gravity
+            : (((typeof CONFIG !== 'undefined' && CONFIG.rules && CONFIG.rules.gravity) || 9.81)
+                * (gunCfg.gravityMult !== undefined ? gunCfg.gravityMult : 1.0));
+        const tolMul = Number(opts.toleranceMul) || 1.8;
+
+        const ePos0 = enemy.wrapper.position;
+        const eQuat0 = (enemy.wrapper.userData && enemy.wrapper.userData.logicalQuat) || enemy.wrapper.quaternion;
+        const eFwd = new THREE.Vector3(0, 0, 1).applyQuaternion(eQuat0).normalize();
+        const eTurnDist = this.estimateOtherAircraftTurnDist(enemy);
+
+        const samples = 10;
+        let hits = 0;
+        let minMissDist = Infinity;
+        let bestRatio = 0;
+        const p2 = new THREE.Vector3();
+        const vecToEnemy = new THREE.Vector3();
+        const fwd = new THREE.Vector3();
+        const gunMuzzlePos = new THREE.Vector3();
+        const acVel = new THREE.Vector3();
+        const v0 = new THREE.Vector3();
+        const expectedBulletPos = new THREE.Vector3();
+
+        for (let s = 0; s < samples; s++) {
+            const ratio = (s + 0.5) / samples;
+            const p1 = (typeof getPosAt === 'function')
+                ? getPosAt(ratio, pts)
+                : pts[Math.min(pts.length - 1, Math.round(ratio * (pts.length - 1)))];
+            const q1 = (typeof getQuatAt === 'function')
+                ? getQuatAt(ratio, quats)
+                : quats[Math.min(quats.length - 1, Math.round(ratio * (quats.length - 1)))];
+
+            p2.copy(ePos0).addScaledVector(eFwd, eTurnDist * ratio);
+            fwd.set(0, Math.sin(el), Math.cos(el)).applyQuaternion(q1).normalize();
+            if (B && B.computeMuzzleWorldPos && params) {
+                B.computeMuzzleWorldPos(p1, q1, params.centerMuzzle, gunMuzzlePos);
+            } else {
+                gunMuzzlePos.set(0, -0.12, 0.45).applyQuaternion(q1).add(p1);
+            }
+            vecToEnemy.subVectors(p2, gunMuzzlePos);
+            const forwardDist = vecToEnemy.dot(fwd);
+            if (!(forwardDist > 0 && forwardDist <= dRange)) continue;
+
+            if (B && B.sampleAircraftVelocity && B.computeBulletVelocity) {
+                B.sampleAircraftVelocity(ratio, pts, acVel);
+                B.computeBulletVelocity(q1, acVel, muzzleSpeed, el, 0, 0, v0);
+            } else {
+                v0.copy(fwd).multiplyScalar(muzzleSpeed);
+            }
+            const closingSpeed = Math.max(1.0, v0.dot(fwd));
+            const timeSinceSpawn = forwardDist / closingSpeed;
+            if (B && B.evalBallisticPoint) {
+                B.evalBallisticPoint(gunMuzzlePos, v0, gravity, timeSinceSpawn, expectedBulletPos);
+            } else {
+                expectedBulletPos.copy(gunMuzzlePos)
+                    .addScaledVector(fwd, forwardDist);
+                expectedBulletPos.y -= 0.5 * gravity * timeSinceSpawn * timeSinceSpawn;
+            }
+            const hitRadius = (typeof gunHitRadiusAt === 'function')
+                ? gunHitRadiusAt(forwardDist, dAngle, gunCfg)
+                : Math.min(1.75, Math.max(0.65, forwardDist * Math.tan(dAngle)));
+            const missDist = expectedBulletPos.distanceTo(p2);
+            if (missDist < minMissDist) {
+                minMissDist = missDist;
+                bestRatio = ratio;
+            }
+            if (missDist <= hitRadius * tolMul) {
+                if (!this.hasObstacleBetween(gunMuzzlePos, p2)) {
+                    hits += 1;
+                }
+            }
+        }
+        return {
+            ok: hits >= 1,
+            hits,
+            minMissDist: Number((Number.isFinite(minMissDist) ? minMissDist : 999).toFixed(2)),
+            bestRatio: Number(bestRatio.toFixed(2))
+        };
+    },
+
+    /**
+     * Active VT Rocket Lead-Steering State (rocketLeadAttack):
+     * Computes 1st-order ballistic lead onto the enemy's inertial trajectory and verifies
+     * bestCpaDist <= vtRadius * 1.15 via AirArenaRocket.computeRocketAimSolution against
+     * our planned turn trajectory.
+     */
+    buildRocketLeadAttackAction(teamId, ctx = {}) {
+        if (typeof AirArenaA2GStoresDoctrine === 'undefined') return null;
+        const Doc = AirArenaA2GStoresDoctrine;
+        if (!Doc.weaponAiEnabled('rocket')) return null;
+        const liveSelf = ctx.liveSelf;
+        const liveEnemy = ctx.liveEnemy;
+        if (!liveSelf || !liveSelf.wrapper || !liveEnemy || !liveEnemy.wrapper) return null;
+        if (Doc.teamRocketAmmo(liveSelf) <= 0) return null;
+        if (ctx.lineOfSightBlocked) return null;
+        if (ctx.coverInfo && ctx.coverInfo.collisionRisk === 'high') return null;
+        if (ctx.fox1Hold) return null;
+
+        const dist = Number(ctx.distance);
+        const angleDeg = Number(ctx.angleDeg);
+        if (!Number.isFinite(dist) || dist < 16 || dist > 96) return null;
+        if (!Number.isFinite(angleDeg) || angleDeg > 46) return null;
+
+        const enemyHp = Number(liveEnemy.hp != null ? liveEnemy.hp : (ctx.enemy && ctx.enemy.hp));
+        const enemyLowHp = Number.isFinite(enemyHp) && enemyHp > 0 && enemyHp <= 44;
+        const hasAnyMissile = !!ctx.hasAnyMissile;
+        const hasArmedMissile = !!ctx.hasArmedMissile;
+        const frontAspect = !!ctx.frontAspect || (Number.isFinite(Number(ctx.headOnFactor)) && Number(ctx.headOnFactor) > 0.35);
+        const fox2OutOfCone = ctx.aiMissileType !== 'fox1' && (angleDeg > 10 || (frontAspect && angleDeg > 4));
+        const cleanFox2ShotNow =
+            !!ctx.missileAttackWindow &&
+            hasArmedMissile &&
+            !ctx.frontAspectPenalty &&
+            !fox2OutOfCone &&
+            !enemyLowHp;
+        if (cleanFox2ShotNow) return null;
+
+        const trigger =
+            !hasAnyMissile ||
+            !hasArmedMissile ||
+            !!ctx.fox2LaunchHold ||
+            fox2OutOfCone ||
+            frontAspect ||
+            enemyLowHp;
+        if (!trigger) return null;
+
+        const selfPos = liveSelf.wrapper.position;
+        const selfQuat = (liveSelf.wrapper.userData && liveSelf.wrapper.userData.logicalQuat) || liveSelf.wrapper.quaternion;
+        const enemyPos = liveEnemy.wrapper.position;
+        const enemyQuat = (liveEnemy.wrapper.userData && liveEnemy.wrapper.userData.logicalQuat) || liveEnemy.wrapper.quaternion;
+        const enemyFwd = new THREE.Vector3(0, 0, 1).applyQuaternion(enemyQuat).normalize();
+        const enemyTurnDist = this.estimateOtherAircraftTurnDist(liveEnemy);
+        const enemyVelPerTurn = enemyFwd.clone().multiplyScalar(enemyTurnDist);
+
+        const rktCfg = (typeof CONFIG !== 'undefined' && CONFIG.weapons && CONFIG.weapons.rocket) ? CONFIG.weapons.rocket : {};
+        const stepsPerTurn = (typeof CONFIG !== 'undefined' && CONFIG.rules && CONFIG.rules.stepsPerTurn)
+            ? Number(CONFIG.rules.stepsPerTurn) : 100;
+        const launchDelayTurns = (rktCfg.launchDelaySteps != null ? Number(rktCfg.launchDelaySteps) : 33) / Math.max(1, stepsPerTurn);
+        const rocketSpeed = Number(rktCfg.launchSpeed) || 55;
+        const vtR = Number(rktCfg.vtRadius) || 4.5;
+        const gravScale = rktCfg.gravityScale != null ? Number(rktCfg.gravityScale) : 0.55;
+        const gravPerTurnSq = (((typeof CONFIG !== 'undefined' && CONFIG.rules && CONFIG.rules.gravity) || 9.81) * gravScale);
+
+        const selfTurnDist = this.estimateOtherAircraftTurnDist(liveSelf);
+        const selfFwd = new THREE.Vector3(0, 0, 1).applyQuaternion(selfQuat).normalize();
+        const toEnemyNorm = enemyPos.clone().sub(selfPos).normalize();
+        const closingPerTurn = Math.max(20, rocketSpeed + selfTurnDist - enemyVelPerTurn.dot(toEnemyNorm));
+        const tofTurns = this.clamp(dist / closingPerTurn, 0.15, 1.8);
+        const tTotal = launchDelayTurns + tofTurns;
+
+        // First-order ballistic lead point: enemyPos + enemyVel*(delay + tof) + 0.5*g*tof^2
+        const leadPt = enemyPos.clone()
+            .addScaledVector(enemyVelPerTurn, tTotal)
+            .add(new THREE.Vector3(0, 0.5 * gravPerTurnSq * tofTurns * tofTurns, 0));
+        // Subtract own forward travel until rocket launch so aiming angle matches release pose.
+        const releaseOrigin = selfPos.clone().addScaledVector(selfFwd, selfTurnDist * launchDelayTurns);
+        const toLead = leadPt.clone().sub(releaseOrigin);
+        if (toLead.lengthSq() < 1e-6) return null;
+        const localLead = toLead.clone().normalize().applyQuaternion(selfQuat.clone().invert()).normalize();
+        if (localLead.z < 0.45) return null;
+
+        const acConfig = (typeof CONFIG !== 'undefined' && CONFIG.aircrafts) ? CONFIG.aircrafts[liveSelf.type || 'mig21'] : null;
+        const maxYaw = (acConfig && Number(acConfig.maxYaw)) ? Number(acConfig.maxYaw) : (Math.PI / 4);
+        const maxPitch = (acConfig && Number(acConfig.maxPitch)) ? Number(acConfig.maxPitch) : (Math.PI / 3);
+        const invSelfQuat = selfQuat.clone().invert();
+        const midRatio = 0.62;
+        const baseJoyX = this.clamp(-Math.asin(this.clamp(localLead.x, -0.95, 0.95)) / (midRatio * maxYaw), -0.9, 0.9);
+        const baseJoyY = this.clamp(Math.asin(this.clamp(localLead.y, -0.95, 0.95)) / (midRatio * maxPitch), -0.52, 0.62);
+        const heat = (typeof getEngineHeatLevel === 'function' ? getEngineHeatLevel(liveSelf.heat) : (Number(liveSelf.heat) || 0));
+        const baseThr = heat > 78 ? 3 : (dist < 30 ? 3 : 4);
+        const wegoEnemy = this.buildWegoSafeEnemyProxy(liveEnemy);
+        const triggerTag = !hasAnyMissile
+            ? 'foxDry'
+            : (enemyLowHp ? 'lowHp' : (frontAspect ? 'frontAspect' : (ctx.fox2LaunchHold ? 'fox2Hold' : 'outCone')));
+
+        // Without browser AirArenaRocket solver (e.g. minimal Node unit tests), verify tight lead alignment.
+        if (typeof AirArenaRocket === 'undefined' || typeof AirArenaRocket.computeRocketAimSolution !== 'function') {
+            const leadAngDeg = Math.acos(this.clamp(localLead.z, -1, 1)) * 180 / Math.PI;
+            if (leadAngDeg > 18) return null;
+            return {
+                state: 'rocketLeadAttack',
+                statusText: `NPC: 火箭前置追瞄 ${Math.floor(dist)}m`,
+                throttle: baseThr,
+                joyX: baseJoyX,
+                joyY: baseJoyY,
+                roll: this.clamp(baseJoyX * Math.PI / 4.5, -Math.PI / 4.5, Math.PI / 4.5),
+                weapon: 'rocket',
+                queueAction: 'rocket',
+                rocketFuze: 'vt',
+                powerPylons: false,
+                ready: true,
+                reason: `Active rocketLeadAttack (${triggerTag}, geom lead=${leadAngDeg.toFixed(1)}deg)`
+            };
+        }
+
+        // Closed-loop VT solver refinement (up to 3 solves): use actual miss vector to steer salvo into VT sphere.
+        let bestCand = null;
+        let bestCpa = Infinity;
+        let bestSol = null;
+        let curJx = baseJoyX;
+        let curJy = baseJoyY;
+        const evalStick = (jxIn, jyIn, thrIn) => {
+            const jx = this.clamp(jxIn, -0.92, 0.92);
+            const jy = this.clamp(jyIn, -0.52, 0.62);
+            const cand = {
+                throttle: thrIn,
+                joyX: jx,
+                joyY: jy,
+                roll: this.clamp(jx * Math.PI / 4.5, -Math.PI / 4.5, Math.PI / 4.5),
+                weapon: 'rocket',
+                queueAction: 'rocket',
+                rocketFuze: 'vt'
+            };
+            const plannedTeam = this.buildPlannedTeamForStores(liveSelf, cand, false);
+            plannedTeam.rocketFuze = 'vt';
+            let sol = null;
+            try {
+                sol = AirArenaRocket.computeRocketAimSolution(plannedTeam, wegoEnemy);
+            } catch (_) {
+                sol = null;
+            }
+            if (!sol || sol.fuze !== 'vt') return null;
+            const cpa = Number.isFinite(Number(sol.bestCpaDist)) ? Number(sol.bestCpaDist) : Infinity;
+            const hitBonus = sol.anyVtHit ? -2.0 : 0;
+            if ((cpa + hitBonus) < (bestCpa + (bestSol && bestSol.anyVtHit ? -2.0 : 0))) {
+                bestCpa = cpa;
+                bestCand = cand;
+                bestSol = sol;
+            }
+            return { cand, sol, cpa };
+        };
+
+        for (let iter = 0; iter < 3; iter++) {
+            const r = evalStick(curJx, curJy, baseThr);
+            if (!r) break;
+            if (r.sol.anyVtHit && r.cpa <= vtR * 0.8) break;
+            const aimW = r.sol.aimWorld;
+            const tgtW = r.sol.targetEstWorld;
+            const slant = Number.isFinite(Number(r.sol.slantDist)) && Number(r.sol.slantDist) > 8
+                ? Number(r.sol.slantDist)
+                : dist;
+            if (!aimW || !tgtW) break;
+            const missLocal = tgtW.clone().sub(aimW).applyQuaternion(invSelfQuat);
+            const gain = iter === 0 ? 0.85 : 0.65;
+            const dJx = this.clamp(-(missLocal.x / Math.max(10, slant)) / (midRatio * maxYaw) * gain, -0.55, 0.55);
+            const dJy = this.clamp((missLocal.y / Math.max(10, slant)) / (midRatio * maxPitch) * gain, -0.4, 0.4);
+            if (Math.abs(dJx) < 0.015 && Math.abs(dJy) < 0.015) break;
+            curJx = this.clamp(curJx + dJx, -0.92, 0.92);
+            curJy = this.clamp(curJy + dJy, -0.52, 0.62);
+        }
+        if ((!bestSol || (!bestSol.anyVtHit && bestCpa > vtR * 1.15)) && baseThr > 2) {
+            evalStick(bestCand ? bestCand.joyX : curJx, bestCand ? bestCand.joyY : curJy, baseThr - 1);
+        }
+
+        if (bestCand && bestSol && (bestSol.anyVtHit || bestCpa <= vtR * 1.15)) {
+            return {
+                state: 'rocketLeadAttack',
+                statusText: `NPC: 火箭 VT 齊射 ${Math.floor(dist)}m`,
+                throttle: bestCand.throttle,
+                joyX: bestCand.joyX,
+                joyY: bestCand.joyY,
+                roll: bestCand.roll,
+                weapon: 'rocket',
+                queueAction: 'rocket',
+                rocketFuze: 'vt',
+                powerPylons: false,
+                ready: true,
+                rocketBestCpa: Number(bestCpa.toFixed(2)),
+                reason: `Active rocketLeadAttack (${triggerTag}, cpa=${bestCpa.toFixed(1)}m <= ${(vtR * 1.15).toFixed(1)}m)`
+            };
+        }
+        return null;
+    },
+
     planLookaheadIntercept(teamId, selfForward, localToEnemy, enemyPos, sensorSeenNow, liveSelf, tuning) {
         const fallback = {
             horizontalBias: this.clamp(-localToEnemy.x * 1.25, -1, 1),
@@ -17702,6 +18565,8 @@ window.AirArenaAI = {
         const acConfig = (typeof CONFIG !== 'undefined' && CONFIG.aircrafts) ? CONFIG.aircrafts[self.type || 'mig21'] : null;
         const maxPitchCmd = acConfig ? acConfig.maxPitch : Math.PI / 3;
         const coverInfo = this.getCoverInfo(selfPos, selfForward, self.ap || self.speed || 120);
+        const coverClosingInfo = this.noteCoverDistHistory(teamId, coverInfo.distance, turnNo);
+        coverInfo.closingRateAbort = !!(coverClosingInfo && coverClosingInfo.closingAbort);
         const obstacleStressMode = arenaMode === 'obstacle-stress';
 
         const trackedEnemyForward = sensor.seenNow
@@ -17766,7 +18631,8 @@ window.AirArenaAI = {
         const enemyMissileArmed = (enemy.pylons || []).some(p => isFoxPylonEarly(p) && p.state === 'armed');
         const enemyMissileStandby = (enemy.pylons || []).some(p => isFoxPylonEarly(p) && p.state === 'standby');
         const enemyMissileReady = enemyMissileArmed || enemyMissileStandby;
-        const enemyMissileQueued = enemy.queuedAction === 'missile';
+        // WEGO simultaneous planning: never peek at an opponent's unexecuted current-turn queuedAction.
+        const enemyMissileQueued = false;
         const enemyMissileInFlight = (enemy.activeMissiles || []).some(m => m.active && !m.exploded);
         // Phase 0: typed envelopes — own attack windows vs enemy threat/flare distances.
         const pylonTypeOfEarly = (p) => (typeof pylonWeaponType === 'function' ? pylonWeaponType(p) : (p.weaponType || 'fox2'));
@@ -21351,8 +22217,57 @@ altitude,
                                 openingTooClose,
                                 missileType: aiMissileType
                             }, tuning);
-                            const queueAction = softFire.queueAction || 'none';
-                            const weapon = softFire.weapon || (preferMsl ? 'missile' : 'gun');
+                            let queueAction = softFire.queueAction || 'none';
+                            let weapon = softFire.weapon || (preferMsl ? 'missile' : 'gun');
+                            const liveEnemyAlign = (typeof GameContext !== 'undefined' && GameContext.getTeam)
+                                ? GameContext.getTeam(enemyId)
+                                : null;
+                            if (queueAction !== 'missile' && liveSelf && liveEnemyAlign && !lineOfSightBlocked) {
+                                const rocketAlign = this.buildRocketLeadAttackAction(teamId, {
+                                    liveSelf,
+                                    liveEnemy: liveEnemyAlign,
+                                    enemy,
+                                    distance,
+                                    angleDeg: angleToTargetDeg,
+                                    lineOfSightBlocked,
+                                    coverInfo,
+                                    hasAnyMissile,
+                                    hasArmedMissile,
+                                    frontAspect: headOnFactor > 0.35,
+                                    headOnFactor,
+                                    fox2LaunchHold: true,
+                                    missileAttackWindow: false,
+                                    fox1Hold: false,
+                                    aiMissileType
+                                });
+                                if (rocketAlign) {
+                                    return this.withDebug(
+                                        rocketAlign,
+                                        debugBase,
+                                        [
+                                            ...tree,
+                                            `selected: rocketLeadAttack-fromAlign dist=${distance.toFixed(1)} ang=${angleToTargetDeg.toFixed(1)} cpa=${rocketAlign.rocketBestCpa ?? '-'}`
+                                        ],
+                                        'rocketLeadAttack'
+                                    );
+                                }
+                            }
+                            let alignBoresightNote = '';
+                            if (queueAction === 'gun' && liveSelf && liveEnemyAlign) {
+                                const alignCand = {
+                                    throttle: alignCtrl.throttle,
+                                    joyX: alignCtrl.joyX,
+                                    joyY: alignCtrl.joyY,
+                                    pitchCmd: selfForward.y > 0.45 ? maxPitchCmd * 0.35 : undefined,
+                                    roll: alignCtrl.roll,
+                                    queueAction: 'gun'
+                                };
+                                const bsAlign = this.checkGunBoresightIntercept(teamId, liveSelf, alignCand, liveEnemyAlign);
+                                if (!bsAlign.ok) {
+                                    queueAction = 'none';
+                                    alignBoresightNote = ` (hold gun: boresight miss=${bsAlign.minMissDist}m)`;
+                                }
+                            }
                             return this.withDebug({
                                 state: 'alignFirst',
                                 statusText: queueAction !== 'none'
@@ -21369,7 +22284,7 @@ altitude,
                                 ready: true,
                                 reason: queueAction !== 'none'
                                     ? `Clear LOS contact: align+fire (${softFire.note})`
-                                    : 'Clear LOS contact: align nose before accelerate'
+                                    : `Clear LOS contact: align nose before accelerate${alignBoresightNote}`
                             }, debugBase, [
                                 ...tree,
                                 `alignSoftFire: q=${queueAction} note=${softFire.note} ang=${angleToTargetDeg.toFixed(1)} dist=${distance.toFixed(1)} leadW=${(lookaheadWeight * 0.45).toFixed(2)}`,
@@ -21908,36 +22823,47 @@ altitude,
                         aiMapSkyOpen: aiMapCtx.skyOpen,
                         hardContact: hardBuildingContact
                     });
-                    const recoverJoyX = expandRecover
+                    const activeStallUrban = !!(self.stalled || (Number.isFinite(Number(self.ap)) && Number(self.ap) < 45));
+                    const recoverJoyX = activeStallUrban
                         ? this.clamp(
-                            (Number.isFinite(urbanAvoidSide) ? urbanAvoidSide : Math.sign(horizontalBias) || 1) * 0.36 +
-                                horizontalBias * 0.12,
-                            -0.48,
-                            0.48
+                            (expandRecover
+                                ? (Number.isFinite(urbanAvoidSide) ? urbanAvoidSide : Math.sign(horizontalBias) || 1) * 0.25
+                                : horizontalBias * 0.12),
+                            -0.25,
+                            0.25
                         )
-                        : this.clamp(horizontalBias * 0.12, -0.22, 0.22);
+                        : (expandRecover
+                            ? this.clamp(
+                                (Number.isFinite(urbanAvoidSide) ? urbanAvoidSide : Math.sign(horizontalBias) || 1) * 0.36 +
+                                    horizontalBias * 0.12,
+                                -0.48,
+                                0.48
+                            )
+                            : this.clamp(horizontalBias * 0.12, -0.22, 0.22));
                     let recoverJoyY = selfForward.y > 0.2
-                        ? (expandRecover ? -0.32 : -0.22)
-                        : (Number(tuning.recoverPitchBias) || -0.2);
+                        ? (activeStallUrban ? -0.32 : (expandRecover ? -0.32 : -0.22))
+                        : (activeStallUrban && altitude >= 26 ? -0.28 : (Number(tuning.recoverPitchBias) || -0.2));
                     if (expandRecover && altitude < 28 && selfForward.y < -0.1) {
                         recoverJoyY = Math.max(recoverJoyY, 0.28);
                     } else if (expandRecover && altitude < 36) {
                         recoverJoyY = Math.max(recoverJoyY, -0.12);
                     }
-                    const recoverThr = this.pickThrottleForTurn(
-                        getEngineHeatLevel(self.heat) > 78 ? 3 : 5,
-                        recoverJoyX,
-                        {
-                            heat: (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(self.heat) : (self.heat || 0)),
-                            ap: self.ap,
-                            energyCritical: true,
-                            lowAp: tuning.lowAp
-                        }
-                    );
+                    const recoverThr = activeStallUrban
+                        ? 5
+                        : this.pickThrottleForTurn(
+                            getEngineHeatLevel(self.heat) > 78 ? 3 : 5,
+                            recoverJoyX,
+                            {
+                                heat: (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(self.heat) : (self.heat || 0)),
+                                ap: self.ap,
+                                energyCritical: true,
+                                lowAp: tuning.lowAp
+                            }
+                        );
                     return this.withDebug({
                         state: 'energyRecover',
                         statusText: `NPC: 城區能量回收 AP ${Math.floor(self.ap)}`,
-                        throttle: Math.min(recoverThr, 5),
+                        throttle: activeStallUrban ? 5 : Math.min(recoverThr, 5),
                         joyX: recoverJoyX,
                         joyY: recoverJoyY,
                         pitchCmd: recoverJoyY < 0 ? maxPitchCmd * 0.22 : -maxPitchCmd * 0.12,
@@ -21990,15 +22916,18 @@ altitude,
                         aiMapSkyOpen: aiMapCtx.skyOpen,
                         hardContact: hardBuildingContact
                     });
+                    const activeStallAround = !!(self.stalled || (Number.isFinite(Number(self.ap)) && Number(self.ap) < 45));
                     return this.withDebug({
                         state: 'stallRecoverNoRoll',
                         statusText: `NPC: 失速繞樓脫離 AP ${Math.floor(self.ap)} ALT ${altitude.toFixed(1)}`,
-                        throttle: diveDirt ? (getEngineHeatLevel(self.heat) > 86 ? 4 : 5) : this.pickThrottleForTurn(3, 0.4, {
-                            heat: (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(self.heat) : (self.heat || 0)),
-                            ap: self.ap,
-                            stalled: true,
-                            energyCritical: true
-                        }),
+                        throttle: activeStallAround
+                            ? 5
+                            : (diveDirt ? (getEngineHeatLevel(self.heat) > 86 ? 4 : 5) : this.pickThrottleForTurn(3, 0.4, {
+                                heat: (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(self.heat) : (self.heat || 0)),
+                                ap: self.ap,
+                                stalled: true,
+                                energyCritical: true
+                            })),
                         joyX: this.clamp(
                             urbanAvoidSide * (diveDirt ? (expandStall ? 0.52 : 0.42) : (expandStall ? 0.5 : 0.4)),
                             expandStall ? -0.58 : -0.48,
@@ -22037,18 +22966,23 @@ altitude,
                                 hardContact: hardBuildingContact
                             });
                             const unloadPitch = divingIntoDirt ? 0.08 : (altitude > 40 ? 0.4 : 0.18);
-                            const breakJoyX = this.clamp(
-                                horizontalBias * (divingIntoDirt ? (expandStall ? 0.22 : 0.12) : (expandStall ? 0.42 : 0.28)),
-                                expandStall ? -0.48 : -0.28,
-                                expandStall ? 0.48 : 0.28
-                            );
-                            const breakThr = divingIntoDirt
-                                ? (getEngineHeatLevel(self.heat) > 86 ? 4 : 5)
-                                : this.pickThrottleForTurn(
-                                    getEngineHeatLevel(self.heat) > 78 ? 3 : 4,
-                                    breakJoyX,
-                                    { heat: (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(self.heat) : (self.heat || 0)), ap: self.ap, energyCritical: true }
+                            const activeStallBreak = !!(self.stalled || (Number.isFinite(Number(self.ap)) && Number(self.ap) < 45));
+                            const breakJoyX = activeStallBreak
+                                ? this.clamp(horizontalBias * 0.2, -0.25, 0.25)
+                                : this.clamp(
+                                    horizontalBias * (divingIntoDirt ? (expandStall ? 0.22 : 0.12) : (expandStall ? 0.42 : 0.28)),
+                                    expandStall ? -0.48 : -0.28,
+                                    expandStall ? 0.48 : 0.28
                                 );
+                            const breakThr = activeStallBreak
+                                ? 5
+                                : (divingIntoDirt
+                                    ? (getEngineHeatLevel(self.heat) > 86 ? 4 : 5)
+                                    : this.pickThrottleForTurn(
+                                        getEngineHeatLevel(self.heat) > 78 ? 3 : 4,
+                                        breakJoyX,
+                                        { heat: (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(self.heat) : (self.heat || 0)), ap: self.ap, energyCritical: true }
+                                    ));
                             return this.withDebug({
                                 state: 'stallBreakout',
                                 statusText: divingIntoDirt
@@ -22098,12 +23032,17 @@ altitude,
                                     : (lowAltRecover && divingStall
                                         ? -maxPitchCmd * (expandStall ? 0.36 : 0.28)
                                         : maxPitchCmd * 0.26));
-                            const recoveryThrottle = divingIntoDirt
-                                ? this.getEmergencyRecoveryThrottle(altitude, selfForward.y, (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(self.heat) : (self.heat || 0)))
-                                : this.pickThrottleForTurn(3, 0.45, { heat: (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(self.heat) : (self.heat || 0)), ap: self.ap, stalled: true, energyCritical: true });
-                            const recoverJoyX = divingIntoDirt
-                                ? this.clamp(horizontalBias * (expandStall ? 0.32 : 0.18), expandStall ? -0.42 : -0.24, expandStall ? 0.42 : 0.24)
-                                : this.clamp(horizontalBias * (expandStall ? 0.55 : 0.42), expandStall ? -0.58 : -0.48, expandStall ? 0.58 : 0.48);
+                            const activeStallNoRoll = !!(self.stalled || (Number.isFinite(Number(self.ap)) && Number(self.ap) < 45));
+                            const recoveryThrottle = activeStallNoRoll
+                                ? 5
+                                : (divingIntoDirt
+                                    ? this.getEmergencyRecoveryThrottle(altitude, selfForward.y, (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(self.heat) : (self.heat || 0)))
+                                    : this.pickThrottleForTurn(3, 0.45, { heat: (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(self.heat) : (self.heat || 0)), ap: self.ap, stalled: true, energyCritical: true }));
+                            const recoverJoyX = activeStallNoRoll
+                                ? this.clamp(horizontalBias * 0.2, -0.25, 0.25)
+                                : (divingIntoDirt
+                                    ? this.clamp(horizontalBias * (expandStall ? 0.32 : 0.18), expandStall ? -0.42 : -0.24, expandStall ? 0.42 : 0.24)
+                                    : this.clamp(horizontalBias * (expandStall ? 0.55 : 0.42), expandStall ? -0.58 : -0.48, expandStall ? 0.58 : 0.48));
                             const recoverJoyY = divingIntoDirt
                                 ? (expandStall ? 0.55 : 0.42)
                                 : (noseHigh
@@ -22139,23 +23078,30 @@ altitude,
                         }
 
                         if (energyCritical && altitude > 18 && coverInfo.collisionRisk !== 'high') {
-                            let recoverJoyY = self.stalled
-                                ? (altitude > 32 ? tuning.recoverPitchBias : 0.15)
-                                : (altitude < 28 ? 0.22 : tuning.recoverPitchBias * 0.25);
+                            const activeStallMain = !!(self.stalled || (Number.isFinite(Number(self.ap)) && Number(self.ap) < 45));
+                            let recoverJoyY = activeStallMain
+                                ? (altitude >= 26 ? -0.3 : (selfForward.y < -0.15 ? 0.24 : -0.15))
+                                : (self.stalled
+                                    ? (altitude > 32 ? tuning.recoverPitchBias : 0.15)
+                                    : (altitude < 28 ? 0.22 : tuning.recoverPitchBias * 0.25));
                             if (steepClimb || selfForward.y > tuning.stallPitchThreshold) {
-                                recoverJoyY = Math.min(recoverJoyY, tuning.recoverPitchBias);
+                                recoverJoyY = Math.min(recoverJoyY, activeStallMain ? -0.32 : tuning.recoverPitchBias);
                             }
                             if (altitude >= tuning.combatBandMin - 6) {
                                 recoverJoyY = Math.min(recoverJoyY, 0.06);
                             }
                             recoverJoyY = this.capCombatVerticalJoy(recoverJoyY, altitude, selfForward.y, tuning, sensor.hasContact);
-                            // Phase A: rebuild energy while ECO-turning toward target (not joyX=0 freeze).
-                            const recoverJoyX = this.clamp(horizontalBias * 0.55, -0.62, 0.62);
-                            const recoverThr = this.pickThrottleForTurn(
-                                getEngineHeatLevel(self.heat) > 78 ? 3 : 3,
-                                recoverJoyX,
-                                { heat: (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(self.heat) : (self.heat || 0)), ap: self.ap, energyCritical: true, lowAp: tuning.lowAp }
-                            );
+                            // Active stall (AP < 45 or stalled): force full throttle=5 + gentle bank to exit stall immediately.
+                            const recoverJoyX = activeStallMain
+                                ? this.clamp(horizontalBias * 0.2, -0.25, 0.25)
+                                : this.clamp(horizontalBias * 0.55, -0.62, 0.62);
+                            const recoverThr = activeStallMain
+                                ? 5
+                                : this.pickThrottleForTurn(
+                                    getEngineHeatLevel(self.heat) > 78 ? 3 : 3,
+                                    recoverJoyX,
+                                    { heat: (typeof getEngineHeatLevel === "function" ? getEngineHeatLevel(self.heat) : (self.heat || 0)), ap: self.ap, energyCritical: true, lowAp: tuning.lowAp }
+                                );
                             return this.withDebug({
                                 state: 'energyRecover',
                                 statusText: `NPC: 低能ECO回轉 AP ${Math.floor(self.ap)}`,
@@ -22194,7 +23140,14 @@ altitude,
                             coverInfo.collisionRisk !== 'high' &&
                             !imminentBuildingHit;
                         if (missileDefenseUrgent) {
-                            const breakJoyX = this.clamp((-horizontalBias * 0.75) + (0.5 * (urbanAvoidSide || breakSide)), -1, 1);
+                            let breakJoyX = this.clamp((-horizontalBias * 0.75) + (0.5 * (urbanAvoidSide || breakSide)), -1, 1);
+                            const wallClosePreUrban = Number.isFinite(Number(coverInfo.distance)) && Number(coverInfo.distance) < 12;
+                            if (wallClosePreUrban) {
+                                const awayWall = this.getAwayFromMeshSide(coverInfo, selfForward) || urbanAvoidSide;
+                                if (awayWall && Math.sign(breakJoyX) !== awayWall) {
+                                    breakJoyX = this.clamp(awayWall * Math.max(0.55, Math.abs(breakJoyX)), -0.85, 0.85);
+                                }
+                            }
                             // Same gate and stick as before; only the expendable follows the seeker type.
                             const preUrbanCm = inboundFox1 && !inboundFox2
                                 ? (canUseChaff && chaffCooldownReady ? 'chaff' : 'none')
@@ -22828,8 +23781,86 @@ altitude,
                                     aiMapClearAbove: aiMapCtx.clearAbove
                                 });
                             }
+                            // If FOX-2 cannot fire this turn (prep / out-of-cone / front-aspect) or target is low-HP,
+                            // check active VT rocket lead-steering before idling in missilePrep.
+                            if (!fox1Prep && !shouldShootMissile && overrideMode !== 'missile' && liveSelf) {
+                                const liveEnemyEarly = (typeof GameContext !== 'undefined' && GameContext.getTeam)
+                                    ? GameContext.getTeam(enemyId)
+                                    : null;
+                                const rocketEarly = liveEnemyEarly ? this.buildRocketLeadAttackAction(teamId, {
+                                    liveSelf,
+                                    liveEnemy: liveEnemyEarly,
+                                    enemy,
+                                    distance,
+                                    angleDeg: angleToTargetDeg,
+                                    headOnFactor,
+                                    frontAspect: headOnFactor > 0.35,
+                                    frontAspectPenalty: !!frontAspectHardBan,
+                                    fox2LaunchHold: !shouldShootMissile,
+                                    lineOfSightBlocked,
+                                    coverInfo,
+                                    hasAnyMissile,
+                                    hasArmedMissile,
+                                    missileAttackWindow: false,
+                                    aiMissileType,
+                                    fox1Hold: false
+                                }) : null;
+                                if (rocketEarly) {
+                                    return this.withDebug(
+                                        rocketEarly,
+                                        debugBase,
+                                        [...tree, `selected: rocketLeadAttack-fromPrep dist=${distance.toFixed(1)} ang=${angleToTargetDeg.toFixed(1)} cpa=${rocketEarly.rocketBestCpa ?? '-'}`],
+                                        'rocketLeadAttack'
+                                    );
+                                }
+                            }
                             return earlyAction;
                             }
+                            }
+                        }
+
+                        // Active VT rocket lead-steering before passive tacticalLagPursuit (FOX-2 dry / front-aspect / 10-38deg / low-HP).
+                        if (
+                            overrideMode !== 'missile' &&
+                            !navClimbOut.active &&
+                            !groundRisk &&
+                            !energyCritical &&
+                            !actualMissileThreat &&
+                            !mandatoryMergeBreak &&
+                            !knifeMidair &&
+                            coverInfo.collisionRisk !== 'high' &&
+                            liveSelf
+                        ) {
+                            const liveEnemyTap = (typeof GameContext !== 'undefined' && GameContext.getTeam)
+                                ? GameContext.getTeam(enemyId)
+                                : null;
+                            const fox1HoldTap = !!(this.fox1SequelByTeam && this.fox1SequelByTeam[teamId] && this.fox1SequelByTeam[teamId].active)
+                                || this.hasOwnFox1InFlight(liveSelf);
+                            const rocketPreTap = liveEnemyTap ? this.buildRocketLeadAttackAction(teamId, {
+                                liveSelf,
+                                liveEnemy: liveEnemyTap,
+                                enemy,
+                                distance,
+                                angleDeg: angleToTargetDeg,
+                                headOnFactor,
+                                frontAspect: headOnFactor > 0.35,
+                                frontAspectPenalty: !!frontAspectHardBan,
+                                fox2LaunchHold: !!frontAspectHardBan || !hasArmedMissile,
+                                lineOfSightBlocked,
+                                coverInfo,
+                                hasAnyMissile,
+                                hasArmedMissile,
+                                missileAttackWindow: !!(earlyMissileLock && !frontAspectHardBan),
+                                aiMissileType,
+                                fox1Hold: fox1HoldTap
+                            }) : null;
+                            if (rocketPreTap) {
+                                return this.withDebug(
+                                    rocketPreTap,
+                                    debugBase,
+                                    [...tree, `selected: rocketLeadAttack-preTap dist=${distance.toFixed(1)} ang=${angleToTargetDeg.toFixed(1)} cpa=${rocketPreTap.rocketBestCpa ?? '-'}`],
+                                    'rocketLeadAttack'
+                                );
                             }
                         }
 
@@ -23440,6 +24471,12 @@ altitude,
                                 });
                                 evadeJoyX = inboundDiverge.joyX;
                             }
+                            if ((shouldFlareNow || shouldChaffNow) && Number.isFinite(Number(coverInfo.distance)) && Number(coverInfo.distance) < 12) {
+                                const awayWallEvade = this.getAwayFromMeshSide(coverInfo, selfForward) || urbanAvoidSide;
+                                if (awayWallEvade && Math.sign(evadeJoyX) !== awayWallEvade) {
+                                    evadeJoyX = this.clamp(awayWallEvade * Math.max(0.58, Math.abs(evadeJoyX)), -0.85, 0.85);
+                                }
+                            }
                             if (hardInboundBreak && !cmNow) {
                                 tree.push(
                                     `missileThreat: hardInboundBreak=1 dist=${distance.toFixed(1)} maskSkip=1 f1=${inboundFox1 ? 1 : 0}` +
@@ -23554,6 +24591,11 @@ altitude,
                             angleToTarget <= Math.max(missileAngleRad, missileLockAngle) * 1.08 && localToEnemy.z > 0.78 && !lineOfSightBlocked;
                         const missileAttackWindow = (hasArmedMissile && missileLock && !frontAspectPenalty && distance >= missileMinRange && distance <= Math.min(missileMaxRange, missileLockRange + 8) && angleToTarget <= Math.max(missileAngleRad * 1.05, missileLockAngle)) || extendedMissileAttack;
                         const gunAttackActive = (overrideMode === 'gun') || gunWindow || (earlyGunWindow && !missileThreatEvade && !missilePrepWindow);
+                        const liveEnemyEng = (typeof GameContext !== 'undefined' && GameContext.getTeam)
+                            ? GameContext.getTeam(enemyId)
+                            : null;
+                        const fox1HoldEng = !!(this.fox1SequelByTeam && this.fox1SequelByTeam[teamId] && this.fox1SequelByTeam[teamId].active)
+                            || (liveSelf && this.hasOwnFox1InFlight(liveSelf));
                         tree.push(`gunGate: window=${gunWindow} close=${closeDogfight} earlyGun=${earlyGunWindow} openSkyBonus=${openSkyGunBonus.toFixed(2)} override=${overrideMode === 'gun'} lead=${gunLead ? gunLead.leadTurns : 'n/a'} active=${gunAttackActive}`);
                         if (overrideMode !== 'missile' && !mandatoryMergeBreak && (rangeMode === 'gun' || gunAttackActive || closeDogfight)) {
                             const forcedGun = overrideMode === 'gun';
@@ -23570,7 +24612,7 @@ altitude,
                             const gunReason = gunLead
                                 ? `Gun attack with LCOS lead ${gunLead.leadTurns}T${extendedGun ? ' (open-sky extended)' : ''}${forcedGun ? ' [override]' : ''}`
                                 : (forcedGun ? 'Manual gun override' : 'Dogfight range prefers gun');
-                            return this.withDebug({
+                            const gunCand = {
                                 state: 'gunAttack',
                                 statusText: gunLabel,
                                 throttle: gunThrottle,
@@ -23581,7 +24623,75 @@ altitude,
                                 queueAction: 'gun',
                                 ready: true,
                                 reason: gunReason
-                            }, debugBase, [...tree, `selected: gunAttack-${forcedGun ? 'override' : (extendedGun ? 'earlyOpenSky' : (closeIn ? 'close' : 'range'))}`], 'gunAttack');
+                            };
+                            const boresight = (!forcedGun && liveSelf && liveEnemyEng)
+                                ? this.checkGunBoresightIntercept(teamId, liveSelf, gunCand, liveEnemyEng)
+                                : { ok: true, hits: 1, minMissDist: 0 };
+                            if (!boresight.ok) {
+                                // Gun won't hit this turn: check if VT rocket lead-steering can score instead.
+                                const rocketAlt = this.buildRocketLeadAttackAction(teamId, {
+                                    liveSelf,
+                                    liveEnemy: liveEnemyEng,
+                                    enemy,
+                                    distance,
+                                    angleDeg: angleToTargetDeg,
+                                    headOnFactor,
+                                    frontAspect: headOnFactor > 0.35,
+                                    frontAspectPenalty,
+                                    lineOfSightBlocked,
+                                    coverInfo,
+                                    hasAnyMissile,
+                                    hasArmedMissile,
+                                    missileAttackWindow,
+                                    aiMissileType,
+                                    fox1Hold: fox1HoldEng
+                                });
+                                if (rocketAlt) {
+                                    return this.withDebug(
+                                        rocketAlt,
+                                        debugBase,
+                                        [...tree, `gunBoresight: ok=0 miss=${boresight.minMissDist}`, `selected: rocketLeadAttack-fromGun cpa=${rocketAlt.rocketBestCpa ?? '-'}`],
+                                        'rocketLeadAttack'
+                                    );
+                                }
+                                gunCand.queueAction = 'none';
+                                gunCand.reason = `${gunReason} (hold gun: boresight miss=${boresight.minMissDist}m)`;
+                            }
+                            return this.withDebug(
+                                gunCand,
+                                debugBase,
+                                [...tree, `gunBoresight: ok=${boresight.ok ? 1 : 0} hits=${boresight.hits} miss=${boresight.minMissDist}`, `selected: gunAttack-${forcedGun ? 'override' : (extendedGun ? 'earlyOpenSky' : (closeIn ? 'close' : 'range'))}`],
+                                'gunAttack'
+                            );
+                        }
+
+                        // Active VT rocket lead-steering when FOX-2 is dry, held/out-of-cone, front-aspect, or low-HP finisher.
+                        if (overrideMode !== 'missile' && !mandatoryMergeBreak && liveSelf && liveEnemyEng) {
+                            const rocketLeadAction = this.buildRocketLeadAttackAction(teamId, {
+                                liveSelf,
+                                liveEnemy: liveEnemyEng,
+                                enemy,
+                                distance,
+                                angleDeg: angleToTargetDeg,
+                                headOnFactor,
+                                frontAspect: headOnFactor > 0.35,
+                                frontAspectPenalty,
+                                lineOfSightBlocked,
+                                coverInfo,
+                                hasAnyMissile,
+                                hasArmedMissile,
+                                missileAttackWindow,
+                                aiMissileType,
+                                fox1Hold: fox1HoldEng
+                            });
+                            if (rocketLeadAction) {
+                                return this.withDebug(
+                                    rocketLeadAction,
+                                    debugBase,
+                                    [...tree, `selected: rocketLeadAttack dist=${distance.toFixed(1)} ang=${angleToTargetDeg.toFixed(1)} cpa=${rocketLeadAction.rocketBestCpa ?? '-'}`],
+                                    'rocketLeadAttack'
+                                );
+                            }
                         }
 
                         tree.push(`missileGate: any=${hasAnyMissile} lock=${missileLock} prep=${missilePrepWindow} attack=${missileAttackWindow} extAttack=${extendedMissileAttack} frontPenalty=${frontAspectPenalty} armed=${hasArmedMissile} openSkyBonus=${openSkyMissileBonus.toFixed(2)} dist=${distance.toFixed(1)} ang=${(angleToTarget * 180 / Math.PI).toFixed(1)}`);
@@ -23863,11 +24973,11 @@ altitude,
         const candMissileType = (baseAction && baseAction.missileType)
             || (baseAction && baseAction.debug && baseAction.debug.aiMissileType)
             || this.pickAiMissileType(self, dist, angle);
+        const foeIdCand = this.getEnemyId(teamId);
+        const liveFoeCand = (typeof GameContext !== 'undefined' && GameContext.getTeam)
+            ? GameContext.getTeam(foeIdCand) : null;
         let fox2PressAngleOk = true;
         if (candMissileType !== 'fox1' && hasArmedMissile && !missileLosBlocked && liveSelf && liveSelf.wrapper) {
-            const foeIdCand = this.getEnemyId(teamId);
-            const liveFoeCand = (typeof GameContext !== 'undefined' && GameContext.getTeam)
-                ? GameContext.getTeam(foeIdCand) : null;
             const fox2Check = this.canCommitFox2Launch({
                 shooterPos: selfPos,
                 shooterQuat: (liveSelf.wrapper.userData && liveSelf.wrapper.userData.logicalQuat) || liveSelf.wrapper.quaternion,
@@ -23880,6 +24990,26 @@ altitude,
         }
         const pressMissileWindow = hasArmedMissile && !missileLosBlocked && dist > mslMin * 0.9 && dist < mslMax * (urbanPressure ? 0.79 : 0.92) && angle < (urbanPressure ? 26 : 34) && fox2PressAngleOk;
         const aggression = tuning.hybridAggression * openSkyFactor;
+        const wantPressGun = (baseGunIntent && pressGunWindow)
+            || (!pressMissileWindow && (pressGunWindow || (dist < this.gunRangeOr(tuning) * (urbanPressure ? 0.6 : 0.79) && angle < (urbanPressure ? 22 : 28))));
+        const enemyForwardCand = (enemy && enemy.forward)
+            ? this.toVector3(enemy.forward).normalize()
+            : ((liveFoeCand && liveFoeCand.wrapper)
+                ? new THREE.Vector3(0, 0, 1).applyQuaternion(liveFoeCand.wrapper.quaternion).normalize()
+                : dir.clone().negate());
+        const pressGunLead = wantPressGun
+            ? this.getGunLeadAim(
+                teamId,
+                selfPos,
+                selfForward,
+                enemyPos,
+                enemyForwardCand,
+                self.ap || self.speed || 120,
+                (enemy && (enemy.ap || enemy.speed)) || 120,
+                liveSelf,
+                null
+            )
+            : null;
         let pressQueue = 'none';
         if (baseGunIntent && pressGunWindow) {
             pressQueue = 'gun';
@@ -23887,38 +25017,68 @@ altitude,
             pressQueue = 'missile';
         } else if (pressMissileWindow) {
             pressQueue = 'missile';
-        } else if (pressGunWindow || (dist < this.gunRangeOr(tuning) * (urbanPressure ? 0.6 : 0.79) && angle < (urbanPressure ? 22 : 28))) {
+        } else if (wantPressGun) {
             pressQueue = 'gun';
         }
 
+        const pressJoyX = (pressQueue === 'gun' && pressGunLead)
+            ? this.clamp(pressGunLead.horizontalBias * 0.92 + hBias * 0.14, -0.92, 0.92)
+            : this.clamp(hBias * (0.72 + aggression * 0.85), -1, 1);
+        const pressJoyY = (pressQueue === 'gun' && pressGunLead)
+            ? this.clamp(pressGunLead.verticalBias * 0.7 + vBias * 0.18, -0.5, 0.55)
+            : this.clamp(vBias * (0.85 + aggression * 0.2), -0.42, 0.42);
         const press = {
             ...baseAction,
             state: 'hybridPress',
             statusText: `NPC: HYBRID 壓制 ${Math.floor(dist)}m`,
             throttle: getEngineHeatLevel(self.heat) > 70 ? 3 : (dist > 60 && !urbanPressure && getEngineHeatLevel(self.heat) < 58 ? 5 : 4),
-            joyX: this.clamp(hBias * (0.72 + aggression * 0.85), -1, 1),
-            joyY: this.clamp(vBias * (0.85 + aggression * 0.2), -0.42, 0.42),
-            roll: this.clamp(hBias * (Math.PI / 3.8), -Math.PI / 3.8, Math.PI / 3.8),
+            joyX: pressJoyX,
+            joyY: pressJoyY,
+            roll: this.clamp(pressJoyX * (Math.PI / 4.2), -Math.PI / 3.8, Math.PI / 3.8),
             weapon: pressQueue === 'missile' ? 'missile' : 'gun',
             powerPylons: hasAnyMissile && !hasArmedMissile && pressQueue !== 'gun' && dist > 45 && !urbanPressure,
             queueAction: pressQueue,
             ready: true,
-            reason: baseGunIntent ? 'Hybrid candidate: preserve gun pressure' : `Hybrid candidate: pressure and close angle (openSky=${openSkyFactor.toFixed(2)})`
+            reason: pressQueue === 'gun'
+                ? `Hybrid LCOS gun press (lead=${pressGunLead ? pressGunLead.leadTurns : '-'}T)`
+                : (baseGunIntent ? 'Hybrid candidate: preserve gun pressure' : `Hybrid candidate: pressure and close angle (openSky=${openSkyFactor.toFixed(2)})`)
         };
+        if (press.queueAction === 'gun' && liveSelf && liveFoeCand) {
+            const pressBoresight = this.checkGunBoresightIntercept(teamId, liveSelf, press, liveFoeCand);
+            if (!pressBoresight.ok) {
+                press.queueAction = 'none';
+                press.reason = `${press.reason} (hold gun: boresight miss=${pressBoresight.minMissDist}m)`;
+            }
+        }
+        const rawBlitzQueue = dist < (urbanPressure ? 55 : 70) && angle < (urbanPressure ? 30 : 38)
+            ? (dist < (urbanPressure ? 50 : 60) ? 'gun' : (pressMissileWindow ? 'missile' : 'gun'))
+            : 'none';
+        const blitzJoyX = (rawBlitzQueue === 'gun' && pressGunLead)
+            ? this.clamp(pressGunLead.horizontalBias * 0.94 + hBias * 0.14, -0.95, 0.95)
+            : this.clamp(hBias * (0.92 + aggression), -1, 1);
+        const blitzJoyY = (rawBlitzQueue === 'gun' && pressGunLead)
+            ? this.clamp(pressGunLead.verticalBias * 0.72 + vBias * 0.18, -0.5, 0.55)
+            : this.clamp(vBias * 0.9, -0.5, 0.5);
         const blitz = {
             ...baseAction,
             state: 'hybridBlitz',
             statusText: `NPC: HYBRID 閃擊 ${Math.floor(dist)}m`,
             throttle: getEngineHeatLevel(self.heat) > 65 ? 3 : (urbanPressure ? 4 : 5),
-            joyX: this.clamp(hBias * (0.92 + aggression), -1, 1),
-            joyY: this.clamp(vBias * 0.9, -0.5, 0.5),
-            roll: this.clamp(hBias * Math.PI / 3.5, -Math.PI / 3.5, Math.PI / 3.5),
+            joyX: blitzJoyX,
+            joyY: blitzJoyY,
+            roll: this.clamp(blitzJoyX * Math.PI / 3.8, -Math.PI / 3.5, Math.PI / 3.5),
             weapon: dist < (urbanPressure ? 48 : 60) ? 'gun' : (hasArmedMissile ? 'missile' : 'gun'),
             powerPylons: hasAnyMissile && !hasArmedMissile && dist > 50 && !urbanPressure,
-            queueAction: dist < (urbanPressure ? 55 : 70) && angle < (urbanPressure ? 30 : 38) ? (dist < (urbanPressure ? 50 : 60) ? 'gun' : (pressMissileWindow ? 'missile' : 'gun')) : 'none',
+            queueAction: rawBlitzQueue,
             ready: true,
             reason: 'Hybrid candidate: aggressive blitz for open-sky or near-weapon window'
         };
+        if (blitz.queueAction === 'gun' && liveSelf && liveFoeCand) {
+            const blitzBoresight = this.checkGunBoresightIntercept(teamId, liveSelf, blitz, liveFoeCand);
+            if (!blitzBoresight.ok) {
+                blitz.queueAction = 'none';
+            }
+        }
         const conserve = {
             ...baseAction,
             state: 'hybridConserve',
@@ -23986,7 +25146,9 @@ altitude,
             'safetyLevelOut',
             // FOX-1 SARH: hybrid must never wipe illuminate nose-hold mid-flight.
             'fox1Illuminate',
-            'fox1IlluminateBreak'
+            'fox1IlluminateBreak',
+            // Active VT rocket lead-steering shot: keep verified lead solution intact.
+            'rocketLeadAttack'
         ]);
         if (hardSafetyStates.has(action.state)) {
             action.debug = {
@@ -24179,11 +25341,17 @@ altitude,
         return selected;
     },
 
-    run(teamId) {
+    plan(teamId, battleState = null) {
+        return this.run(teamId, { battleState, deferApply: true });
+    },
+
+    run(teamId, opts = {}) {
         if (typeof AirArenaBuildingRisk !== 'undefined' && AirArenaBuildingRisk.bumpObstacleBoxCache) {
             AirArenaBuildingRisk.bumpObstacleBoxCache();
         }
-        const battleState = GameContext.getSerializableBattleState();
+        const battleState = (opts && opts.battleState)
+            ? opts.battleState
+            : GameContext.getSerializableBattleState();
         const leadId = this.getWingmanLeadId(teamId);
         const wingmanOrder = this.getWingmanOrder(teamId);
         const action = this.decide(teamId, battleState);
@@ -24417,12 +25585,15 @@ altitude,
                     }
                 );
                 const side = Math.sign(Number(safeAction.joyX) || 0) || 1;
+                const activeStallAbort = !!(team.stalled || (Number.isFinite(apNow) && apNow < 45));
                 safeAction.state = 'energyRecover';
                 safeAction.statusText = `NPC: 逃生卸力回收 AP ${Math.floor(apNow)}`;
-                safeAction.throttle = Math.min(5, Math.max(3, Number(safeAction.throttle) || 4));
-                safeAction.joyX = expandRecover
-                    ? this.clamp(side * 0.36, -0.48, 0.48)
-                    : this.clamp(Number(safeAction.joyX) || 0, -0.16, 0.16);
+                safeAction.throttle = activeStallAbort ? 5 : Math.min(5, Math.max(3, Number(safeAction.throttle) || 4));
+                safeAction.joyX = activeStallAbort
+                    ? this.clamp(Number(safeAction.joyX) || 0, -0.25, 0.25)
+                    : (expandRecover
+                        ? this.clamp(side * 0.36, -0.48, 0.48)
+                        : this.clamp(Number(safeAction.joyX) || 0, -0.16, 0.16));
                 safeAction.joyY = expandRecover
                     ? (Number.isFinite(altNow) && altNow < 28 ? 0.22 : (Number(tuning.recoverPitchBias) || -0.2))
                     : (Number(tuning.recoverPitchBias) || -0.2);
@@ -24640,7 +25811,9 @@ altitude,
             this.applyStoresDoctrineOverlay(safeAction, teamId, team);
         }
 
-        GameContext.stateMachine.applyPilotAction(teamId, safeAction);
+        if (!(opts && opts.deferApply)) {
+            GameContext.stateMachine.applyPilotAction(teamId, safeAction);
+        }
         return safeAction;
     },
 
@@ -24727,11 +25900,14 @@ altitude,
             && this.fox1SequelByTeam[teamId].active)
             || this.hasOwnFox1InFlight(team);
 
-        const commit = Doc.pickStoresCommit(action, plannedTeam, foe, {
+        const wegoFoe = this.buildWegoSafeEnemyProxy(foe);
+        const enemyLowHp = !!(foe && Number.isFinite(Number(foe.hp)) && Number(foe.hp) > 0 && Number(foe.hp) <= 44);
+        const commit = Doc.pickStoresCommit(action, plannedTeam, wegoFoe, {
             distance: dist,
             angleDeg: ang,
             localZ,
             frontAspect,
+            enemyLowHp,
             fox2LaunchHold: !!dbg.fox2LaunchHold,
             lineOfSightBlocked: !!dbg.losBlocked,
             missileMinRange: this.missileMinOr(tuning),
