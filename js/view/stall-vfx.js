@@ -89,8 +89,9 @@
             const lowSpeed = smooth01(7.2, 2.2, fwdSpd);
             const highSlip = smooth01(16, 42, slipDeg);
             const kinematic = lowSpeed * highSlip;
-            // Pure very-low forward speed (hanging on nose at apex) also indicates stall
-            const apexHang = smooth01(3.8, 1.2, fwdSpd) * 0.85;
+            // Pure very-low forward speed (hanging on nose at apex) also indicates stall.
+            // Threshold sits below normal IDL/ECO cruise (~1.7–3.2 u/turn) so cruising jets are not flagged stalled.
+            const apexHang = smooth01(1.6, 0.55, fwdSpd) * 0.85;
             factor = Math.max(factor, kinematic, apexHang);
         }
 

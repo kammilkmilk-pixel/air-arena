@@ -80,6 +80,10 @@ assert(knobs.aoaFogStart === 0.55, 'cfg.aoaFogStart');
 assert(knobs.trailPersistMs >= 2000, 'trailPersistMs should cover ~1–2 turns, got ' + knobs.trailPersistMs);
 assert(knobs.vortexPts >= 64, 'vortexPts buffer for long wake, got ' + knobs.vortexPts);
 assert(knobs.centerWakeTurns > knobs.tipWakeTurns, 'centerWakeTurns (' + knobs.centerWakeTurns + ') must exceed shorter tipWakeTurns (' + knobs.tipWakeTurns + ')');
+assert(knobs.centerWakeWidth >= 0.2, 'centerWakeWidth must be wide enough over city/ground, got ' + knobs.centerWakeWidth);
+assert(knobs.centerWakeOpacity >= 0.9, 'centerWakeOpacity must stay crisp, got ' + knobs.centerWakeOpacity);
+assert(C.centerWakeIntensity({ stallFactor: 0, forwardSpeed: 4.16 }) === 1, 'MIL cruise (4.16 u/turn) must render full center wake');
+assert(C.centerWakeIntensity({ stallFactor: 0, forwardSpeed: 0.5 }) === 0, 'near-zero speed must suppress center wake');
 
 // Wingtip condensation maneuver gating checks
 assert(typeof C.tipCondensationIntensity === 'function', 'tipCondensationIntensity exported');

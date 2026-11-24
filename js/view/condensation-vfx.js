@@ -27,11 +27,11 @@
             enabled: v.enabled !== false,
             onlyDuringFlightAnim: v.onlyDuringFlightAnim !== false,
             centerWakeTurns: Math.max(0.2, Math.min(3.0, Number(v.centerWakeTurns) || 1.6)),
-            centerWakeWidth: Math.max(0.02, Number(v.centerWakeWidth) || 0.12),
-            centerWakeOpacity: Math.max(0.05, Math.min(1, Number(v.centerWakeOpacity) || 0.82)),
+            centerWakeWidth: Math.max(0.02, Number(v.centerWakeWidth) || 0.24),
+            centerWakeOpacity: Math.max(0.05, Math.min(1, Number(v.centerWakeOpacity) || 0.95)),
             tipWakeTurns: Math.max(0.08, Math.min(2.5, Number(v.tipWakeTurns) || 0.55)),
-            tipWakeWidth: Math.max(0.015, Number(v.tipWakeWidth) || 0.085),
-            tipWakeOpacity: Math.max(0.05, Math.min(1, Number(v.tipWakeOpacity) || 0.92)),
+            tipWakeWidth: Math.max(0.015, Number(v.tipWakeWidth) || 0.13),
+            tipWakeOpacity: Math.max(0.05, Math.min(1, Number(v.tipWakeOpacity) || 0.95)),
             tipPullStartRad: Number.isFinite(Number(v.tipPullStartRad)) ? Number(v.tipPullStartRad) : 0.24,
             tipPullFullRad: Number.isFinite(Number(v.tipPullFullRad)) ? Number(v.tipPullFullRad) : 0.58,
             tipClimbStartDeg: Number.isFinite(Number(v.tipClimbStartDeg)) ? Number(v.tipClimbStartDeg) : 22,
@@ -129,10 +129,11 @@
                 map: wakeFadeTex,
                 color: 0xffffff,
                 transparent: true,
-                opacity: 0.85,
+                opacity: 0.95,
                 blending: THREE.NormalBlending,
                 depthWrite: false,
-                side: THREE.DoubleSide
+                side: THREE.DoubleSide,
+                fog: false
             });
         }
         if (!fogMat) {
@@ -339,8 +340,9 @@
         if (stallGate <= 1e-4) return 0;
         const fwdSpeed = Number.isFinite(Number(m.forwardSpeed))
             ? Number(m.forwardSpeed)
-            : (Number.isFinite(Number(m.speed)) ? Number(m.speed) : 15);
-        const speedGate = smooth01(3.2, 8.0, fwdSpeed);
+            : (Number.isFinite(Number(m.speed)) ? Number(m.speed) : 5.0);
+        // Calibrated to real physics.js per-turn flight distances (ECO≈2.5–3.2, MIL≈3.7–8.2, AB≈11–18 u/turn).
+        const speedGate = smooth01(1.1, 3.0, fwdSpeed);
         return Math.max(0, Math.min(1, stallGate * speedGate));
     }
 
@@ -363,7 +365,7 @@
         const fwdSpeed = Number.isFinite(Number(m.forwardSpeed))
             ? Number(m.forwardSpeed)
             : Number(m.speed);
-        const speedFactor = Number.isFinite(fwdSpeed) ? smooth01(4.0, 9.0, fwdSpeed) : 1.0;
+        const speedFactor = Number.isFinite(fwdSpeed) ? smooth01(1.8, 4.2, fwdSpeed) : 1.0;
         if (speedFactor <= 1e-4) return 0;
 
         const pullRate = Number(m.pullRate) || 0;      // rad/turn (+ = pull-up, - = push-over)
@@ -484,7 +486,7 @@
                 }
             }
             _prevCenter.copy(_tmpCenter);
-            const widthScale = intensityFn ? (0.35 + 0.65 * intensity) : 1.0;
+            const widthScale = intensityFn ? (0.65 + 0.35 * intensity) : 1.0;
             const w = halfWidth * widthScale * (1.0 + age * 0.35);
             _tmpWing.multiplyScalar(w);
 

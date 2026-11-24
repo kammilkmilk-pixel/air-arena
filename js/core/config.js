@@ -475,15 +475,15 @@ const CONFIG = {
             enabled: true,
             /** LE fog only during combat animation / ACMI replay — never while planning stick. */
             onlyDuringFlightAnim: true,
-            /** Center white ribbon behind aircraft (length in turns, width matches forward ribbon 0.12). */
+            /** Center white ribbon behind aircraft (length in turns, tuned for readability over city/ground). */
             centerWakeTurns: 1.6,
-            centerWakeWidth: 0.12,
-            centerWakeOpacity: 0.82,
+            centerWakeWidth: 0.24,
+            centerWakeOpacity: 0.95,
             /** Shorter white ribbons from wingTipL / wingTipR emitters (length in turns).
              *  Triggered only during steep climbs / high-G pull-ups or rolling maneuvers. */
             tipWakeTurns: 0.55,
-            tipWakeWidth: 0.085,
-            tipWakeOpacity: 0.92,
+            tipWakeWidth: 0.13,
+            tipWakeOpacity: 0.95,
             /** Wingtip condensation trigger thresholds (in rad/turn or degrees). */
             tipPullStartRad: 0.24,
             tipPullFullRad: 0.58,
@@ -598,6 +598,14 @@ const CONFIG = {
         groundStores: false,
         bombPylonIndex: 0,
         rocketPylonIndex: 3
+    },
+
+    /**
+     * Phase B 3D ground-target rings & cones (ground-targets.js).
+     * Hidden by default until the map update; opt-in via ?groundTargets=1.
+     */
+    groundTargets: {
+        showVisuals: false
     },
 
     /**

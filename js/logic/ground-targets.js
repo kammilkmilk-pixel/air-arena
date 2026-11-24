@@ -106,8 +106,23 @@
         return true;
     }
 
+    function visualsEnabled() {
+        try {
+            if (typeof window !== 'undefined' && window.location && window.location.search) {
+                const q = new URLSearchParams(window.location.search).get('groundTargets');
+                if (q === '1' || q === 'true') return true;
+                if (q === '0' || q === 'false') return false;
+            }
+        } catch (_) { /* ignore */ }
+        return !!(typeof CONFIG !== 'undefined' && CONFIG && CONFIG.groundTargets && CONFIG.groundTargets.showVisuals === true);
+    }
+
     function syncVisuals() {
         if (typeof scene === 'undefined' || !scene || typeof THREE === 'undefined') return;
+        if (!visualsEnabled()) {
+            clearVisuals();
+            return;
+        }
         if (!ensureMarkerAssets()) return;
         if (!_group) {
             _group = new THREE.Group();
@@ -363,6 +378,7 @@
         getDesignated,
         resolveStrikeTarget,
         applyBlastDamage,
+        visualsEnabled,
         syncVisuals,
         toSerializable,
         hydrate,
