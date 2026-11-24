@@ -83,7 +83,7 @@ const cwCruise = Cond.centerWakeIntensity({ stallFactor: 0, forwardSpeed: 4.16 }
 const cwEco = Cond.centerWakeIntensity({ stallFactor: 0, forwardSpeed: 2.5 });
 const cwStall = Cond.centerWakeIntensity({ stallFactor: sfDeep, forwardSpeed: 3.0 });
 assert.strictEqual(cwCruise, 1, `Center white wake should be 1.0 in normal MIL flight (4.16 u/turn), got ${cwCruise}`);
-assert(cwEco > 0.75, `Center white wake should stay strong in ECO cruise (2.5 u/turn), got ${cwEco}`);
+assert(cwEco > 0.35 && cwEco < 0.85, `Center white wake should be subtle in ECO cruise (2.5 u/turn), got ${cwEco}`);
 assert.strictEqual(cwStall, 0, `Center white wake must vanish during deep stall, got ${cwStall}`);
 
 const tipHighSpeedClimb = Cond.tipCondensationIntensity({ climbDeg: 40, forwardSpeed: 20, stallFactor: 0 });

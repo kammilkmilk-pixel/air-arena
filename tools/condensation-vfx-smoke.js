@@ -80,10 +80,12 @@ assert(knobs.aoaFogStart === 0.55, 'cfg.aoaFogStart');
 assert(knobs.trailPersistMs >= 2000, 'trailPersistMs should cover ~1–2 turns, got ' + knobs.trailPersistMs);
 assert(knobs.vortexPts >= 64, 'vortexPts buffer for long wake, got ' + knobs.vortexPts);
 assert(knobs.centerWakeTurns > knobs.tipWakeTurns, 'centerWakeTurns (' + knobs.centerWakeTurns + ') must exceed shorter tipWakeTurns (' + knobs.tipWakeTurns + ')');
-assert(knobs.centerWakeWidth >= 0.2, 'centerWakeWidth must be wide enough over city/ground, got ' + knobs.centerWakeWidth);
-assert(knobs.centerWakeOpacity >= 0.9, 'centerWakeOpacity must stay crisp, got ' + knobs.centerWakeOpacity);
-assert(C.centerWakeIntensity({ stallFactor: 0, forwardSpeed: 4.16 }) === 1, 'MIL cruise (4.16 u/turn) must render full center wake');
+assert(knobs.centerWakeWidth >= 0.1 && knobs.centerWakeWidth <= 0.15, 'centerWakeWidth should stay subtle (0.10–0.15), got ' + knobs.centerWakeWidth);
+assert(knobs.centerWakeOpacity >= 0.5 && knobs.centerWakeOpacity <= 0.78, 'centerWakeOpacity should stay moderate (0.50–0.78), got ' + knobs.centerWakeOpacity);
+assert(knobs.tipWakeWidth <= 0.095, 'tipWakeWidth should stay delicate (<=0.095), got ' + knobs.tipWakeWidth);
+assert(C.centerWakeIntensity({ stallFactor: 0, forwardSpeed: 4.16 }) === 1, 'MIL cruise (4.16 u/turn) must render center wake');
 assert(C.centerWakeIntensity({ stallFactor: 0, forwardSpeed: 0.5 }) === 0, 'near-zero speed must suppress center wake');
+assert(C.tipCondensationIntensity({ pullRate: 0.65, rollRate: 0, turnRate: 0, climbDeg: 18, bankDeg: 0, forwardSpeed: 3.0, stallFactor: 0 }) === 0, 'low/medium speed maneuver must NOT trigger wingtip condensation');
 
 // Wingtip condensation maneuver gating checks
 assert(typeof C.tipCondensationIntensity === 'function', 'tipCondensationIntensity exported');
