@@ -2420,3 +2420,11 @@ body:not(:has(#replay-team-roster)) .team-seat-row {
     visibility: visible !important;
     pointer-events: auto !important;
 }
+/* Split chase panes: one shared tactical computer would sit across every screen. */
+body.is-split-panes #combat-hud-mobile,
+body.is-split-panes #tactical-computer-module {
+    display: none !important;
+    visibility: hidden !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+}

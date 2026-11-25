@@ -166,6 +166,7 @@
     /** Hide aiming ring / ghost plane / planned path so every chase pane shows the same scene. */
     function applySplitOverlayPolicy() {
         const split = isSplit();
+        if (document.body) document.body.classList.toggle('is-split-panes', split);
         if (split) {
             hideSplitExclusiveScene();
             hideSplitExclusiveDom();
