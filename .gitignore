@@ -3,6 +3,9 @@ node_modules/
 # Local AI tuning overrides (use pilot-tuning.local.example.js as template)
 js/ai/pilot-tuning.local.js
 
+# Local Supabase project URL + publishable key
+js/core/supabase-config.local.js
+
 # Generated tool reports (keep *smoke.json and control-baseline-regression.json fixtures committed)
 tools/reports/autotune-*.json
 tools/reports/merged-*.json
