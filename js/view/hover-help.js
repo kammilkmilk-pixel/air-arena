@@ -263,9 +263,118 @@
     let timer = 0;
     let current = null;
     let stashedTitle = null;
+    let lastX = 0;
+    let lastY = 0;
+    let raycaster = null;
+    let pointerNdc = null;
+    let lastPickMs = 0;
+    let lastPickKey = '';
+
+    function isAircraft(token) {
+        return !!(token && token.kind === 'aircraft');
+    }
+
+    function sameToken(a, b) {
+        if (a === b) return true;
+        if (isAircraft(a) && isAircraft(b)) return a.id === b.id && !!a.ghost === !!b.ghost;
+        return false;
+    }
+
+    function seatName(id) {
+        if (id === 'red2') return 'RED-2';
+        if (id === 'blue') return 'BLUE-1';
+        if (id === 'blue2') return 'BLUE-2';
+        return 'RED-1';
+    }
+
+    function aircraftNote(hit) {
+        if (!hit) return '';
+        if (hit.ghost) return '這是規劃中的預覽機位。點一下選取這架戰機，並打開它的操作。';
+        const t = (typeof GameContext !== 'undefined' && GameContext.getTeam) ? GameContext.getTeam(hit.id) : null;
+        const who = (t && t.callsign) ? (seatName(hit.id) + ' ' + t.callsign) : seatName(hit.id);
+        let hostile = false;
+        if (typeof GameContext !== 'undefined' && GameContext.getFaction && typeof teams !== 'undefined') {
+            const faction = GameContext.getFaction(hit.id);
+            const living = (GameContext.getLivingTeamIds && GameContext.getLivingTeamIds()) || [];
+            for (let i = 0; i < living.length; i++) {
+                const other = teams[living[i]];
+                if (!other || other.aiEnabled || other.isDestroyed) continue;
+                const f = GameContext.getFaction(living[i]);
+                if (f && faction && f !== faction) { hostile = true; break; }
+            }
+        }
+        let note = hostile
+            ? (who + ' 的機身。點一下鎖定這架敵機。')
+            : (who + ' 的機身。點一下把畫面交給這架戰機。');
+        if (t && Number.isFinite(Number(t.hp))) note += '生命值 ' + Math.max(0, Math.round(Number(t.hp))) + '。';
+        return note;
+    }
+
+    function isWakeObject(obj) {
+        let n = obj;
+        while (n) {
+            const name = n.name || '';
+            if (n.userData && n.userData.isCondensationVfx) return true;
+            if (name.indexOf('condensation') === 0) return true;
+            n = n.parent;
+        }
+        return false;
+    }
+
+    function pickAircraft(clientX, clientY) {
+        if (typeof THREE === 'undefined' || typeof teams === 'undefined' || typeof renderer === 'undefined' || !renderer) return null;
+        const mv = root.AirArenaMultiView;
+        const view = (mv && typeof mv.cameraForClient === 'function') ? mv.cameraForClient(clientX, clientY) : null;
+        const cam = view ? view.camera : (typeof camera !== 'undefined' ? camera : null);
+        if (!cam || !renderer.domElement) return null;
+        const bounds = renderer.domElement.getBoundingClientRect();
+        const rect = view ? view.rect : { x: 0, y: 0, width: bounds.width, height: bounds.height };
+        const left = view ? view.left : bounds.left;
+        const top = view ? view.top : bounds.top;
+        const localX = clientX - left - rect.x;
+        const localY = clientY - top - rect.y;
+        if (localX < 0 || localY < 0 || localX > rect.width || localY > rect.height) return null;
+        if (!raycaster) {
+            raycaster = new THREE.Raycaster();
+            pointerNdc = new THREE.Vector2();
+        }
+        pointerNdc.x = (localX / Math.max(1, rect.width)) * 2 - 1;
+        pointerNdc.y = -((localY / Math.max(1, rect.height)) * 2 - 1);
+        raycaster.setFromCamera(pointerNdc, cam);
+        const ids = (typeof GameContext !== 'undefined' && GameContext.getActiveMatchIds)
+            ? GameContext.getActiveMatchIds()
+            : ['red', 'blue'];
+        const roots = [];
+        ids.forEach((id) => {
+            const t = teams[id];
+            if (t && t.wrapper && t.wrapper.visible) roots.push(t.wrapper);
+        });
+        if (root.ghostWrapper && root.ghostWrapper.visible) roots.push(root.ghostWrapper);
+        if (!roots.length) return null;
+        const hits = raycaster.intersectObjects(roots, true);
+        for (let i = 0; i < hits.length; i++) {
+            if (isWakeObject(hits[i].object)) continue;
+            let walk = hits[i].object;
+            let ghost = false;
+            let teamId = null;
+            while (walk) {
+                if (walk === root.ghostWrapper) ghost = true;
+                if (!teamId && walk.userData && walk.userData.teamId) teamId = walk.userData.teamId;
+                walk = walk.parent;
+            }
+            if (ghost) {
+                teamId = (typeof root.uiCurrentTeamId === 'function')
+                    ? root.uiCurrentTeamId()
+                    : (GameContext.state && GameContext.state.activeTeamId);
+                return teamId ? { id: teamId, ghost: true } : null;
+            }
+            if (teamId) return { id: teamId, ghost: false };
+        }
+        return null;
+    }
 
     function restoreTitle() {
-        if (current && stashedTitle != null && !current.getAttribute('title')) {
+        if (current && current.getAttribute && stashedTitle != null && !current.getAttribute('title')) {
             current.setAttribute('title', stashedTitle);
         }
         stashedTitle = null;
@@ -276,6 +385,7 @@
         timer = 0;
         restoreTitle();
         current = null;
+        lastPickKey = '';
         const tip = document.getElementById(TIP_ID);
         if (tip) {
             tip.hidden = true;
@@ -299,9 +409,9 @@
         tip.style.top = top + 'px';
     }
 
-    function show(el, x, y) {
-        if (current !== el) return;
-        const text = helpFor(el);
+    function show(token) {
+        if (!sameToken(current, token)) return;
+        const text = isAircraft(token) ? aircraftNote(token) : helpFor(token);
         if (!text) {
             hide();
             return;
@@ -310,7 +420,7 @@
         tip.textContent = text;
         tip.hidden = false;
         tip.classList.add('is-on');
-        place(x, y);
+        place(lastX, lastY);
     }
 
     function hideTipOnly() {
@@ -321,31 +431,49 @@
         tip.textContent = '';
     }
 
-    function arm(el, x, y) {
+    function arm(token, x, y) {
+        lastX = x;
+        lastY = y;
+        if (sameToken(current, token)) {
+            const tip = document.getElementById(TIP_ID);
+            if (tip && !tip.hidden) place(x, y);
+            return;
+        }
         if (timer) clearTimeout(timer);
         restoreTitle();
         hideTipOnly();
-        current = el;
-        const title = el.getAttribute('title');
-        if (title) {
-            stashedTitle = title;
-            el.removeAttribute('title');
+        current = token;
+        if (token && token.getAttribute) {
+            const title = token.getAttribute('title');
+            if (title) {
+                stashedTitle = title;
+                token.removeAttribute('title');
+            } else {
+                stashedTitle = null;
+            }
         } else {
             stashedTitle = null;
         }
-        timer = setTimeout(() => show(el, x, y), DELAY_MS);
+        timer = setTimeout(() => show(current), DELAY_MS);
     }
 
     document.addEventListener('pointerover', (ev) => {
         if (ev.pointerType && ev.pointerType !== 'mouse') return;
         const el = targetOf(ev.target);
         if (!el) return;
-        if (el === current) return;
+        if (sameToken(el, current)) return;
         arm(el, ev.clientX, ev.clientY);
     }, true);
 
     document.addEventListener('pointerout', (ev) => {
         if (!current) return;
+        if (isAircraft(current)) {
+            const canvas = (typeof renderer !== 'undefined' && renderer) ? renderer.domElement : null;
+            const next = ev.relatedTarget;
+            if (next && canvas && (next === canvas || (canvas.contains && canvas.contains(next)))) return;
+            hide();
+            return;
+        }
         const next = ev.relatedTarget;
         if (next && current.contains && current.contains(next)) return;
         const landed = targetOf(next);
@@ -355,9 +483,33 @@
 
     document.addEventListener('pointermove', (ev) => {
         if (ev.pointerType && ev.pointerType !== 'mouse') return;
-        const tip = document.getElementById(TIP_ID);
-        if (!tip || tip.hidden || !current) return;
-        place(ev.clientX, ev.clientY);
+        const dom = targetOf(ev.target);
+        if (dom) {
+            const tip = document.getElementById(TIP_ID);
+            if (tip && !tip.hidden && current && current.nodeType) place(ev.clientX, ev.clientY);
+            return;
+        }
+        const now = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+        if (now - lastPickMs < 40 && isAircraft(current)) {
+            lastX = ev.clientX;
+            lastY = ev.clientY;
+            const tip = document.getElementById(TIP_ID);
+            if (tip && !tip.hidden) place(ev.clientX, ev.clientY);
+            return;
+        }
+        lastPickMs = now;
+        const hit = pickAircraft(ev.clientX, ev.clientY);
+        if (!hit) {
+            if (isAircraft(current)) hide();
+            return;
+        }
+        const key = (hit.ghost ? 'g:' : 'a:') + hit.id;
+        if (key === lastPickKey && isAircraft(current)) {
+            arm(current, ev.clientX, ev.clientY);
+            return;
+        }
+        lastPickKey = key;
+        arm({ kind: 'aircraft', id: hit.id, ghost: !!hit.ghost }, ev.clientX, ev.clientY);
     }, true);
 
     document.addEventListener('pointerdown', () => hide(), true);
@@ -367,6 +519,7 @@
     root.AirArenaHoverHelp = {
         delayMs: DELAY_MS,
         helpFor,
-        hide
+        hide,
+        pickAircraft
     };
 })(window);
