@@ -289,7 +289,7 @@
 
     function aircraftNote(hit) {
         if (!hit) return '';
-        if (hit.ghost) return '這是規劃中的預覽機位。點一下選取這架戰機，並打開它的操作。';
+        if (hit.ghost) return '這是規劃中的預覽機位。點擊打開武器設定介面。';
         const t = (typeof GameContext !== 'undefined' && GameContext.getTeam) ? GameContext.getTeam(hit.id) : null;
         const who = (t && t.callsign) ? (seatName(hit.id) + ' ' + t.callsign) : seatName(hit.id);
         let hostile = false;
@@ -305,7 +305,7 @@
         }
         let note = hostile
             ? (who + ' 的機身。點一下鎖定這架敵機。')
-            : (who + ' 的機身。點一下把畫面交給這架戰機。');
+            : (who + ' 的機身。點擊打開武器設定介面。');
         if (t && Number.isFinite(Number(t.hp))) note += '生命值 ' + Math.max(0, Math.round(Number(t.hp))) + '。';
         return note;
     }
