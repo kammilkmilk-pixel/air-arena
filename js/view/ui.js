@@ -3344,7 +3344,8 @@ document.addEventListener("DOMContentLoaded", () => {
                 const ammo = (typeof AirArenaRocket !== 'undefined')
                     ? AirArenaRocket.ensurePodAmmo(p)
                     : (p.ammo || 0);
-                const max = p.ammoMax || 9;
+                const max = p.ammoMax || ((typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getRocketRoundsPerPod === 'function')
+                    ? CONFIG.getRocketRoundsPerPod() : 9);
                 showSMSAlert(
                     nextState === 'armed'
                         ? (prevState === 'armed'
@@ -3378,6 +3379,9 @@ document.addEventListener("DOMContentLoaded", () => {
                 window.uiToggleRocketFuze();
             }
         });
+    }
+    if (typeof window.uiSyncRocketFuzeTooltips === 'function') {
+        window.uiSyncRocketFuzeTooltips();
     }
 
     // 戰術電腦中央：交戰開始 ▶／執行（等同席位「規劃中／待命中」）
@@ -3633,7 +3637,9 @@ function updateDashboardUI(teamObj) {
     if (apVal) apVal.innerText = Math.floor(previewAp);
     // Gauge scale matches CONFIG.rules.maxAp (was hard-capped at 250 → 250–300 looked "stuck").
     if (apNeedle) {
-        let maxGaugeAP = (typeof MAX_AP === 'number' && MAX_AP > 0) ? MAX_AP : 300;
+        let maxGaugeAP = (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getMaxAp === 'function')
+            ? CONFIG.getMaxAp()
+            : ((typeof MAX_AP === 'number' && MAX_AP > 0) ? MAX_AP : 300);
         let deg = -90 + (previewAp / maxGaugeAP) * 180; if (isNaN(deg)) deg = -90; deg = Math.max(-90, Math.min(90, deg));
         let theta = deg * Math.PI / 180; let x2 = 50 + 28 * Math.sin(theta); let y2 = 50 - 28 * Math.cos(theta);
         apNeedle.setAttribute('x2', x2); apNeedle.setAttribute('y2', y2); apNeedle.style.transform = ''; 
@@ -3656,7 +3662,9 @@ function updateDashboardUI(teamObj) {
     let hpFill = document.getElementById('hud-hp-fill-vertical');
     if (hpFill) {
         let currentHp = (typeof teamObj.hp === 'number' && !isNaN(teamObj.hp)) ? teamObj.hp : 100;
-        let maxHp = (typeof MAX_HP !== 'undefined' && !isNaN(MAX_HP)) ? MAX_HP : 100;
+        let maxHp = (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getAircraftMaxHp === 'function')
+            ? CONFIG.getAircraftMaxHp(teamObj.type)
+            : ((typeof MAX_HP !== 'undefined' && !isNaN(MAX_HP)) ? MAX_HP : 100);
         let hpPercent = Math.max(0, Math.min(100, (currentHp / maxHp) * 100)); if (isNaN(hpPercent)) hpPercent = 100;
         hpFill.style.height = `${hpPercent}%`;
         if (hpPercent < 30) { hpFill.style.backgroundColor = '#ff1100'; hpFill.style.boxShadow = '0 0 10px #ff1100'; } 
@@ -3671,17 +3679,24 @@ function updateDashboardUI(teamObj) {
     const enemyObj = teams[enemyId];
     if (teamObj.wrapper && enemyObj && enemyObj.wrapper && !enemyObj.isDestroyed) {
         distance = teamObj.wrapper.position.distanceTo(enemyObj.wrapper.position); let forward = new THREE.Vector3(0, 0, 1).applyQuaternion(teamObj.wrapper.quaternion).normalize(); let angle = forward.angleTo(new THREE.Vector3().subVectors(enemyObj.wrapper.position, teamObj.wrapper.position).normalize());
+        const gunR = (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getGunRange === 'function')
+            ? CONFIG.getGunRange()
+            : (typeof GUN_RANGE !== 'undefined' ? GUN_RANGE : 70);
         isLocked = teamObj.weapon === 'gun'
-            ? (distance <= (typeof GUN_RANGE !== 'undefined' ? GUN_RANGE : 70) && angle <= Math.PI/12)
+            ? (distance <= gunR && angle <= Math.PI / 12)
             : (() => {
-                const live = typeof teamLiveMissileType === 'function' ? teamLiveMissileType(teamObj) : 'fox2';
-                if (live === 'fox1') {
-                    const cfg = typeof getMissileWeaponConfig === 'function' ? getMissileWeaponConfig('fox1') : (CONFIG.weapons.fox1 || {});
-                    const minR = Number(cfg.minArmingRange) || 50;
-                    const maxR = Number(cfg.seekerRange) || 200;
-                    return distance >= minR && distance <= maxR && angle <= (Number(cfg.seekerAngle) || Math.PI / 14);
-                }
-                return distance <= (typeof SEEKER_RANGE !== 'undefined' ? SEEKER_RANGE : 120) && angle <= Math.PI/12;
+                const live = ((typeof teamLiveMissileType === 'function') ? teamLiveMissileType(teamObj) : null) || 'fox2';
+                const maxR = (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getMissileSeekerRange === 'function')
+                    ? CONFIG.getMissileSeekerRange(live)
+                    : (typeof SEEKER_RANGE !== 'undefined' ? SEEKER_RANGE : 120);
+                const maxAng = (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getMissileSeekerAngle === 'function')
+                    ? CONFIG.getMissileSeekerAngle(live)
+                    : (Math.PI / 12);
+                const minR = live === 'fox1'
+                    ? ((typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getMissileMinArmingRange === 'function')
+                        ? CONFIG.getMissileMinArmingRange('fox1') : 50)
+                    : 0;
+                return distance >= minR && distance <= maxR && angle <= maxAng;
             })();
     }
 
@@ -3711,9 +3726,13 @@ function updateDashboardUI(teamObj) {
                 const ammo = armedPod && typeof AirArenaRocket !== 'undefined'
                     ? AirArenaRocket.ensurePodAmmo(armedPod)
                     : 0;
-                const max = (armedPod && armedPod.ammoMax) || 9;
+                const defaultPodMax = (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getRocketRoundsPerPod === 'function')
+                    ? CONFIG.getRocketRoundsPerPod() : 9;
+                const defaultSalvo = (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getRocketSalvoPerTurn === 'function')
+                    ? CONFIG.getRocketSalvoPerTurn() : 3;
+                const max = (armedPod && armedPod.ammoMax) || defaultPodMax;
                 const salvo = Math.min(
-                    (typeof AirArenaRocket !== 'undefined' ? AirArenaRocket.salvoPerTurn() : 3),
+                    (typeof AirArenaRocket !== 'undefined' ? AirArenaRocket.salvoPerTurn() : defaultSalvo),
                     ammo
                 );
                 const fuze = (typeof AirArenaRocket !== 'undefined' && typeof AirArenaRocket.getTeamFuzeMode === 'function')
@@ -3746,6 +3765,9 @@ function updateDashboardUI(teamObj) {
         }
         const elFuzeBtn = document.getElementById('sms-fuze-btn');
         if (elFuzeBtn) {
+            if (typeof window.uiSyncRocketFuzeTooltips === 'function') {
+                window.uiSyncRocketFuzeTooltips();
+            }
             if (teamObj.weapon === 'rocket') {
                 const fuze = (typeof AirArenaRocket !== 'undefined' && typeof AirArenaRocket.getTeamFuzeMode === 'function')
                     ? AirArenaRocket.getTeamFuzeMode(teamObj)
@@ -3772,7 +3794,8 @@ function updateDashboardUI(teamObj) {
                 const ammo = (typeof AirArenaRocket !== 'undefined')
                     ? AirArenaRocket.ensurePodAmmo(p)
                     : (Number(p.ammo) || 0);
-                const max = Number(p.ammoMax) || 9;
+                const max = Number(p.ammoMax) || ((typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getRocketRoundsPerPod === 'function')
+                    ? CONFIG.getRocketRoundsPerPod() : 9);
                 wLabel = `RKT ${ammo}/${max}`;
             }
             if (label) label.innerText = `PYLON ${p.id} ${wLabel}`;
@@ -4030,6 +4053,40 @@ function uiToggleRocketFuze(teamId = null, explicitMode = null) {
 }
 window.uiToggleRocketFuze = uiToggleRocketFuze;
 
+let _lastRocketFuzeTooltipSig = '';
+function uiSyncRocketFuzeTooltips() {
+    if (typeof document === 'undefined') return null;
+    const tips = (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.formatRocketFuzeTooltips === 'function')
+        ? CONFIG.formatRocketFuzeTooltips()
+        : (() => {
+            const vtR = (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getRocketVtRadius === 'function')
+                ? CONFIG.getRocketVtRadius()
+                : ((CONFIG && CONFIG.weapons && CONFIG.weapons.rocket && Number(CONFIG.weapons.rocket.vtRadius)) || 4.5);
+            const blastR = (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getRocketBlastRadius === 'function')
+                ? CONFIG.getRocketBlastRadius()
+                : ((CONFIG && CONFIG.weapons && CONFIG.weapons.rocket && Number(CONFIG.weapons.rocket.blastRadius)) || 6);
+            return {
+                vtTitle: `對空近發引信（${vtR}m 感應空爆）`,
+                impactTitle: `撞擊引信（觸地／建築引爆，${blastR}m 爆震半徑）`,
+                smsTitle: `切換火箭引信（VT 對空 ${vtR}m 空爆／IMPACT 對地 ${blastR}m 爆震）`
+            };
+        })();
+    const sig = `${tips.vtTitle}|${tips.impactTitle}|${tips.smsTitle}`;
+    const smsBtn = document.getElementById('sms-fuze-btn');
+    if (_lastRocketFuzeTooltipSig !== sig || (smsBtn && smsBtn.title !== tips.smsTitle)) {
+        _lastRocketFuzeTooltipSig = sig;
+        if (smsBtn) smsBtn.title = tips.smsTitle;
+        if (typeof document.querySelectorAll === 'function') {
+            document.querySelectorAll('.ops-fuze-btn').forEach((btn) => {
+                const mode = btn.getAttribute('data-fuze');
+                btn.title = mode === 'impact' ? tips.impactTitle : tips.vtTitle;
+            });
+        }
+    }
+    return tips;
+}
+window.uiSyncRocketFuzeTooltips = uiSyncRocketFuzeTooltips;
+
 /** Toggle gun fire / missile launch queue for the active human seat (SMS ENT + LCOS double-tap). */
 function uiToggleWeaponFireQueue(teamId = null) {
     const currentTeam = teamId || uiCurrentTeamId();
@@ -4076,7 +4133,9 @@ function uiToggleWeaponFireQueue(teamId = null) {
             ? GameContext.stateMachine.toggleRocketQueue(currentTeam)
             : false;
         const ammo = pods[0] ? AirArenaRocket.ensurePodAmmo(pods[0]) : 0;
-        const salvo = Math.min((typeof AirArenaRocket !== 'undefined' ? AirArenaRocket.salvoPerTurn() : 3), ammo);
+        const fallbackSalvo = (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getRocketSalvoPerTurn === 'function')
+            ? CONFIG.getRocketSalvoPerTurn() : 3;
+        const salvo = Math.min((typeof AirArenaRocket !== 'undefined' ? AirArenaRocket.salvoPerTurn() : fallbackSalvo), ammo);
         const fuze = (typeof AirArenaRocket !== 'undefined' && typeof AirArenaRocket.getTeamFuzeMode === 'function')
             ? AirArenaRocket.getTeamFuzeMode(t)
             : (t.rocketFuze === 'impact' ? 'impact' : 'vt');

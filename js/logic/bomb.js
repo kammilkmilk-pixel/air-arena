@@ -9,15 +9,31 @@
     const Bomb = {
         _previewGroup: null,
         _previewLine: null,
+        _previewLineCapacity: 0,
         _previewImpact: null,
-        _previewHud: null
+        _previewHud: null,
+        _previewSig: '',
+        _lastPreviewPath: null
     };
 
     function bombConfig() {
+        if (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getBombConfig === 'function') {
+            return CONFIG.getBombConfig();
+        }
         const w = (typeof CONFIG !== 'undefined' && CONFIG.weapons && CONFIG.weapons.bomb)
             ? CONFIG.weapons.bomb
             : {};
         return w;
+    }
+
+    function bombBlastRadius(cfg) {
+        if (cfg && cfg.blastRadius != null && Number.isFinite(Number(cfg.blastRadius))) {
+            return Number(cfg.blastRadius);
+        }
+        if (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getBombBlastRadius === 'function') {
+            return CONFIG.getBombBlastRadius();
+        }
+        return 10;
     }
 
     function isBombType(type) {
@@ -52,13 +68,17 @@
     function ballisticKnobs(opts) {
         const cfg = bombConfig();
         const o = opts || {};
-        const stepsPerTurn = (typeof CONFIG !== 'undefined' && CONFIG.rules && CONFIG.rules.stepsPerTurn)
-            ? Number(CONFIG.rules.stepsPerTurn) : 100;
+        const stepsPerTurn = (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getStepsPerTurn === 'function')
+            ? CONFIG.getStepsPerTurn()
+            : ((typeof CONFIG !== 'undefined' && CONFIG.rules && CONFIG.rules.stepsPerTurn)
+                ? Number(CONFIG.rules.stepsPerTurn) : 100);
+        const baseG = (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getGravity === 'function')
+            ? CONFIG.getGravity()
+            : ((typeof CONFIG !== 'undefined' && CONFIG.rules && CONFIG.rules.gravity != null)
+                ? Number(CONFIG.rules.gravity) : 9.8);
         return {
             stepsPerTurn,
-            g: ((typeof CONFIG !== 'undefined' && CONFIG.rules && CONFIG.rules.gravity != null)
-                ? Number(CONFIG.rules.gravity) : 9.8)
-                * (o.gravityScale != null ? Number(o.gravityScale)
+            g: baseG * (o.gravityScale != null ? Number(o.gravityScale)
                     : (cfg.gravityScale != null ? Number(cfg.gravityScale) : 1)),
             drag: o.drag != null ? Number(o.drag) : (cfg.drag != null ? Number(cfg.drag) : 0.004),
             groundY: o.groundY != null ? Number(o.groundY) : (cfg.groundY != null ? Number(cfg.groundY) : 0),
@@ -142,8 +162,7 @@
     function estimateReleaseState(team, pylon) {
         const cfg = bombConfig();
         const scale = cfg.releaseSpeedScale != null ? Number(cfg.releaseSpeedScale) : 1;
-        const stepsPerTurn = (typeof CONFIG !== 'undefined' && CONFIG.rules && CONFIG.rules.stepsPerTurn)
-            ? Number(CONFIG.rules.stepsPerTurn) : 100;
+        const stepsPerTurn = ballisticKnobs({}).stepsPerTurn;
         let pos = null;
         let quat = null;
         let vel = new THREE.Vector3(0, 0, 12);
@@ -196,9 +215,14 @@
             depthTest: true
         });
         const lineGeo = new THREE.BufferGeometry();
+        const initCap = 128;
+        lineGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(initCap * 3), 3));
+        lineGeo.setDrawRange(0, 0);
         const line = new THREE.Line(lineGeo, lineMat);
+        line.frustumCulled = false;
         g.add(line);
         Bomb._previewLine = line;
+        Bomb._previewLineCapacity = initCap;
 
         const ringGeo = new THREE.RingGeometry(0.9, 1.35, 32);
         const ringMat = new THREE.MeshBasicMaterial({
@@ -235,6 +259,31 @@
         if (Bomb._previewGroup) Bomb._previewGroup.visible = false;
     }
 
+    function _writePointsToLineBuffer(line, pts, getCap, setCap) {
+        if (!line || !line.geometry) return;
+        const count = pts.length;
+        let posAttr = line.geometry.attributes && line.geometry.attributes.position;
+        if (!posAttr || getCap() < count) {
+            const nextCap = Math.max(count + 16, 128);
+            const nextGeo = new THREE.BufferGeometry();
+            nextGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(nextCap * 3), 3));
+            line.geometry.dispose();
+            line.geometry = nextGeo;
+            posAttr = nextGeo.attributes.position;
+            setCap(nextCap);
+        }
+        const arr = posAttr.array;
+        for (let i = 0; i < count; i++) {
+            const p = pts[i];
+            const base = i * 3;
+            arr[base] = p.x;
+            arr[base + 1] = p.y;
+            arr[base + 2] = p.z;
+        }
+        posAttr.needsUpdate = true;
+        line.geometry.setDrawRange(0, count);
+    }
+
     /** Update CCIP path + impact marker for human bomb mode. */
     function updateCcipPreview(team) {
         if (!team || team.isDestroyed || team.weapon !== 'bomb') {
@@ -258,29 +307,49 @@
             hideCcipPreview();
             return null;
         }
-        const path = computeBallisticPath(rel.pos, rel.vel, {});
+        const cfg = bombConfig();
+        const knobs = ballisticKnobs({});
+        const reqSamples = cfg.previewSamples != null ? Number(cfg.previewSamples) : 48;
+        const sig = [
+            team.id || '',
+            pylon.id != null ? pylon.id : '',
+            rel.pos.x.toFixed(3), rel.pos.y.toFixed(3), rel.pos.z.toFixed(3),
+            rel.vel.x.toFixed(3), rel.vel.y.toFixed(3), rel.vel.z.toFixed(3),
+            knobs.stepsPerTurn, knobs.g.toFixed(3), knobs.drag.toFixed(4), knobs.groundY.toFixed(2),
+            reqSamples
+        ].join('|');
+
         const grp = ensurePreviewObjects();
+        if (Bomb._previewSig === sig && Bomb._lastPreviewPath) {
+            if (grp) grp.visible = true;
+            return Bomb._lastPreviewPath;
+        }
+
+        const path = computeBallisticPath(rel.pos, rel.vel, {});
+        Bomb._previewSig = sig;
+        Bomb._lastPreviewPath = path;
         if (!grp) return path;
 
-        const samples = Math.min(
-            path.points.length,
-            (bombConfig().previewSamples != null ? Number(bombConfig().previewSamples) : 48)
-        );
-        const stride = Math.max(1, Math.floor(path.points.length / samples));
+        const samples = Math.min(path.points.length, reqSamples);
+        const stride = Math.max(1, Math.floor(path.points.length / Math.max(1, samples)));
         const pts = [];
         for (let i = 0; i < path.points.length; i += stride) pts.push(path.points[i]);
-        if (path.impact) pts.push(path.impact.clone());
+        if (path.impact) pts.push(path.impact);
         if (Bomb._previewLine) {
-            Bomb._previewLine.geometry.dispose();
-            Bomb._previewLine.geometry = new THREE.BufferGeometry().setFromPoints(pts);
+            _writePointsToLineBuffer(
+                Bomb._previewLine,
+                pts,
+                () => Bomb._previewLineCapacity,
+                (c) => { Bomb._previewLineCapacity = c; }
+            );
         }
         if (Bomb._previewImpact && path.impact) {
             Bomb._previewImpact.position.copy(path.impact);
-            Bomb._previewImpact.position.y = (bombConfig().groundY != null ? Number(bombConfig().groundY) : 0) + 0.05;
+            Bomb._previewImpact.position.y = knobs.groundY + 0.05;
         }
         if (Bomb._previewCross && path.impact) {
             Bomb._previewCross.position.copy(path.impact);
-            Bomb._previewCross.position.y = (bombConfig().groundY != null ? Number(bombConfig().groundY) : 0) + 0.05;
+            Bomb._previewCross.position.y = knobs.groundY + 0.05;
         }
         grp.visible = true;
         return path;
@@ -293,7 +362,7 @@
 
     function pushBombExplosionVfx(ctx, step, pos, cfg, surface) {
         const exScale = cfg.explosionScale != null ? Number(cfg.explosionScale) : 2.6;
-        const blastR = cfg.blastRadius != null ? Number(cfg.blastRadius) : 10;
+        const blastR = bombBlastRadius(cfg);
         const sparkN = cfg.sparkCount != null ? Number(cfg.sparkCount) : 90;
         const sparkP = cfg.sparkPower != null ? Number(cfg.sparkPower) : 0.95;
         const surf = surface || (pos && pos.y <= 1.8 ? 'ground' : 'building');
@@ -392,7 +461,7 @@
         if (!ctx || !ctx.log) return;
         const cfg = bombConfig();
         const fuseDelay = cfg.fuseDelaySteps != null ? Number(cfg.fuseDelaySteps) : 1;
-        const blastR = cfg.blastRadius != null ? Number(cfg.blastRadius) : 10;
+        const blastR = bombBlastRadius(cfg);
         const damage = cfg.damage != null ? Number(cfg.damage) : 80;
         const knobs = ballisticKnobs({});
         const ids = (typeof combatActiveIds === 'function')
@@ -565,18 +634,27 @@
                         }
                         if (trailPts.length >= 2) {
                             if (!p.bombTrailLine) {
+                                const tGeo = new THREE.BufferGeometry();
+                                tGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(24 * 3), 3));
+                                tGeo.setDrawRange(0, 0);
                                 p.bombTrailLine = new THREE.Line(
-                                    new THREE.BufferGeometry(),
+                                    tGeo,
                                     new THREE.LineBasicMaterial({
                                         color: 0xb8c878,
                                         transparent: true,
                                         opacity: 0.55
                                     })
                                 );
+                                p.bombTrailLine.frustumCulled = false;
+                                p._bombTrailCap = 24;
                                 scene.add(p.bombTrailLine);
                             }
-                            p.bombTrailLine.geometry.dispose();
-                            p.bombTrailLine.geometry = new THREE.BufferGeometry().setFromPoints(trailPts);
+                            _writePointsToLineBuffer(
+                                p.bombTrailLine,
+                                trailPts,
+                                () => p._bombTrailCap || 0,
+                                (c) => { p._bombTrailCap = c; }
+                            );
                             p.bombTrailLine.visible = true;
                         }
                     }
@@ -592,6 +670,10 @@
     function clearBombVisuals(opts) {
         const dispose = !!(opts && opts.dispose);
         hideCcipPreview();
+        if (dispose) {
+            Bomb._previewSig = '';
+            Bomb._lastPreviewPath = null;
+        }
         if (typeof teams === 'undefined') return;
         Object.keys(teams).forEach((id) => {
             const t = teams[id];

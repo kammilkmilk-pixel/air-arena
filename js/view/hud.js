@@ -206,7 +206,9 @@ function updateLcosWeaponTag(team, opts = {}) {
         } else {
             // VT airburst mode
             const dist = Number(opts.distance);
-            const rMax = (typeof CONFIG !== 'undefined' && CONFIG.weapons && CONFIG.weapons.rocket && Number(CONFIG.weapons.rocket.range)) || 120;
+            const rMax = (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getRocketRange === 'function')
+                ? CONFIG.getRocketRange()
+                : ((typeof CONFIG !== 'undefined' && CONFIG.weapons && CONFIG.weapons.rocket && Number(CONFIG.weapons.rocket.range)) || 120);
             if (opts.obscured) {
                 status = queued ? '齊射·遮擋' : '遮擋';
                 tone = 'warn';
@@ -540,7 +542,12 @@ function updateFox1SupportHud(team, enemy, enemyPos, enemyProj, isObscured) {
     const noseFwd = new THREE.Vector3(0, 0, 1).applyQuaternion(shooterQuat).normalize();
     const lookDir = noseFwd;
     const enemyDist = enemyPos ? shooterPos.distanceTo(enemyPos) : 0;
-    const maxR = Number(cfg.seekerRange) || 200;
+    const maxR = (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getMissileSeekerRange === 'function')
+        ? CONFIG.getMissileSeekerRange('fox1')
+        : (Number(cfg.seekerRange) || 200);
+    const fox1LaunchMin = (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getMissileMinArmingRange === 'function')
+        ? CONFIG.getMissileMinArmingRange('fox1')
+        : (Number.isFinite(Number(cfg.minArmingRange)) ? Number(cfg.minArmingRange) : 50);
     const aimDist = enemyDist > 1
         ? Math.max(40, Math.min(maxR, enemyDist))
         : Math.max(60, maxR * 0.45);
@@ -563,11 +570,11 @@ function updateFox1SupportHud(team, enemy, enemyPos, enemyProj, isObscured) {
         const ringMode = (typeof describeFox1RingMode === 'function')
             ? describeFox1RingMode({ distance: enemyDist, inFlight: hasFox1Flight })
             : {
-                mode: hasFox1Flight ? 'support' : ((enemyDist >= 70) ? 'fire' : 'hold'),
-                lookFire: !hasFox1Flight && enemyDist >= 70,
-                lookSupport: !!(hasFox1Flight || enemyDist < 70)
+                mode: hasFox1Flight ? 'support' : ((enemyDist >= fox1LaunchMin) ? 'fire' : 'hold'),
+                lookFire: !hasFox1Flight && enemyDist >= fox1LaunchMin,
+                lookSupport: !!(hasFox1Flight || enemyDist < fox1LaunchMin)
             };
-        // M23: pre-launch <70 never looks fireable. In-flight 8–200 stays bright for support.
+        // M23: pre-launch <minArmingRange never looks fireable. In-flight stays bright for support.
         const holdLook = ringMode.mode === 'hold';
         const lookHot = holdLook ? false : physicsHot;
         const col = holdLook ? '#7aa2c8' : (lookHot ? '#ff0055' : '#ffaa00');
@@ -1091,7 +1098,9 @@ window.updateDynamicHUD = function() {
         || (GameContext.getNearestHostileId && GameContext.getNearestHostileId(currentTeam))
         || (currentTeam === 'red' ? 'blue' : 'red');
     let enemy = teams[enemyId];
-    const gunFireRange = (typeof GUN_RANGE !== 'undefined' && GUN_RANGE > 0) ? GUN_RANGE : 70;
+    const gunFireRange = (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getGunRange === 'function')
+        ? CONFIG.getGunRange()
+        : ((typeof GUN_RANGE !== 'undefined' && GUN_RANGE > 0) ? GUN_RANGE : 70);
     
     let hudShape = document.getElementById('hud-shape');
     let dynamicHud = document.getElementById('dynamic-hud');
@@ -1194,20 +1203,17 @@ window.updateDynamicHUD = function() {
             let forward = new THREE.Vector3(0, 0, 1).applyQuaternion(t.wrapper.quaternion).normalize();
             let angle = forward.angleTo(new THREE.Vector3().subVectors(enemyCurrentPos, t.wrapper.position).normalize());
             
-            const liveMsl = (typeof teamLiveMissileType === 'function') ? teamLiveMissileType(t) : 'fox2';
-            const fox1Cfg = (typeof getMissileWeaponConfig === 'function')
-                ? getMissileWeaponConfig('fox1')
-                : ((CONFIG.weapons && CONFIG.weapons.fox1) ? CONFIG.weapons.fox1 : {});
-            const missileLockRange = liveMsl === 'fox1'
-                ? (Number(fox1Cfg.seekerRange) || 200)
+            const liveMsl = ((typeof teamLiveMissileType === 'function') ? teamLiveMissileType(t) : null) || 'fox2';
+            const missileLockRange = (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getMissileSeekerRange === 'function')
+                ? CONFIG.getMissileSeekerRange(liveMsl)
                 : ((typeof SEEKER_RANGE !== 'undefined' && SEEKER_RANGE > 0) ? SEEKER_RANGE : 120);
-            const missileLockMin = liveMsl === 'fox1' ? (Number(fox1Cfg.minArmingRange) || 50) : 0;
-            const missileLockAng = liveMsl === 'fox1'
-                ? (Number(fox1Cfg.seekerAngle) || Math.PI / 14)
-                : Math.PI / 12;
-            const rktCfg = (typeof CONFIG !== 'undefined' && CONFIG.weapons && CONFIG.weapons.rocket)
-                ? CONFIG.weapons.rocket
-                : {};
+            const missileLockMin = liveMsl === 'fox1'
+                ? ((typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getMissileMinArmingRange === 'function')
+                    ? CONFIG.getMissileMinArmingRange('fox1') : 50)
+                : 0;
+            const missileLockAng = (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getMissileSeekerAngle === 'function')
+                ? CONFIG.getMissileSeekerAngle(liveMsl)
+                : (Math.PI / 12);
             let isLocked = false;
             if (t.weapon === 'gun') {
                 isLocked = distance <= gunFireRange && angle <= Math.PI / 8;
@@ -1257,16 +1263,12 @@ window.updateDynamicHUD = function() {
     // ========================================================================
     // 🎯 準星：外細圓環平時顯示（機砲 / 飛彈）；倒 T 僅機砲排程後
     // ========================================================================
-    const missileHitRange = (typeof SEEKER_RANGE !== 'undefined' && SEEKER_RANGE > 0)
-        ? SEEKER_RANGE
-        : ((typeof CONFIG !== 'undefined' && CONFIG.weapons && CONFIG.weapons.fox2 && CONFIG.weapons.fox2.seekerRange)
-            ? CONFIG.weapons.fox2.seekerRange
-            : 52);
-    const missileHitAngle = (typeof SEEKER_ANGLE !== 'undefined' && SEEKER_ANGLE > 0)
-        ? SEEKER_ANGLE
-        : ((typeof CONFIG !== 'undefined' && CONFIG.weapons && CONFIG.weapons.fox2 && CONFIG.weapons.fox2.seekerAngle)
-            ? CONFIG.weapons.fox2.seekerAngle
-            : Math.PI / 12);
+    const missileHitRange = (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getMissileSeekerRange === 'function')
+        ? CONFIG.getMissileSeekerRange('fox2')
+        : ((typeof SEEKER_RANGE !== 'undefined' && SEEKER_RANGE > 0) ? SEEKER_RANGE : 120);
+    const missileHitAngle = (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getMissileSeekerAngle === 'function')
+        ? CONFIG.getMissileSeekerAngle('fox2')
+        : ((typeof SEEKER_ANGLE !== 'undefined' && SEEKER_ANGLE > 0) ? SEEKER_ANGLE : (Math.PI / 12));
 
     const showInnerT =
         t.weapon === 'gun' && (
@@ -1368,15 +1370,18 @@ window.updateDynamicHUD = function() {
                 ghostHud.style.top = `${(ghostProj.y * -0.5 + 0.5) * window.innerHeight}px`;
             }
 
+            const hudStepsPerTurn = (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getStepsPerTurn === 'function')
+                ? CONFIG.getStepsPerTurn()
+                : ((typeof CONFIG !== 'undefined' && CONFIG.rules && Number(CONFIG.rules.stepsPerTurn)) || 100);
             let dist = myGhostPos.distanceTo(enemyGhostPos);
-            let aircraftSpeedPerFrame = (t.speed || 107) * 0.015 / 100;
+            let aircraftSpeedPerFrame = (t.speed || 107) * 0.015 / hudStepsPerTurn;
             let muzzleSpeedPerFrame = 4.0;
             let effectiveBulletSpeed = muzzleSpeedPerFrame + aircraftSpeedPerFrame;
             let framesToImpact = dist / effectiveBulletSpeed;
             let myGhostForward = new THREE.Vector3(0, 0, 1).applyQuaternion(myGhostQuat).normalize();
             let enemyForward = new THREE.Vector3(0, 0, 1).applyQuaternion(enemy.wrapper.quaternion).normalize();
             let myVel = myGhostForward.clone().multiplyScalar(aircraftSpeedPerFrame);
-            let enemySpeedPerFrame = (enemy.flightLength || (enemy.ap * 0.015)) / 100;
+            let enemySpeedPerFrame = (enemy.flightLength || (enemy.ap * 0.015)) / hudStepsPerTurn;
             let enemyVel = enemyForward.clone().multiplyScalar(enemySpeedPerFrame);
             let relativeVel = enemyVel.clone().sub(myVel);
             let bulletImpactPos = myGhostPos.clone().add(myGhostForward.clone().multiplyScalar(dist));
@@ -1566,11 +1571,17 @@ window.updateDynamicHUD = function() {
                     aimGroup.setAttribute('transform', 'translate(0 0)');
                 }
 
-                const liveM = (typeof teamLiveMissileType === 'function') ? teamLiveMissileType(t) : 'fox2';
-                const fox1c = (typeof getMissileWeaponConfig === 'function') ? getMissileWeaponConfig('fox1') : {};
-                const hitMax = liveM === 'fox1' ? (Number(fox1c.seekerRange) || 200) : missileHitRange;
-                const hitMin = liveM === 'fox1' ? (Number(fox1c.minArmingRange) || 50) : 8;
-                const hitAng = liveM === 'fox1' ? (Number(fox1c.seekerAngle) || Math.PI / 14) : missileHitAngle;
+                const liveM = ((typeof teamLiveMissileType === 'function') ? teamLiveMissileType(t) : null) || 'fox2';
+                const hitMax = (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getMissileSeekerRange === 'function')
+                    ? CONFIG.getMissileSeekerRange(liveM)
+                    : missileHitRange;
+                const hitMin = liveM === 'fox1'
+                    ? ((typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getMissileMinArmingRange === 'function')
+                        ? CONFIG.getMissileMinArmingRange('fox1') : 50)
+                    : 8;
+                const hitAng = (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getMissileSeekerAngle === 'function')
+                    ? CONFIG.getMissileSeekerAngle(liveM)
+                    : missileHitAngle;
                 const inRange =
                     dist <= hitMax &&
                     dist >= hitMin &&
@@ -1653,9 +1664,13 @@ window.updateDynamicHUD = function() {
             lcosPipper.style.top = `${window.lcosLastPos.y}px`;
 
             // Scale pipper diameter to physical VT / blast radius at aim point.
+            const fallbackBlast = (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getRocketBlastRadius === 'function')
+                ? CONFIG.getRocketBlastRadius() : 6;
+            const fallbackVt = (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getRocketVtRadius === 'function')
+                ? CONFIG.getRocketVtRadius() : 4.5;
             const physRadius = fuze === 'impact'
-                ? ((sol && sol.blastRadius) || 6)
-                : ((sol && sol.vtRadius) || 4.5);
+                ? ((sol && sol.blastRadius) || fallbackBlast)
+                : ((sol && sol.vtRadius) || fallbackVt);
             const camDist = Math.max(12, camera.position.distanceTo(aimWorld));
             const focal = Math.max(window.innerHeight || 600, 480) * 0.72;
             const rawDiamPx = 2 * (physRadius / camDist) * focal;
@@ -1727,7 +1742,13 @@ window.updateDynamicHUD = function() {
             && typeof AirArenaBomb.computeBallisticPath === 'function') {
             const rel = AirArenaBomb.estimateReleaseState(t);
             if (rel && rel.pos && rel.vel) {
-                const sig = `${t.id || ''}|${rel.pos.x.toFixed(2)},${rel.pos.y.toFixed(2)},${rel.pos.z.toFixed(2)}|${rel.vel.x.toFixed(2)},${rel.vel.y.toFixed(2)},${rel.vel.z.toFixed(2)}`;
+                const bCfg = (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getBombConfig === 'function')
+                    ? CONFIG.getBombConfig() : ((CONFIG && CONFIG.weapons && CONFIG.weapons.bomb) || {});
+                const spt = (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getStepsPerTurn === 'function')
+                    ? CONFIG.getStepsPerTurn() : 100;
+                const grav = (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getGravity === 'function')
+                    ? CONFIG.getGravity() : 9.8;
+                const sig = `${t.id || ''}|${rel.pos.x.toFixed(2)},${rel.pos.y.toFixed(2)},${rel.pos.z.toFixed(2)}|${rel.vel.x.toFixed(2)},${rel.vel.y.toFixed(2)},${rel.vel.z.toFixed(2)}|${spt}|${grav}|${bCfg.gravityScale || 1}|${bCfg.drag || 0}|${bCfg.groundY || 0}`;
                 if (t._hudBombCcipCache && t._hudBombCcipCache.sig === sig) {
                     bombImpact = t._hudBombCcipCache.impact;
                 } else {
@@ -1788,7 +1809,12 @@ window.updateDynamicHUD = function() {
     }
     
     if (typeof trajectoryMeshes !== 'undefined' && trajectoryMeshes[t.id]) {
-        trajectoryMeshes[t.id].visible = true;
+        const tm = trajectoryMeshes[t.id];
+        const validRibbon = !tm.userData || tm.userData.hasValidRibbon !== false;
+        const animating = typeof GameContext !== 'undefined' && GameContext.isAnimating && GameContext.isAnimating();
+        if (validRibbon && !animating) {
+            tm.visible = true;
+        }
     }
 
     let tgtType = document.getElementById('hud-tgt-type');

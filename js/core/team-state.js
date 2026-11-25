@@ -7,16 +7,48 @@ if (typeof GameContext === 'undefined') throw new Error("GameContext is not load
 
 const state = GameContext.state;
 
-const MAX_HP = CONFIG.aircrafts['mig21'].maxHp;
-const MAX_HEAT = CONFIG.rules.maxHeat;
-const MAX_AP = CONFIG.rules.maxAp;
-
-const GUN_DAMAGE = CONFIG.weapons['gun'].damage;
-const GUN_RANGE = CONFIG.weapons['gun'].range;
-const GUN_ANGLE = CONFIG.weapons['gun'].angle;
 const BULLET_SPEED = 4.0;
-/** @deprecated Use GUN_RANGE — kept as alias for old call sites. */
-const DYNAMIC_GUN_RANGE = GUN_RANGE;
+
+const _liveConstantGetters = {
+    MAX_HP: () => (typeof CONFIG.getAircraftMaxHp === 'function' ? CONFIG.getAircraftMaxHp('mig21') : CONFIG.aircrafts['mig21'].maxHp),
+    MAX_HEAT: () => (typeof CONFIG.getMaxHeat === 'function' ? CONFIG.getMaxHeat() : CONFIG.rules.maxHeat),
+    MAX_AP: () => (typeof CONFIG.getMaxAp === 'function' ? CONFIG.getMaxAp() : CONFIG.rules.maxAp),
+    GUN_DAMAGE: () => (typeof CONFIG.getGunDamage === 'function' ? CONFIG.getGunDamage() : CONFIG.weapons['gun'].damage),
+    GUN_RANGE: () => (typeof CONFIG.getGunRange === 'function' ? CONFIG.getGunRange() : CONFIG.weapons['gun'].range),
+    GUN_ANGLE: () => (typeof CONFIG.getGunAngle === 'function' ? CONFIG.getGunAngle() : CONFIG.weapons['gun'].angle),
+    BULLET_SPEED: () => BULLET_SPEED,
+    DYNAMIC_GUN_RANGE: () => (typeof CONFIG.getGunRange === 'function' ? CONFIG.getGunRange() : CONFIG.weapons['gun'].range),
+    MISSILE_DAMAGE: () => Number(CONFIG.getMissileConfig ? CONFIG.getMissileConfig('fox2').damage : CONFIG.weapons.fox2.damage),
+    MISSILE_SCALE: () => Number((CONFIG.getMissileConfig ? CONFIG.getMissileConfig('fox2') : CONFIG.weapons.fox2).model.scale),
+    MISSILE_ROT_X: () => Number((CONFIG.getMissileConfig ? CONFIG.getMissileConfig('fox2') : CONFIG.weapons.fox2).model.rotX),
+    MISSILE_ROT_Y: () => Number((CONFIG.getMissileConfig ? CONFIG.getMissileConfig('fox2') : CONFIG.weapons.fox2).model.rotY),
+    MISSILE_ROT_Z: () => Number((CONFIG.getMissileConfig ? CONFIG.getMissileConfig('fox2') : CONFIG.weapons.fox2).model.rotZ),
+    MISSILE_MAX_AP: () => (typeof CONFIG.getMissileMaxAp === 'function' ? CONFIG.getMissileMaxAp('fox2') : CONFIG.weapons.fox2.maxAp),
+    SEEKER_RANGE: () => (typeof CONFIG.getMissileSeekerRange === 'function' ? CONFIG.getMissileSeekerRange('fox2') : CONFIG.weapons.fox2.seekerRange),
+    SEEKER_ANGLE: () => (typeof CONFIG.getMissileSeekerAngle === 'function' ? CONFIG.getMissileSeekerAngle('fox2') : CONFIG.weapons.fox2.seekerAngle),
+    SEEKER_MIN_HEAT: () => Number(CONFIG.getMissileConfig ? CONFIG.getMissileConfig('fox2').seekerMinHeat : CONFIG.weapons.fox2.seekerMinHeat),
+    MISSILE_SPEED: () => Number(CONFIG.getMissileConfig ? CONFIG.getMissileConfig('fox2').speed : CONFIG.weapons.fox2.speed),
+    MISSILE_TURN_RATE: () => Number(CONFIG.getMissileConfig ? CONFIG.getMissileConfig('fox2').turnRate : CONFIG.weapons.fox2.turnRate),
+    MISSILE_DRAG: () => Number(CONFIG.getMissileConfig ? CONFIG.getMissileConfig('fox2').drag : CONFIG.weapons.fox2.drag)
+};
+
+const _constGlobalRoot = typeof globalThis !== 'undefined' ? globalThis : (typeof window !== 'undefined' ? window : null);
+GameContext.constants = {};
+Object.keys(_liveConstantGetters).forEach((key) => {
+    const getter = _liveConstantGetters[key];
+    Object.defineProperty(GameContext.constants, key, {
+        get: getter,
+        enumerable: true,
+        configurable: true
+    });
+    if (_constGlobalRoot && key !== 'BULLET_SPEED') {
+        Object.defineProperty(_constGlobalRoot, key, {
+            get: getter,
+            enumerable: false,
+            configurable: true
+        });
+    }
+});
 
 /**
  * Lateral hit allowance at forwardDist (m): cone then clamp to fuselage-scale max.
@@ -30,31 +62,6 @@ function gunHitRadiusAt(forwardDist, coneAngleRad, gunCfg = (CONFIG.weapons && C
     const maxR = Number.isFinite(Number(gunCfg.hitRadiusMax)) ? Number(gunCfg.hitRadiusMax) : 1.75;
     return Math.min(maxR, Math.max(floor, cone));
 }
-
-// Legacy module globals mirror FOX-2 (IR default). Prefer getMissileWeaponConfig(type)
-// or AirArenaWeaponEnvelope.getMissileCombatEnvelope(type) for typed munitions.
-const _FOX2_WPN = CONFIG.weapons.fox2;
-const MISSILE_DAMAGE = _FOX2_WPN.damage;
-const MISSILE_SCALE = _FOX2_WPN.model.scale;
-const MISSILE_ROT_X = _FOX2_WPN.model.rotX;
-const MISSILE_ROT_Y = _FOX2_WPN.model.rotY;
-const MISSILE_ROT_Z = _FOX2_WPN.model.rotZ;
-const MISSILE_MAX_AP = _FOX2_WPN.maxAp;
-const SEEKER_RANGE = _FOX2_WPN.seekerRange;
-const SEEKER_ANGLE = _FOX2_WPN.seekerAngle;
-const SEEKER_MIN_HEAT = _FOX2_WPN.seekerMinHeat;
-
-const MISSILE_SPEED = _FOX2_WPN.speed;
-const MISSILE_TURN_RATE = _FOX2_WPN.turnRate;
-const MISSILE_DRAG = _FOX2_WPN.drag;
-
-GameContext.constants = {
-    MAX_HP, MAX_HEAT, MAX_AP,
-    GUN_DAMAGE, GUN_RANGE, GUN_ANGLE, BULLET_SPEED, DYNAMIC_GUN_RANGE,
-    MISSILE_DAMAGE, MISSILE_SCALE, MISSILE_ROT_X, MISSILE_ROT_Y, MISSILE_ROT_Z,
-    MISSILE_MAX_AP, SEEKER_RANGE, SEEKER_ANGLE, SEEKER_MIN_HEAT,
-    MISSILE_SPEED, MISSILE_TURN_RATE, MISSILE_DRAG
-};
 GameContext.gunHitRadiusAt = gunHitRadiusAt;
 
 state.mslVisOffset = new THREE.Vector3(0.0, 0.0, 0.0);
@@ -68,8 +75,12 @@ function createTeamState(id, colorMain, matchActive = true) {
         wrapper: null,
         hp: MAX_HP,
         isDestroyed: false,
-        ap: CONFIG.aircrafts['mig21'].baseAp || 165,
-        speed: CONFIG.aircrafts['mig21'].baseAp || 165,
+        ap: (typeof CONFIG.getAircraftBaseAp === 'function'
+            ? CONFIG.getAircraftBaseAp('mig21')
+            : (CONFIG.aircrafts['mig21'].baseAp || 165)),
+        speed: (typeof CONFIG.getAircraftBaseAp === 'function'
+            ? CONFIG.getAircraftBaseAp('mig21')
+            : (CONFIG.aircrafts['mig21'].baseAp || 165)),
         heat: (typeof getEngineHeatIdle === 'function') ? getEngineHeatIdle() : 150,
         /** Machine-gun barrel heat 0–1 (overheat blocks fire). */
         gunHeat: 0,
