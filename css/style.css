@@ -2383,3 +2383,40 @@ body:not(:has(#replay-team-roster)) .team-seat-row {
         flex-wrap: wrap;
     }
 }
+
+/* Keep the bottom tactical computer; hide the classic instrument and stick cluster. */
+#u-shape-panel,
+#btn-ops-panel-toggle {
+    display: none !important;
+}
+#combat-hud-mobile {
+    width: auto !important;
+    height: auto !important;
+    bottom: 10px !important;
+    background: transparent !important;
+    pointer-events: none !important;
+}
+#ui-wrapper.is-controls-hidden #combat-hud-mobile,
+#ui-wrapper.is-ops-collapsed #combat-hud-mobile {
+    opacity: 1 !important;
+    visibility: visible !important;
+    pointer-events: none !important;
+    transform: translateX(-50%) !important;
+}
+#tactical-computer-module {
+    position: relative !important;
+    left: auto !important;
+    right: auto !important;
+    bottom: auto !important;
+    transform: none !important;
+    margin: 0 auto;
+    border-radius: 8px !important;
+    pointer-events: auto !important;
+}
+#ui-wrapper.is-controls-hidden #tactical-computer-module,
+#ui-wrapper.is-ops-collapsed #tactical-computer-module {
+    display: flex !important;
+    opacity: 1 !important;
+    visibility: visible !important;
+    pointer-events: auto !important;
+}
