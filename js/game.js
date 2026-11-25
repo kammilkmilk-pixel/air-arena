@@ -49,6 +49,60 @@ function createExhaust() {
     return { group: exhaustGroup, machTex: machTex, outerTex: outerTex };
 }
 
+// Plume is a straight spike on the tail axis. In a turn the white wake follows
+// the flight path, so a long afterburner flame sticks out of that curve.
+// Aim the plume back along the velocity (into the wake) and shorten it as the
+// heading diverges, so the straight flame stays inside the ribbon.
+const _plumeVel = new THREE.Vector3();
+const _plumeLocal = new THREE.Vector3();
+const _plumeAft = new THREE.Vector3(0, 0, -1);
+const _plumeNose = new THREE.Vector3();
+const _plumeTarget = new THREE.Quaternion();
+const _plumeSwing = new THREE.Quaternion();
+const _plumeInv = new THREE.Quaternion();
+
+function plumeWakeScale(exhaust, wrapper, now) {
+    const pivot = (wrapper.userData && wrapper.userData.modelPivot) || wrapper;
+    if (!exhaust.prevPos) exhaust.prevPos = new THREE.Vector3().copy(wrapper.position);
+    const prevMs = exhaust.prevPlumeMs || now;
+    exhaust.prevPlumeMs = now;
+    const dt = Math.max(0.008, Math.min(0.05, (now - prevMs) / 1000));
+    _plumeVel.subVectors(wrapper.position, exhaust.prevPos);
+    exhaust.prevPos.copy(wrapper.position);
+
+    let ang = 0;
+    _plumeTarget.identity();
+    const speed = _plumeVel.length();
+    if (speed > 0.05 && speed < 40) {
+        _plumeNose.set(0, 0, 1).applyQuaternion(wrapper.quaternion);
+        if (_plumeVel.dot(_plumeNose) > speed * 0.35) {
+            pivot.updateWorldMatrix(true, false);
+            pivot.getWorldQuaternion(_plumeInv).invert();
+            _plumeLocal.copy(_plumeVel).applyQuaternion(_plumeInv).multiplyScalar(-1);
+            if (_plumeLocal.lengthSq() > 1e-8) {
+                _plumeLocal.normalize();
+                const dot = Math.max(-1, Math.min(1, _plumeAft.dot(_plumeLocal)));
+                if (dot > -0.95) {
+                    ang = Math.acos(dot);
+                    _plumeTarget.setFromUnitVectors(_plumeAft, _plumeLocal);
+                    const maxBend = 0.52;
+                    if (ang > maxBend) {
+                        _plumeSwing.identity();
+                        _plumeSwing.slerp(_plumeTarget, maxBend / ang);
+                        _plumeTarget.copy(_plumeSwing);
+                    }
+                }
+            }
+        }
+    }
+    const k = 1 - Math.exp(-10 * dt);
+    exhaust.group.quaternion.slerp(_plumeTarget, k);
+    const shorten = ang <= 0.12 ? 1 : (1 - 0.58 * Math.max(0, Math.min(1, (ang - 0.12) / 0.58)));
+    if (exhaust.wakeScale == null) exhaust.wakeScale = shorten;
+    else exhaust.wakeScale += (shorten - exhaust.wakeScale) * k;
+    return exhaust.wakeScale;
+}
+
 function setupModel(gltfOrScene, x, z, yRot) {
     const source = gltfOrScene.scene || gltfOrScene;
     const model = source.clone(true);
@@ -1085,6 +1139,7 @@ function animate() {
         let scaleX = 0.5 * (0.8 + throttle * 0.1) * stallMod.scaleXYMult;
         let scaleY = 0.5 * (0.8 + throttle * 0.1) * stallMod.scaleXYMult;
         let scaleZ = Math.max(0.08, (0.5 * (throttle * 0.45) + flicker) * stallMod.scaleZMult);
+        scaleZ *= plumeWakeScale(exhaust, t.wrapper, now);
 
         exhaust.group.scale.set(scaleX, scaleY, scaleZ);
 
