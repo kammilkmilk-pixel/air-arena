@@ -725,6 +725,178 @@ function handlePercentToThrottle(percent) {
     return clampThrottleLevel(1 + p * 4);
 }
 
+// ============================================================================
+// Centralized single-source-of-truth CONFIG accessors (Item 2)
+// Defined non-enumerably on CONFIG so Object.keys / JSON.stringify stay pure.
+// ============================================================================
+function _resolveCfgRoot(overrideCfg) {
+    if (overrideCfg && typeof overrideCfg === 'object') return overrideCfg;
+    return (typeof CONFIG !== 'undefined' && CONFIG) ? CONFIG : {};
+}
+
+const AirArenaConfig = {
+    getStepsPerTurn(overrideCfg) {
+        const c = _resolveCfgRoot(overrideCfg);
+        const n = Number(c.rules && c.rules.stepsPerTurn);
+        return Number.isFinite(n) && n > 0 ? Math.floor(n) : 100;
+    },
+    getGravity(overrideCfg) {
+        const c = _resolveCfgRoot(overrideCfg);
+        const n = Number(c.rules && c.rules.gravity);
+        return Number.isFinite(n) ? n : 9.8;
+    },
+    getMaxAp(overrideCfg) {
+        const c = _resolveCfgRoot(overrideCfg);
+        const n = Number(c.rules && c.rules.maxAp);
+        return Number.isFinite(n) && n > 0 ? n : 300;
+    },
+    getMaxHeat(overrideCfg) {
+        const c = _resolveCfgRoot(overrideCfg);
+        const n = Number(c.rules && c.rules.maxHeat);
+        return Number.isFinite(n) ? n : 250;
+    },
+    getMinHeat(overrideCfg) {
+        const c = _resolveCfgRoot(overrideCfg);
+        const n = Number(c.rules && c.rules.minHeat);
+        return Number.isFinite(n) ? n : 150;
+    },
+    getAircraftSpec(aircraftType, overrideCfg) {
+        const c = _resolveCfgRoot(overrideCfg);
+        const table = (c && c.aircrafts) || {};
+        return table[aircraftType || 'mig21'] || table.mig21 || {};
+    },
+    getAircraftMaxHp(aircraftType, overrideCfg) {
+        const spec = AirArenaConfig.getAircraftSpec(aircraftType, overrideCfg);
+        const n = Number(spec.maxHp);
+        return Number.isFinite(n) && n > 0 ? n : 100;
+    },
+    getAircraftBaseAp(aircraftType, overrideCfg) {
+        const spec = AirArenaConfig.getAircraftSpec(aircraftType, overrideCfg);
+        const n = Number(spec.baseAp);
+        return Number.isFinite(n) && n > 0 ? n : 165;
+    },
+    getWeaponConfig(weaponId, overrideCfg) {
+        const c = _resolveCfgRoot(overrideCfg);
+        return (c && c.weapons && c.weapons[weaponId]) ? c.weapons[weaponId] : {};
+    },
+    getGunConfig(overrideCfg) {
+        return AirArenaConfig.getWeaponConfig('gun', overrideCfg);
+    },
+    getGunRange(overrideCfg) {
+        const g = AirArenaConfig.getGunConfig(overrideCfg);
+        const n = Number(g.range);
+        return Number.isFinite(n) && n > 0 ? n : 70;
+    },
+    getGunAngle(overrideCfg) {
+        const g = AirArenaConfig.getGunConfig(overrideCfg);
+        const n = Number(g.angle);
+        return Number.isFinite(n) && n > 0 ? n : (Math.PI / 36);
+    },
+    getGunDamage(overrideCfg) {
+        const g = AirArenaConfig.getGunConfig(overrideCfg);
+        const n = Number(g.damage);
+        return Number.isFinite(n) ? n : 45;
+    },
+    normalizeMissileType(missileType) {
+        return missileType === 'fox1' ? 'fox1' : 'fox2';
+    },
+    getMissileConfig(missileType, overrideCfg) {
+        const c = _resolveCfgRoot(overrideCfg);
+        const t = AirArenaConfig.normalizeMissileType(missileType);
+        const w = c && c.weapons;
+        return (w && (w[t] || w.fox2)) ? (w[t] || w.fox2) : {};
+    },
+    getMissileMaxAp(missileType, overrideCfg) {
+        const t = AirArenaConfig.normalizeMissileType(missileType);
+        const m = AirArenaConfig.getMissileConfig(t, overrideCfg);
+        const n = Number(m.maxAp);
+        return Number.isFinite(n) && n > 0 ? n : (t === 'fox1' ? 320 : 360);
+    },
+    getMissileSeekerRange(missileType, overrideCfg) {
+        const t = AirArenaConfig.normalizeMissileType(missileType);
+        const m = AirArenaConfig.getMissileConfig(t, overrideCfg);
+        const sr = Number(m.seekerRange);
+        if (Number.isFinite(sr) && sr > 0) return sr;
+        const fr = Number(m.maxFlightRange);
+        if (Number.isFinite(fr) && fr > 0) return fr;
+        return t === 'fox1' ? 200 : 120;
+    },
+    getMissileMinArmingRange(missileType, overrideCfg) {
+        const t = AirArenaConfig.normalizeMissileType(missileType);
+        const m = AirArenaConfig.getMissileConfig(t, overrideCfg);
+        const n = Number(m.minArmingRange);
+        return Number.isFinite(n) && n >= 0 ? n : (t === 'fox1' ? 50 : 20);
+    },
+    getMissileSeekerAngle(missileType, overrideCfg) {
+        const t = AirArenaConfig.normalizeMissileType(missileType);
+        const m = AirArenaConfig.getMissileConfig(t, overrideCfg);
+        const n = Number(m.seekerAngle);
+        return Number.isFinite(n) && n > 0 ? n : (t === 'fox1' ? (Math.PI / 14) : (Math.PI / 12));
+    },
+    getRocketConfig(overrideCfg) {
+        return AirArenaConfig.getWeaponConfig('rocket', overrideCfg);
+    },
+    getRocketRange(overrideCfg) {
+        const r = AirArenaConfig.getRocketConfig(overrideCfg);
+        const n = Number(r.range);
+        return Number.isFinite(n) && n > 0 ? n : 120;
+    },
+    getRocketRoundsPerPod(overrideCfg) {
+        const r = AirArenaConfig.getRocketConfig(overrideCfg);
+        const n = Number(r.roundsPerPod);
+        return Number.isFinite(n) && n > 0 ? Math.floor(n) : 9;
+    },
+    getRocketSalvoPerTurn(overrideCfg) {
+        const r = AirArenaConfig.getRocketConfig(overrideCfg);
+        const n = Number(r.salvoPerTurn);
+        return Number.isFinite(n) && n > 0 ? Math.floor(n) : 3;
+    },
+    getRocketVtRadius(overrideCfg) {
+        const r = AirArenaConfig.getRocketConfig(overrideCfg);
+        const n = Number(r.vtRadius);
+        return Number.isFinite(n) && n > 0 ? n : 4.5;
+    },
+    getRocketBlastRadius(overrideCfg) {
+        const r = AirArenaConfig.getRocketConfig(overrideCfg);
+        const n = Number(r.blastRadius);
+        return Number.isFinite(n) && n > 0 ? n : 6;
+    },
+    getBombConfig(overrideCfg) {
+        return AirArenaConfig.getWeaponConfig('bomb', overrideCfg);
+    },
+    getBombBlastRadius(overrideCfg) {
+        const b = AirArenaConfig.getBombConfig(overrideCfg);
+        const n = Number(b.blastRadius);
+        return Number.isFinite(n) && n > 0 ? n : 10;
+    },
+    formatRocketFuzeTooltips(overrideCfg) {
+        const vtR = AirArenaConfig.getRocketVtRadius(overrideCfg);
+        const blastR = AirArenaConfig.getRocketBlastRadius(overrideCfg);
+        return {
+            vtTitle: `對空近發引信（${vtR}m 感應空爆）`,
+            impactTitle: `撞擊引信（觸地／建築引爆，${blastR}m 爆震半徑）`,
+            smsTitle: `切換火箭引信（VT 對空 ${vtR}m 空爆／IMPACT 對地 ${blastR}m 爆震）`
+        };
+    }
+};
+
+Object.keys(AirArenaConfig).forEach((fnName) => {
+    Object.defineProperty(CONFIG, fnName, {
+        value: function (...args) {
+            return AirArenaConfig[fnName](...args);
+        },
+        enumerable: false,
+        configurable: true,
+        writable: true
+    });
+});
+
+const _cfgGlobal = typeof globalThis !== 'undefined' ? globalThis : (typeof window !== 'undefined' ? window : null);
+if (_cfgGlobal) {
+    _cfgGlobal.AirArenaConfig = AirArenaConfig;
+}
+
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = CONFIG;
+    module.exports.AirArenaConfig = AirArenaConfig;
 }

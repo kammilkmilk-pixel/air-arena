@@ -1076,7 +1076,10 @@
             const ammo = (typeof AirArenaRocket !== 'undefined')
                 ? AirArenaRocket.ensurePodAmmo(p)
                 : (Number(p && p.ammo) || 0);
-            const max = Number(p && p.ammoMax) || cfg.roundsPerPod || 9;
+            const fallbackPodMax = (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getRocketRoundsPerPod === 'function')
+                ? CONFIG.getRocketRoundsPerPod()
+                : (cfg.roundsPerPod || 9);
+            const max = Number(p && p.ammoMax) || fallbackPodMax;
             const fuze = (typeof AirArenaRocket !== 'undefined' && typeof AirArenaRocket.getTeamFuzeMode === 'function')
                 ? AirArenaRocket.getTeamFuzeMode(team)
                 : ((team && team.rocketFuze === 'impact') ? 'impact' : 'vt');
@@ -1258,8 +1261,15 @@
                 const curFuze = (typeof AirArenaRocket !== 'undefined' && typeof AirArenaRocket.getTeamFuzeMode === 'function')
                     ? AirArenaRocket.getTeamFuzeMode(t)
                     : (t.rocketFuze === 'impact' ? 'impact' : 'vt');
+                const tips = (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.formatRocketFuzeTooltips === 'function')
+                    ? CONFIG.formatRocketFuzeTooltips()
+                    : null;
                 fuzeWrap.querySelectorAll('.ops-fuze-btn').forEach((btn) => {
-                    btn.classList.toggle('is-active', btn.getAttribute('data-fuze') === curFuze);
+                    const fz = btn.getAttribute('data-fuze');
+                    btn.classList.toggle('is-active', fz === curFuze);
+                    if (tips) {
+                        btn.title = fz === 'impact' ? tips.impactTitle : tips.vtTitle;
+                    }
                 });
             } else {
                 fuzeWrap.hidden = true;

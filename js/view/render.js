@@ -571,10 +571,6 @@ GameContext.vfxReadyPromise = Promise.all([
     puffManager.init(vfxPaths.puff, 'assets/vfx/puff_flipbook.png')
 ]).then(() => {
     mats.smoke.map = smokeManager.texture; mats.smoke.needsUpdate = true;
-    if (fighterVfxPool.red) fighterVfxPool.red.smokePool.forEach(m => { m.material.map = smokeManager.texture; m.material.needsUpdate = true; });
-    if (fighterVfxPool.red2) fighterVfxPool.red2.smokePool.forEach(m => { m.material.map = smokeManager.texture; m.material.needsUpdate = true; });
-    if (fighterVfxPool.blue) fighterVfxPool.blue.smokePool.forEach(m => { m.material.map = smokeManager.texture; m.material.needsUpdate = true; });
-    if (fighterVfxPool.blue2) fighterVfxPool.blue2.smokePool.forEach(m => { m.material.map = smokeManager.texture; m.material.needsUpdate = true; });
     
     mats.explosion.map = explosionManager.texture; mats.explosion.needsUpdate = true; 
     explosionPool.forEach(m => {
@@ -603,9 +599,6 @@ GameContext.vfxReadyPromise = Promise.all([
     console.error("❌ VFX 材質綁定失敗:", err);
     return false;
 });
-
-const fighterVfxPool = { red: null, red2: null, blue: null, blue2: null };
-const particleCount = (CONFIG.visuals && CONFIG.visuals.sparks) ? CONFIG.visuals.sparks.count : 150;
 
 function genSparkTextureShared() {
     const canvas = document.createElement('canvas'); canvas.width = 32; canvas.height = 32; const ctx = canvas.getContext('2d');
@@ -649,48 +642,31 @@ for (let i = 0; i < SPARK_STREAK_LIMIT; i++) {
     sparkStreakPool.push(mesh);
 }
 
-['red', 'red2', 'blue', 'blue2'].forEach(id => {
-    const hGeo = new THREE.BufferGeometry(); hGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(particleCount * 3), 3));
-    const hSystem = new THREE.Points(hGeo, new THREE.PointsMaterial({ size: CONFIG.visuals?.sparks?.size || 6, sizeAttenuation: false, map: sparkTexShared, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
-    hSystem.visible = false; scene.add(hSystem);
-
-    const tGeo = new THREE.BufferGeometry(); const tColors = new Float32Array(particleCount * 6);
-    for(let i=0; i<particleCount; i++) { tColors[i*6]=1; tColors[i*6+1]=0.5; tColors[i*6+2]=0.1; tColors[i*6+3]=0.3; } 
-    tGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(particleCount * 6), 3)); tGeo.setAttribute('color', new THREE.BufferAttribute(tColors, 3));
-    const tSystem = new THREE.LineSegments(tGeo, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
-    tSystem.visible = false; scene.add(tSystem);
-
-    const teamSmokeMeshes = [];
-    const smokeBaseO = (CONFIG.visuals && CONFIG.visuals.smoke) ? CONFIG.visuals.smoke.baseOpacity : 0.38;
-    for(let i=0; i<particleCount; i++) {
-        const m = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mats.smoke.clone());
-        m.material.opacity = smokeBaseO;
-        m.visible = false;
-        scene.add(m);
-        teamSmokeMeshes.push(m);
-    }
-    fighterVfxPool[id] = { head: hSystem, tail: tSystem, smokePool: teamSmokeMeshes };
-});
-
 const threatEnvGroup = new THREE.Group(); scene.add(threatEnvGroup);
 window.ghostWrapper = new THREE.Group(); window.ghostWrapper.visible = false; scene.add(window.ghostWrapper);
 
 const trackMaterialRed = new THREE.MeshBasicMaterial({ color: 0xff0055, transparent: true, opacity: 0.65, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false });
 const trackMaterialBlue = new THREE.MeshBasicMaterial({ color: 0x00bcd4, transparent: true, opacity: 0.65, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false });
-const flareGeo = new THREE.SphereGeometry(0.4, 8, 8); const expGeo = new THREE.SphereGeometry(1, 16, 16); const expMat = new THREE.MeshBasicMaterial({ color: 0xff4400, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false });
+const flareGeo = new THREE.SphereGeometry(0.4, 8, 8);
 const flareMats = [ new THREE.MeshBasicMaterial({ color: 0xffff00, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false }), new THREE.MeshBasicMaterial({ color: 0xff8800, transparent: true, opacity: 0.75, blending: THREE.AdditiveBlending, depthWrite: false }), new THREE.MeshBasicMaterial({ color: 0x886655, transparent: true, opacity: 0.28, depthWrite: false }) ];
 const visualFlaresPool = [];
 
-const maxVisualBullets = 150; 
+const maxVisualBullets = 150;
 const visualBullets = [];
-for (let i = 0; i < maxVisualBullets; i++) {
-    let pts = new Float32Array(6); 
-    let cols = new Float32Array(6); 
-    let geo = new THREE.BufferGeometry(); 
-    geo.setAttribute('position', new THREE.BufferAttribute(pts, 3));
-    geo.setAttribute('color', new THREE.BufferAttribute(cols, 3)); 
-    let mesh = new THREE.Line(geo, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.9, linewidth: 2, blending: THREE.AdditiveBlending }));
-    mesh.visible = false; scene.add(mesh); visualBullets.push(mesh);
+function ensureLegacyVisualBullets() {
+    if (visualBullets.length > 0) return visualBullets;
+    for (let i = 0; i < maxVisualBullets; i++) {
+        const pts = new Float32Array(6);
+        const cols = new Float32Array(6);
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.BufferAttribute(pts, 3));
+        geo.setAttribute('color', new THREE.BufferAttribute(cols, 3));
+        const mesh = new THREE.Line(geo, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.9, linewidth: 2, blending: THREE.AdditiveBlending }));
+        mesh.visible = false;
+        scene.add(mesh);
+        visualBullets.push(mesh);
+    }
+    return visualBullets;
 }
 
 function createProceduralMissileMesh() {
@@ -882,7 +858,9 @@ function chaffCameraOcclusionFade(cloudPos, cloudRadius) {
 
 /** Size / opacity / spark gate from ageSteps (5-turn chaff life). */
 function chaffAgeVisual(ageSteps) {
-    const spt = (CONFIG.rules && CONFIG.rules.stepsPerTurn) || 100;
+    const spt = (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getStepsPerTurn === 'function')
+        ? CONFIG.getStepsPerTurn()
+        : ((CONFIG.rules && CONFIG.rules.stepsPerTurn) || 100);
     const age = Math.max(0, Number(ageSteps) || 0);
     const ageTurn = Math.min(4, Math.floor(Math.max(0, age - 1) / spt));
     const tIn = ((Math.max(0, age - 1) % spt) + 1) / spt;
@@ -1030,126 +1008,225 @@ function getSharedGhostMat(faction) {
     return _ghostMatCache[key];
 }
 
+const _trajLeftCurr = new THREE.Vector3();
+const _trajRightCurr = new THREE.Vector3();
+const _trajLeftNext = new THREE.Vector3();
+const _trajRightNext = new THREE.Vector3();
+const _trajWingDir = new THREE.Vector3();
+const _trajOffset = new THREE.Vector3();
+const _trajCenter = new THREE.Vector3();
+const _trajBoundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), 1000000);
+let _ghostBuildSig = '';
+
+window.invalidateGhostPlaneCache = function() {
+    _ghostBuildSig = '';
+};
+
+function _sampleRibbonPair(t, pathPoints, pathQuats, vis, outLeft, outRight) {
+    const pos = getPosAt(t, pathPoints);
+    const q = getQuatAt(t, pathQuats);
+    _trajWingDir.set(1, 0, 0).applyQuaternion(q).normalize();
+    _trajOffset.set(0, vis.engineOffsetY, 0).applyQuaternion(q);
+    _trajCenter.copy(pos).add(_trajOffset);
+    const halfW = vis.ribbonWidth * 0.5;
+    outLeft.copy(_trajCenter).addScaledVector(_trajWingDir, halfW);
+    outRight.copy(_trajCenter).addScaledVector(_trajWingDir, -halfW);
+}
+
+function _buildRibbonPathSignature(teamObj, vis) {
+    const pts = teamObj.pathPoints;
+    const quats = teamObj.pathQuats;
+    const n = pts.length;
+    const p0 = pts[0];
+    const pm = pts[n >> 1];
+    const p1 = pts[n - 1];
+    const q0 = quats[0];
+    const q1 = quats[quats.length - 1];
+    return [
+        n,
+        vis.ribbonWidth,
+        vis.engineOffsetY,
+        p0.x.toFixed(3), p0.y.toFixed(3), p0.z.toFixed(3),
+        pm.x.toFixed(3), pm.y.toFixed(3), pm.z.toFixed(3),
+        p1.x.toFixed(3), p1.y.toFixed(3), p1.z.toFixed(3),
+        q0 ? `${q0.x.toFixed(3)},${q0.y.toFixed(3)},${q0.z.toFixed(3)},${q0.w.toFixed(3)}` : '',
+        q1 ? `${q1.x.toFixed(3)},${q1.y.toFixed(3)},${q1.z.toFixed(3)},${q1.w.toFixed(3)}` : ''
+    ].join('|');
+}
+
 function drawTrajectoryLine(teamObj) {
-    if (trajectoryMeshes[teamObj.id]) {
-        scene.remove(trajectoryMeshes[teamObj.id]);
-        if (trajectoryMeshes[teamObj.id].geometry) trajectoryMeshes[teamObj.id].geometry.dispose();
-        trajectoryMeshes[teamObj.id] = null;
+    if (!teamObj) return;
+    const hasValidPath = !teamObj.isDestroyed
+        && Array.isArray(teamObj.pathPoints) && teamObj.pathPoints.length >= 2
+        && Array.isArray(teamObj.pathQuats) && teamObj.pathQuats.length >= 2;
+    if (!hasValidPath) {
+        const existing = trajectoryMeshes[teamObj.id];
+        if (existing) {
+            existing.visible = false;
+            existing.userData.hasValidRibbon = false;
+            existing.userData.totalSteps = 0;
+            if (existing.geometry) existing.geometry.setDrawRange(0, 0);
+        }
+        if (teamObj.id === tAct && window.ghostWrapper) window.ghostWrapper.visible = false;
+        return;
     }
-    if (teamObj.pathPoints.length < 2) { if (teamObj.id === tAct) window.ghostWrapper.visible = false; return; }
-    
-    let pathLen = 0; 
-    for(let i=0; i<teamObj.pathPoints.length-1; i++) pathLen += teamObj.pathPoints[i].distanceTo(teamObj.pathPoints[i+1]);
-    teamObj.flightLength = pathLen;
-    
-    const vis = CONFIG.aircrafts['mig21'].visuals; 
-    const vertexArray = []; const leftPts = []; const rightPts = []; 
+
+    const acSpec = (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getAircraftSpec === 'function')
+        ? CONFIG.getAircraftSpec(teamObj.type || 'mig21')
+        : CONFIG.aircrafts[teamObj.type || 'mig21'];
+    const vis = (acSpec && acSpec.visuals) || CONFIG.aircrafts['mig21'].visuals;
     const steps = teamObj.pathPoints.length * 2;
-    
-    // 生成絲帶節點
-    for (let i = 0; i <= steps; i++) { 
-        let t = i / steps; 
-        let pos = getPosAt(t, teamObj.pathPoints); 
-        let q = getQuatAt(t, teamObj.pathQuats); 
-        let wingDir = new THREE.Vector3(1, 0, 0).applyQuaternion(q).normalize(); 
-        let centerPos = pos.clone().add(new THREE.Vector3(0, vis.engineOffsetY, 0).applyQuaternion(q)); 
-        leftPts.push(centerPos.clone().add(wingDir.clone().multiplyScalar(vis.ribbonWidth / 2))); 
-        rightPts.push(centerPos.clone().sub(wingDir.clone().multiplyScalar(vis.ribbonWidth / 2))); 
-    }
-    
-    // 縫合三角面
-    for (let i = 0; i < steps; i++) { 
-        vertexArray.push(leftPts[i].x, leftPts[i].y, leftPts[i].z, rightPts[i].x, rightPts[i].y, rightPts[i].z, leftPts[i+1].x, leftPts[i+1].y, leftPts[i+1].z); 
-        vertexArray.push(rightPts[i].x, rightPts[i].y, rightPts[i].z, rightPts[i+1].x, rightPts[i+1].y, rightPts[i+1].z, leftPts[i+1].x, leftPts[i+1].y, leftPts[i+1].z); 
-    }
-    
-   
-    const geo = new THREE.BufferGeometry(); 
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(vertexArray, 3)); 
-    
-    // 🟢 刪除原本的 computeBoundingSphere(); 替換成以下這行！
-    // 這會賦予光帶一個無限大的邊界球，徹底免疫任何極端大角度機動造成的 WebGL 引擎誤判剔除！
-    geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), 1000000); 
-    
+    const neededVerts = steps * 6;
+    const neededFloats = neededVerts * 3;
     const trackMat = ((GameContext.getFaction && GameContext.getFaction(teamObj.id)) === 'blue') ? trackMaterialBlue : trackMaterialRed;
-    trajectoryMeshes[teamObj.id] = new THREE.Mesh(geo, trackMat); 
-    trajectoryMeshes[teamObj.id].frustumCulled = false;
-    trajectoryMeshes[teamObj.id].userData.totalSteps = steps;
-    
-    scene.add(trajectoryMeshes[teamObj.id]);
+
+    let mesh = trajectoryMeshes[teamObj.id];
+    if (!mesh) {
+        const allocVerts = Math.max(neededVerts, 208 * 6);
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(allocVerts * 3), 3));
+        geo.boundingSphere = _trajBoundingSphere;
+        mesh = new THREE.Mesh(geo, trackMat);
+        mesh.frustumCulled = false;
+        mesh.userData = {
+            totalSteps: steps,
+            vertCapacity: allocVerts,
+            lastPathSig: '',
+            hasValidRibbon: true
+        };
+        trajectoryMeshes[teamObj.id] = mesh;
+        scene.add(mesh);
+    } else {
+        if (!mesh.parent) scene.add(mesh);
+        mesh.material = trackMat;
+        const curCap = Number(mesh.userData && mesh.userData.vertCapacity) || 0;
+        if (!mesh.geometry || !mesh.geometry.attributes || !mesh.geometry.attributes.position || curCap < neededVerts) {
+            const allocVerts = Math.max(neededVerts, curCap * 2, 208 * 6);
+            const nextGeo = new THREE.BufferGeometry();
+            nextGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(allocVerts * 3), 3));
+            nextGeo.boundingSphere = _trajBoundingSphere;
+            if (mesh.geometry) mesh.geometry.dispose();
+            mesh.geometry = nextGeo;
+            mesh.userData.vertCapacity = allocVerts;
+            mesh.userData.lastPathSig = '';
+        }
+    }
+
+    const pathSig = _buildRibbonPathSignature(teamObj, vis);
+    if (mesh.userData.lastPathSig !== pathSig) {
+        let pathLen = 0;
+        for (let i = 0; i < teamObj.pathPoints.length - 1; i++) {
+            pathLen += teamObj.pathPoints[i].distanceTo(teamObj.pathPoints[i + 1]);
+        }
+        teamObj.flightLength = pathLen;
+
+        const posAttr = mesh.geometry.attributes.position;
+        const arr = posAttr.array;
+        _sampleRibbonPair(0, teamObj.pathPoints, teamObj.pathQuats, vis, _trajLeftCurr, _trajRightCurr);
+        let ptr = 0;
+        for (let i = 0; i < steps; i++) {
+            _sampleRibbonPair((i + 1) / steps, teamObj.pathPoints, teamObj.pathQuats, vis, _trajLeftNext, _trajRightNext);
+            arr[ptr++] = _trajLeftCurr.x;  arr[ptr++] = _trajLeftCurr.y;  arr[ptr++] = _trajLeftCurr.z;
+            arr[ptr++] = _trajRightCurr.x; arr[ptr++] = _trajRightCurr.y; arr[ptr++] = _trajRightCurr.z;
+            arr[ptr++] = _trajLeftNext.x;  arr[ptr++] = _trajLeftNext.y;  arr[ptr++] = _trajLeftNext.z;
+
+            arr[ptr++] = _trajRightCurr.x; arr[ptr++] = _trajRightCurr.y; arr[ptr++] = _trajRightCurr.z;
+            arr[ptr++] = _trajRightNext.x; arr[ptr++] = _trajRightNext.y; arr[ptr++] = _trajRightNext.z;
+            arr[ptr++] = _trajLeftNext.x;  arr[ptr++] = _trajLeftNext.y;  arr[ptr++] = _trajLeftNext.z;
+
+            _trajLeftCurr.copy(_trajLeftNext);
+            _trajRightCurr.copy(_trajRightNext);
+        }
+        if (ptr <= neededFloats) {
+            posAttr.needsUpdate = true;
+        }
+        mesh.userData.lastPathSig = pathSig;
+    }
+
+    mesh.geometry.setDrawRange(0, neededVerts);
+    mesh.userData.totalSteps = steps;
+    mesh.userData.hasValidRibbon = true;
 
     // 🟢 嚴格遵守 HUD 的包絡線點擊開關
     const splitView = isMultiViewSplit();
-    if (trajectoryMeshes[teamObj.id]) {
-        // 分屏時隱藏向前軌跡，讓每個視角只看到同一套場景元素
-        if (splitView) {
-            trajectoryMeshes[teamObj.id].visible = false;
+    if (splitView) {
+        mesh.visible = false;
+    } else {
+        const currentTeam = typeof tAct !== 'undefined' ? tAct : window.activeTeamId;
+        if (teamObj.id === currentTeam) {
+            mesh.visible = true;
         } else {
-            // 如果是自己，永遠顯示；如果是敵人，必須根據 showEnvelope 決定
-            let currentTeam = typeof tAct !== 'undefined' ? tAct : window.activeTeamId;
-            if (teamObj.id === currentTeam) {
-                trajectoryMeshes[teamObj.id].visible = true;
-            } else {
-                // 這是關鍵：讀取敵機的 userData 狀態
-                trajectoryMeshes[teamObj.id].visible = !!(teamObj.userData && teamObj.userData.showEnvelope);
-            }
+            mesh.visible = !!(teamObj.userData && teamObj.userData.showEnvelope);
         }
     }
-    
-    // ============================================
-    // 👇 下方保留你原本的 Ghost Plane (幽靈戰機) 邏輯
+
+    // Ghost Plane (幽靈戰機) — reuse cloned subtree across pointer-move frames
     if (!splitView && !isAnimating && !window.replayMode && teamObj.id === tAct && !teamObj.isDestroyed) {
         window.ghostWrapper.visible = true;
         window.ghostWrapper.position.copy(teamObj.pathPoints[teamObj.pathPoints.length - 1]);
         window.ghostWrapper.quaternion.copy(teamObj.pathQuats[teamObj.pathQuats.length - 1]);
-        
-        if (window.ghostPlaneMesh) {
-            window.ghostWrapper.remove(window.ghostPlaneMesh);
-        }
 
         if (teamObj.wrapper) {
-            if (teamObj.wrapper.userData.exhaust && teamObj.wrapper.userData.exhaust.group) {
-                teamObj.wrapper.userData.exhaust.group.traverse(node => {
-                    node.userData.isExhaustComponent = true;
-                });
-            }
+            const factionKey = ((GameContext.getFaction && GameContext.getFaction(teamObj.id)) === 'blue') ? 'blue' : 'red';
+            const pylonSig = Array.isArray(teamObj.pylons)
+                ? teamObj.pylons.map((p) => {
+                    const keepEmpty = !!(p && (p.emptyPod || (p.mesh && p.mesh.userData && p.mesh.userData.emptyPod)));
+                    const visFlag = p && (p.state !== 'empty' || keepEmpty) ? 1 : 0;
+                    const kind = p && p.mesh && p.mesh.userData && p.mesh.userData.storeMeshKind ? p.mesh.userData.storeMeshKind : '';
+                    const childN = p && p.mesh && p.mesh.children ? p.mesh.children.length : 0;
+                    return `${p ? p.id : ''}:${p ? p.weaponType : ''}:${visFlag}:${kind}:${childN}`;
+                }).join(',')
+                : '';
+            const nextGhostSig = `${teamObj.id}|${factionKey}|${teamObj.wrapper.uuid}|${pylonSig}`;
 
-            window.ghostPlaneMesh = teamObj.wrapper.clone();
-            window.ghostPlaneMesh.position.set(0, 0, 0);
-            window.ghostPlaneMesh.quaternion.set(0, 0, 0, 1);
-            
-            let factionKey = ((GameContext.getFaction && GameContext.getFaction(teamObj.id)) === 'blue') ? 'blue' : 'red';
-            let ghostMat = getSharedGhostMat(factionKey);
-
-            window.ghostPlaneMesh.traverse(c => {
-                let isExhaust = c.userData.isExhaustComponent || 
-                                (c.name && c.name.toLowerCase().includes('exhaust')) || 
-                                (c.parent && c.parent.name && c.parent.name.toLowerCase().includes('exhaust')) ||
-                                c.name === 'flyingGlowMesh';
-                // Condensation (wingtip LE fog) must not appear on the planning ghost.
-                const isCondensation = !!(c.userData && c.userData.isCondensationVfx)
-                    || c.name === 'condensationLeFogGroup'
-                    || c.name === 'condensationLeFog'
-                    || c.name === 'condensationVortex'
-                    || (c.parent && c.parent.userData && c.parent.userData.isCondensationVfx);
-
-                if (isExhaust || isCondensation) {
-                    c.visible = false; 
-                } 
-                else if (c.isMesh) {
-                    c.material = ghostMat;
-                    c.visible = true;
+            if (!window.ghostPlaneMesh || _ghostBuildSig !== nextGhostSig || window.ghostPlaneMesh.parent !== window.ghostWrapper) {
+                if (window.ghostPlaneMesh) {
+                    window.ghostWrapper.remove(window.ghostPlaneMesh);
                 }
-            });
+                if (teamObj.wrapper.userData.exhaust && teamObj.wrapper.userData.exhaust.group) {
+                    teamObj.wrapper.userData.exhaust.group.traverse(node => {
+                        node.userData.isExhaustComponent = true;
+                    });
+                }
 
-            window.ghostWrapper.add(window.ghostPlaneMesh);
+                window.ghostPlaneMesh = teamObj.wrapper.clone();
+                window.ghostPlaneMesh.position.set(0, 0, 0);
+                window.ghostPlaneMesh.quaternion.set(0, 0, 0, 1);
+
+                const ghostMat = getSharedGhostMat(factionKey);
+                window.ghostPlaneMesh.traverse(c => {
+                    const isExhaust = c.userData.isExhaustComponent ||
+                        (c.name && c.name.toLowerCase().includes('exhaust')) ||
+                        (c.parent && c.parent.name && c.parent.name.toLowerCase().includes('exhaust')) ||
+                        c.name === 'flyingGlowMesh';
+                    // Condensation (wingtip LE fog) must not appear on the planning ghost.
+                    const isCondensation = !!(c.userData && c.userData.isCondensationVfx)
+                        || c.name === 'condensationLeFogGroup'
+                        || c.name === 'condensationLeFog'
+                        || c.name === 'condensationVortex'
+                        || (c.parent && c.parent.userData && c.parent.userData.isCondensationVfx);
+
+                    if (isExhaust || isCondensation) {
+                        c.visible = false;
+                    } else if (c.isMesh) {
+                        c.material = ghostMat;
+                        c.visible = true;
+                    }
+                });
+
+                window.ghostWrapper.add(window.ghostPlaneMesh);
+                if (GameContext.three && GameContext.three.ghost) {
+                    GameContext.three.ghost.planeMesh = window.ghostPlaneMesh;
+                }
+                _ghostBuildSig = nextGhostSig;
+            }
         }
 
         if (window.AirArenaOpsRadial && typeof window.AirArenaOpsRadial.syncGhostSteer === 'function') {
             try { window.AirArenaOpsRadial.syncGhostSteer(teamObj); } catch (_) { /* ignore */ }
         }
-    } else if (teamObj.id === tAct) { 
-        window.ghostWrapper.visible = false; 
+    } else if (teamObj.id === tAct) {
+        window.ghostWrapper.visible = false;
     }
 }
 
@@ -1208,7 +1285,9 @@ function updateGunPreview(teamObj) {
             let stats = (typeof getThrottleStats === 'function')
                 ? getThrottleStats(teamObj.throttle, teamObj.type || 'mig21')
                 : (CONFIG.aircrafts[teamObj.type || 'mig21'].throttleStats[Math.round(teamObj.throttle)] || { gunRangeMult: 1.0 });
-            let dRange = GUN_RANGE * stats.gunRangeMult;
+            const baseGunRange = (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getGunRange === 'function')
+                ? CONFIG.getGunRange() : GUN_RANGE;
+            let dRange = baseGunRange * stats.gunRangeMult;
             for (let i = 0; i <= 30; i++) {
                 let t_spawn = (i / 30) * 1.0;
                 let sPos = getPosAt(t_spawn, teamObj.pathPoints);
@@ -1231,6 +1310,10 @@ function updateGunPreview(teamObj) {
     }
 }
 
+function hidePylonLineMesh(p) {
+    if (p && p.lineMesh) p.lineMesh.visible = false;
+}
+
 function disposePylonLineMesh(p) {
     if (!p || !p.lineMesh) return;
     scene.remove(p.lineMesh);
@@ -1238,78 +1321,198 @@ function disposePylonLineMesh(p) {
     if (p.lineMesh.material) p.lineMesh.material.dispose();
     p.lineMesh = null;
 }
+window.disposePylonLineMesh = disposePylonLineMesh;
+
+const _mslVisualLineOffset = new THREE.Vector3(0, -0.5, 0.2);
+
+function ensurePylonLineMesh(p, minPts, lineColor, lineOpacity) {
+    const reqCap = Math.max(minPts, 108);
+    if (!p.lineMesh) {
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(reqCap * 3), 3));
+        geo.boundingSphere = _trajBoundingSphere;
+        const mat = new THREE.LineBasicMaterial({
+            color: lineColor,
+            transparent: true,
+            opacity: lineOpacity,
+            linewidth: 2
+        });
+        const line = new THREE.Line(geo, mat);
+        line.frustumCulled = false;
+        line.userData = { vertCapacity: reqCap, lastMslSig: '', hasValidLine: false };
+        scene.add(line);
+        p.lineMesh = line;
+        return line;
+    }
+    if (!p.lineMesh.parent) scene.add(p.lineMesh);
+    const curCap = Number(p.lineMesh.userData && p.lineMesh.userData.vertCapacity) || 0;
+    if (!p.lineMesh.geometry || !p.lineMesh.geometry.attributes || !p.lineMesh.geometry.attributes.position || curCap < minPts) {
+        const allocPts = Math.max(reqCap, curCap * 2);
+        const nextGeo = new THREE.BufferGeometry();
+        nextGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(allocPts * 3), 3));
+        nextGeo.boundingSphere = _trajBoundingSphere;
+        if (p.lineMesh.geometry) p.lineMesh.geometry.dispose();
+        p.lineMesh.geometry = nextGeo;
+        p.lineMesh.userData.vertCapacity = allocPts;
+        p.lineMesh.userData.lastMslSig = '';
+    }
+    p.lineMesh.material.color.set(lineColor);
+    p.lineMesh.material.opacity = lineOpacity;
+    return p.lineMesh;
+}
 
 function updateMissilePreview(teamObj) {
-    if (!teamObj.pylons) return;
+    if (!teamObj || !teamObj.pylons) return;
+    if (teamObj.isDestroyed) {
+        teamObj.pylons.forEach(hidePylonLineMesh);
+        return;
+    }
     const enemyId = (GameContext.getTargetId && GameContext.getTargetId(teamObj.id))
         || (GameContext.getNearestHostileId && GameContext.getNearestHostileId(teamObj.id))
         || (String(teamObj.id).startsWith('red') ? 'blue' : 'red');
-    const enemyObj = teams[enemyId]; 
-    if (isAnimating || window.replayMode) { teamObj.pylons.forEach(disposePylonLineMesh); return; }
+    const enemyObj = teams[enemyId];
+    if (isAnimating || window.replayMode) { teamObj.pylons.forEach(hidePylonLineMesh); return; }
     if (!enemyObj || !enemyObj.wrapper || enemyObj.isDestroyed) {
-        teamObj.pylons.forEach(disposePylonLineMesh);
+        teamObj.pylons.forEach(hidePylonLineMesh);
         return;
     }
 
-    let hasPath = teamObj.pathPoints && teamObj.pathPoints.length > 0;
-    const stepsPerTurn = (CONFIG && CONFIG.rules && Number(CONFIG.rules.stepsPerTurn)) || 100;
+    const hasPath = Array.isArray(teamObj.pathPoints) && teamObj.pathPoints.length > 0;
+    const hasQuats = Array.isArray(teamObj.pathQuats) && teamObj.pathQuats.length > 0;
+    const hasEnemyPath = Array.isArray(enemyObj.pathPoints) && enemyObj.pathPoints.length > 0;
+    const hasEnemyQuats = Array.isArray(enemyObj.pathQuats) && enemyObj.pathQuats.length > 0;
+    const stepsPerTurn = (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getStepsPerTurn === 'function')
+        ? CONFIG.getStepsPerTurn()
+        : ((CONFIG && CONFIG.rules && Number(CONFIG.rules.stepsPerTurn)) || 100);
+
+    const selfEnd = hasPath ? teamObj.pathPoints[teamObj.pathPoints.length - 1] : teamObj.wrapper.position;
+    const enemyStart = enemyObj.wrapper.position;
+    const enemyEnd = hasEnemyPath ? enemyObj.pathPoints[enemyObj.pathPoints.length - 1] : enemyStart;
+    const gFlaresLen = (GameContext.state && Array.isArray(GameContext.state.globalFlares)) ? GameContext.state.globalFlares.length : 0;
+    const gChaffLen = (GameContext.state && Array.isArray(GameContext.state.globalChaff)) ? GameContext.state.globalChaff.length : 0;
+
     teamObj.pylons.forEach(p => {
-        disposePylonLineMesh(p);
         const wt = typeof pylonWeaponType === 'function' ? pylonWeaponType(p) : (p.weaponType || 'fox2');
         const keepEmptyPod = !!(p.emptyPod || (p.mesh && p.mesh.userData && p.mesh.userData.emptyPod));
         if (wt === 'bomb' || wt === 'rocket') {
+            hidePylonLineMesh(p);
             if (p.mesh) p.mesh.visible = (p.state !== 'empty' || keepEmptyPod);
             return;
         }
-        let isFiringNow = p.state === 'armed' && teamObj.wpnQueued && teamObj.weapon === 'missile';
-        let activeM = teamObj.activeMissiles ? teamObj.activeMissiles.find(m => m.pylonId === p.id) : null;
-        let isFlying = activeM && activeM.active;
+        const isFiringNow = p.state === 'armed' && teamObj.wpnQueued && teamObj.weapon === 'missile';
+        const activeM = teamObj.activeMissiles ? teamObj.activeMissiles.find(m => m.pylonId === p.id) : null;
+        const isFlying = !!(activeM && activeM.active);
 
-        if (p.mesh) { let glowMesh = p.mesh.children.find(child => child.geometry && child.geometry.type === "SphereGeometry"); if (glowMesh) glowMesh.visible = false; }
-        if (!isFiringNow && !isFlying) { if (p.mesh) p.mesh.visible = (p.state !== 'empty' || keepEmptyPod); return; }
+        if (p.mesh) {
+            const glowMesh = p.mesh.children.find(child => child.geometry && child.geometry.type === "SphereGeometry");
+            if (glowMesh) glowMesh.visible = false;
+        }
+        if (!isFiringNow && !isFlying) {
+            hidePylonLineMesh(p);
+            if (p.mesh) p.mesh.visible = (p.state !== 'empty' || keepEmptyPod);
+            return;
+        }
         if (p.mesh) p.mesh.visible = false;
 
         let mPos, mQuat, mAP;
         if (isFiringNow && !isFlying) {
-            let launchQuat = hasPath ? teamObj.pathQuats[0] : teamObj.wrapper.quaternion;
-            let visualLineOffset = new THREE.Vector3(0, -0.5, 0.2); let worldOffset = p.localPosition.clone().add(visualLineOffset).applyQuaternion(launchQuat);
-            mPos = (hasPath ? teamObj.pathPoints[0].clone() : teamObj.wrapper.position.clone()).add(worldOffset); mQuat = launchQuat.clone();
-            const wcfg = typeof getMissileWeaponConfig === 'function'
-                ? getMissileWeaponConfig(wt)
-                : (CONFIG && CONFIG.weapons && (CONFIG.weapons[wt] || CONFIG.weapons.fox2));
-            const cfgMaxAp = wcfg && Number(wcfg.maxAp);
-            mAP = Number.isFinite(cfgMaxAp) ? cfgMaxAp : MISSILE_MAX_AP;
-        } else { mPos = activeM.pos.clone(); mQuat = activeM.quat.clone(); mAP = activeM.ap; }
+            const launchQuat = hasQuats ? teamObj.pathQuats[0] : teamObj.wrapper.quaternion;
+            const worldOffset = p.localPosition.clone().add(_mslVisualLineOffset).applyQuaternion(launchQuat);
+            mPos = (hasPath ? teamObj.pathPoints[0].clone() : teamObj.wrapper.position.clone()).add(worldOffset);
+            mQuat = launchQuat.clone();
+            mAP = (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getMissileMaxAp === 'function')
+                ? CONFIG.getMissileMaxAp(wt)
+                : (() => {
+                    const wcfg = typeof getMissileWeaponConfig === 'function'
+                        ? getMissileWeaponConfig(wt)
+                        : (CONFIG && CONFIG.weapons && (CONFIG.weapons[wt] || CONFIG.weapons.fox2));
+                    const cfgMaxAp = wcfg && Number(wcfg.maxAp);
+                    return Number.isFinite(cfgMaxAp) ? cfgMaxAp : MISSILE_MAX_AP;
+                })();
+        } else {
+            mPos = activeM.pos.clone();
+            mQuat = activeM.quat.clone();
+            mAP = activeM.ap;
+        }
 
-        let mPoints = [mPos.clone()]; let simPos = mPos.clone(); let simQuat = mQuat.clone(); let simAP = mAP;
+        const wcfgSig = typeof getMissileWeaponConfig === 'function' ? getMissileWeaponConfig(wt) : {};
+        const mslSig = [
+            teamObj.id, p.id, wt, isFiringNow ? 1 : 0, isFlying ? 1 : 0,
+            stepsPerTurn, Number(mAP || 0).toFixed(1),
+            Number(wcfgSig.seekerRange || 0), Number(wcfgSig.turnRate || 0),
+            mPos.x.toFixed(2), mPos.y.toFixed(2), mPos.z.toFixed(2),
+            mQuat.x.toFixed(3), mQuat.y.toFixed(3), mQuat.z.toFixed(3), mQuat.w.toFixed(3),
+            selfEnd.x.toFixed(2), selfEnd.y.toFixed(2), selfEnd.z.toFixed(2),
+            enemyId, Number(enemyObj.heat || 0).toFixed(1),
+            enemyStart.x.toFixed(2), enemyStart.y.toFixed(2), enemyStart.z.toFixed(2),
+            enemyEnd.x.toFixed(2), enemyEnd.y.toFixed(2), enemyEnd.z.toFixed(2),
+            gFlaresLen, gChaffLen, teamObj.colorMain || ''
+        ].join('|');
+
+        if (p.lineMesh && p.lineMesh.userData && p.lineMesh.userData.lastMslSig === mslSig) {
+            p.lineMesh.visible = !!p.lineMesh.userData.hasValidLine;
+            return;
+        }
+
+        const mPoints = [mPos.clone()];
+        let simPos = mPos.clone();
+        let simQuat = mQuat.clone();
+        let simAP = mAP;
         const previewSources = (typeof buildMissileHeatSources === 'function')
             ? buildMissileHeatSources(teamObj.id, null, [])
             : null;
-        for (let step = 0; step <= stepsPerTurn; step++) { 
-            let ratio = step / stepsPerTurn;
-            // Rebuild aircraft poses along paths for no-IFF preview when possible
+        for (let step = 0; step <= stepsPerTurn; step++) {
+            const ratio = step / stepsPerTurn;
             let heatSources = previewSources;
             if (typeof buildMissileHeatSources === 'function') {
                 heatSources = buildMissileHeatSources(teamObj.id, ratio, []);
             }
-            let eIdx = Math.min(enemyObj.pathPoints.length - 1, Math.floor(ratio * enemyObj.pathPoints.length));
-            let targetPos = enemyObj.pathPoints[eIdx] || enemyObj.wrapper.position;
-            let targetQuat = enemyObj.pathQuats[eIdx] || enemyObj.wrapper.quaternion;
-            let stepRes = simulateMissileStep(simPos, simQuat, targetPos, targetQuat, simAP, teamObj, enemyObj, [], null, {
+            let targetPos = enemyObj.wrapper.position;
+            let targetQuat = enemyObj.wrapper.quaternion;
+            if (hasEnemyPath) {
+                const eIdx = Math.min(enemyObj.pathPoints.length - 1, Math.floor(ratio * enemyObj.pathPoints.length));
+                targetPos = enemyObj.pathPoints[eIdx] || targetPos;
+            }
+            if (hasEnemyQuats) {
+                const qIdx = Math.min(enemyObj.pathQuats.length - 1, Math.floor(ratio * enemyObj.pathQuats.length));
+                targetQuat = enemyObj.pathQuats[qIdx] || targetQuat;
+            }
+            const stepRes = simulateMissileStep(simPos, simQuat, targetPos, targetQuat, simAP, teamObj, enemyObj, [], null, {
                 shooterId: teamObj.id,
+                missileType: wt,
                 ratio,
                 heatSources
             });
-            simPos = stepRes.pos; simQuat = stepRes.quat; simAP = stepRes.ap; mPoints.push(simPos.clone()); 
-            if (stepRes.exploded || simAP <= 0) break; 
+            simPos = stepRes.pos; simQuat = stepRes.quat; simAP = stepRes.ap;
+            mPoints.push(simPos.clone());
+            if (stepRes.exploded || simAP <= 0) break;
         }
-        
+
         if (mPoints.length >= 2) {
-            let isTracking = mPoints.length < 100 || (mPoints.length > 10 && mPoints[mPoints.length-1].distanceTo(enemyObj.wrapper.position) < 10);
-            let lineColor = isTracking ? teamObj.colorMain : 0xffffff; let lineOpacity = isTracking ? 0.8 : 0.4;
-            const geo = new THREE.BufferGeometry().setFromPoints(mPoints);
-            p.lineMesh = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: lineColor, transparent: true, opacity: lineOpacity, linewidth: 2 }));
-            scene.add(p.lineMesh); 
+            const isTracking = mPoints.length < stepsPerTurn || (mPoints.length > 10 && mPoints[mPoints.length - 1].distanceTo(enemyObj.wrapper.position) < 10);
+            const lineColor = isTracking ? teamObj.colorMain : 0xffffff;
+            const lineOpacity = isTracking ? 0.8 : 0.4;
+            const line = ensurePylonLineMesh(p, mPoints.length, lineColor, lineOpacity);
+            const posAttr = line.geometry.attributes.position;
+            const arr = posAttr.array;
+            for (let i = 0; i < mPoints.length; i++) {
+                const pt = mPoints[i];
+                const b = i * 3;
+                arr[b] = pt.x;
+                arr[b + 1] = pt.y;
+                arr[b + 2] = pt.z;
+            }
+            posAttr.needsUpdate = true;
+            line.geometry.setDrawRange(0, mPoints.length);
+            line.userData.lastMslSig = mslSig;
+            line.userData.hasValidLine = true;
+            line.visible = true;
+        } else {
+            if (p.lineMesh && p.lineMesh.userData) {
+                p.lineMesh.userData.lastMslSig = mslSig;
+                p.lineMesh.userData.hasValidLine = false;
+            }
+            hidePylonLineMesh(p);
         }
     });
 }
@@ -1317,7 +1520,9 @@ function updateMissilePreview(teamObj) {
 function renderCombatFrame(currentLog, animProgress) {
     if (!currentLog || !battleLog) return;
     let turnIdx = battleLog.indexOf(currentLog); if (turnIdx === -1) return;
-    const stepsPerTurn = (CONFIG && CONFIG.rules && Number(CONFIG.rules.stepsPerTurn)) || 100;
+    const stepsPerTurn = (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getStepsPerTurn === 'function')
+        ? CONFIG.getStepsPerTurn()
+        : ((CONFIG && CONFIG.rules && Number(CONFIG.rules.stepsPerTurn)) || 100);
     let trackIdx = Math.min(stepsPerTurn, Math.floor(animProgress * stepsPerTurn));
 
     // Trim forward path ribbon so ONLY the remaining segment ahead of the aircraft stays red/cyan;
@@ -1564,7 +1769,6 @@ function renderCombatFrame(currentLog, animProgress) {
         if (hasReplayPath) {
             currentPlanePos = getPosAt(animProgress, currentLog[id].pts); currentPlaneQuat = getQuatAt(animProgress, currentLog[id].quats);
             t.wrapper.position.copy(currentPlanePos); t.wrapper.quaternion.copy(currentPlaneQuat);
-            if (id === tAct) { let adi = document.getElementById('adi-sky-ground'); if(adi) adi.style.transform = `rotate(${(new THREE.Euler().setFromQuaternion(currentPlaneQuat, 'YXZ').z * 180) / Math.PI}deg) translateY(${-(new THREE.Euler().setFromQuaternion(currentPlaneQuat, 'YXZ').x * 180) / Math.PI * 1.5}px)`; }
         } else {
             return;
         }
@@ -1574,6 +1778,7 @@ function renderCombatFrame(currentLog, animProgress) {
         // Legacy 1px line tracers only used when unified GPU-batched AirArenaAutocannonVfx is unavailable
         const hasNewAutocannonVfx = (typeof window !== 'undefined' && window.AirArenaAutocannonVfx && typeof window.AirArenaAutocannonVfx.renderCombatAutocannon === 'function');
         if (!hasNewAutocannonVfx) {
+            ensureLegacyVisualBullets();
             let currentNosePos = currentPlanePos.clone().add(new THREE.Vector3(0, -0.12, 0.45).applyQuaternion(currentPlaneQuat));
             for (let age = 0; age <= 2; age++) {
                 let logIdx = turnIdx - age; if (logIdx < 0) continue; let pastLog = battleLog[logIdx]; if (!pastLog || !pastLog[id]) continue;
@@ -1582,7 +1787,9 @@ function renderCombatFrame(currentLog, animProgress) {
                     let stats = (typeof getThrottleStats === 'function')
                         ? getThrottleStats(logChain[0].throttle || 2, t.type || 'mig21')
                         : (CONFIG.aircrafts[t.type || 'mig21'].throttleStats[Math.round(logChain[0].throttle || 2)] || { gunRangeMult: 1.0 });
-                    let dRange = GUN_RANGE * stats.gunRangeMult;
+                    const baseGunRange = (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getGunRange === 'function')
+                        ? CONFIG.getGunRange() : GUN_RANGE;
+                    let dRange = baseGunRange * stats.gunRangeMult;
                     for (let b = 0; b < 24; b++) {
                         if (bulletIdx >= visualBullets.length) break;
                         let mesh = visualBullets[bulletIdx];

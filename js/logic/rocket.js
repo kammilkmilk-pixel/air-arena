@@ -8,6 +8,9 @@
     const Rocket = {};
 
     function rocketConfig() {
+        if (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getRocketConfig === 'function') {
+            return CONFIG.getRocketConfig();
+        }
         return (typeof CONFIG !== 'undefined' && CONFIG.weapons && CONFIG.weapons.rocket)
             ? CONFIG.weapons.rocket
             : {};
@@ -35,13 +38,43 @@
     }
 
     function roundsPerPod() {
+        if (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getRocketRoundsPerPod === 'function') {
+            return CONFIG.getRocketRoundsPerPod();
+        }
         const n = Number(rocketConfig().roundsPerPod);
         return Number.isFinite(n) && n > 0 ? Math.floor(n) : 9;
     }
 
     function salvoPerTurn() {
+        if (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getRocketSalvoPerTurn === 'function') {
+            return CONFIG.getRocketSalvoPerTurn();
+        }
         const n = Number(rocketConfig().salvoPerTurn);
         return Number.isFinite(n) && n > 0 ? Math.floor(n) : 3;
+    }
+
+    function vtRadius() {
+        if (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getRocketVtRadius === 'function') {
+            return CONFIG.getRocketVtRadius();
+        }
+        const cfg = rocketConfig();
+        return cfg.vtRadius != null ? Number(cfg.vtRadius) : 4.5;
+    }
+
+    function blastRadius() {
+        if (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getRocketBlastRadius === 'function') {
+            return CONFIG.getRocketBlastRadius();
+        }
+        const cfg = rocketConfig();
+        return cfg.blastRadius != null ? Number(cfg.blastRadius) : 6;
+    }
+
+    function rocketMaxRange() {
+        if (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getRocketRange === 'function') {
+            return CONFIG.getRocketRange();
+        }
+        const cfg = rocketConfig();
+        return cfg.range != null ? Number(cfg.range) : 120;
     }
 
     function intervalSteps() {
@@ -108,13 +141,17 @@
 
     function ballisticKnobs() {
         const cfg = rocketConfig();
-        const stepsPerTurn = (typeof CONFIG !== 'undefined' && CONFIG.rules && CONFIG.rules.stepsPerTurn)
-            ? Number(CONFIG.rules.stepsPerTurn) : 100;
+        const stepsPerTurn = (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getStepsPerTurn === 'function')
+            ? CONFIG.getStepsPerTurn()
+            : ((typeof CONFIG !== 'undefined' && CONFIG.rules && CONFIG.rules.stepsPerTurn)
+                ? Number(CONFIG.rules.stepsPerTurn) : 100);
+        const baseG = (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getGravity === 'function')
+            ? CONFIG.getGravity()
+            : ((typeof CONFIG !== 'undefined' && CONFIG.rules && CONFIG.rules.gravity != null)
+                ? Number(CONFIG.rules.gravity) : 9.8);
         return {
             stepsPerTurn,
-            g: ((typeof CONFIG !== 'undefined' && CONFIG.rules && CONFIG.rules.gravity != null)
-                ? Number(CONFIG.rules.gravity) : 9.8)
-                * (cfg.gravityScale != null ? Number(cfg.gravityScale) : 0.55),
+            g: baseG * (cfg.gravityScale != null ? Number(cfg.gravityScale) : 0.55),
             drag: cfg.drag != null ? Number(cfg.drag) : 0.002,
             groundY: cfg.groundY != null ? Number(cfg.groundY) : 0,
             substeps: Math.max(1, Math.floor(cfg.substeps != null ? Number(cfg.substeps) : 2)),
@@ -247,8 +284,10 @@
         const cfg = rocketConfig();
         const scale = cfg.launchSpeedScale != null ? Number(cfg.launchSpeedScale) : 1;
         const baseSpeed = cfg.launchSpeed != null ? Number(cfg.launchSpeed) : 55;
-        const stepsPerTurn = (typeof CONFIG !== 'undefined' && CONFIG.rules && CONFIG.rules.stepsPerTurn)
-            ? Number(CONFIG.rules.stepsPerTurn) : 100;
+        const stepsPerTurn = (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getStepsPerTurn === 'function')
+            ? CONFIG.getStepsPerTurn()
+            : ((typeof CONFIG !== 'undefined' && CONFIG.rules && CONFIG.rules.stepsPerTurn)
+                ? Number(CONFIG.rules.stepsPerTurn) : 100);
         const ratio = Math.max(0, Math.min(1, Number(opts && opts.ratio) || 0));
         const disp = (opts && opts.dispersion) || { yaw: 0, pitch: 0 };
 
@@ -401,9 +440,9 @@
         const cfg = rocketConfig();
         const knobs = ballisticKnobs();
         const stepsPerTurn = knobs.stepsPerTurn;
-        const vtR = cfg.vtRadius != null ? Number(cfg.vtRadius) : 4.5;
-        const blastR = cfg.blastRadius != null ? Number(cfg.blastRadius) : 6;
-        const airRange = cfg.range != null ? Number(cfg.range) : 120;
+        const vtR = vtRadius();
+        const blastR = blastRadius();
+        const airRange = rocketMaxRange();
         const fuseDelay = cfg.fuseDelaySteps != null ? Number(cfg.fuseDelaySteps) : 4;
         const liveEnemy = (enemy && enemy.wrapper && !enemy.isDestroyed) ? enemy : null;
 
@@ -420,6 +459,7 @@
             : tp;
         const sig = [
             team.id, fuze, pod.id, salvo,
+            stepsPerTurn, vtR.toFixed(2), blastR.toFixed(2), airRange.toFixed(1), knobs.g.toFixed(2),
             tp.x.toFixed(2), tp.y.toFixed(2), tp.z.toFixed(2),
             endPt.x.toFixed(2), endPt.y.toFixed(2), endPt.z.toFixed(2),
             Number(team.joyX || 0).toFixed(3), Number(team.joyY || 0).toFixed(3),
@@ -751,8 +791,7 @@
                 Number((typeof GameContext !== 'undefined' && GameContext.state && GameContext.state.currentTurn) || 1)
             );
             const seqBase = (Number(t._rocketSeq) || 0);
-            const stepsPerTurn = (typeof CONFIG !== 'undefined' && CONFIG.rules && CONFIG.rules.stepsPerTurn)
-                ? Number(CONFIG.rules.stepsPerTurn) : 100;
+            const stepsPerTurn = ballisticKnobs().stepsPerTurn;
             for (let i = 0; i < fireCount; i++) {
                 t._rocketSeq = seqBase + i + 1;
                 const trackId = `r${id}_p${pod.id}_t${turn}_${t._rocketSeq}`;
@@ -802,7 +841,7 @@
         if (rocket.launchStep >= 0 && step < rocket.launchStep + fuseDelay) return null;
         if (rocket.launchStep < 0 && (Number(rocket.ageSteps) || 0) < fuseDelay) return null;
 
-        const vtR = cfg.vtRadius != null ? Number(cfg.vtRadius) : 4.5;
+        const vtR = vtRadius();
         const vtGround = cfg.vtGroundHeight != null ? Number(cfg.vtGroundHeight) : 3.5;
 
         // Airburst near ground.
@@ -835,7 +874,7 @@
     function resolveRocketsForStep(step, ratio, ctx) {
         if (!ctx || !ctx.log) return;
         const cfg = rocketConfig();
-        const blastR = cfg.blastRadius != null ? Number(cfg.blastRadius) : 6;
+        const blastR = blastRadius();
         const damage = cfg.damage != null ? Number(cfg.damage) : 22;
         const maxFlight = cfg.maxFlightSteps != null ? Number(cfg.maxFlightSteps) : 220;
         const knobs = ballisticKnobs();

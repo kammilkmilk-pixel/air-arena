@@ -774,9 +774,14 @@ window.updateTacticalPreview = function(teamObj) {
     const enemyId = (GameContext.getTargetId && GameContext.getTargetId(teamObj.id))
         || (GameContext.getNearestHostileId && GameContext.getNearestHostileId(teamObj.id))
         || (String(teamObj.id).startsWith('red') ? 'blue' : 'red');
-    if (typeof trajectoryMeshes !== 'undefined' && trajectoryMeshes[enemyId]) { 
-        scene.remove(trajectoryMeshes[enemyId]); 
-        trajectoryMeshes[enemyId] = null; 
+    if (typeof trajectoryMeshes !== 'undefined' && trajectoryMeshes[enemyId]) {
+        const enmMesh = trajectoryMeshes[enemyId];
+        if (enmMesh) {
+            if (enmMesh.parent) enmMesh.parent.remove(enmMesh);
+            else if (typeof scene !== 'undefined' && scene) scene.remove(enmMesh);
+            // Keep geometry/material alive — drawTrajectoryLine will reuse the same mesh later.
+        }
+        trajectoryMeshes[enemyId] = null;
     }
     
     const enemyObj = teams[enemyId];
@@ -784,13 +789,6 @@ window.updateTacticalPreview = function(teamObj) {
         const showEnv = !!(enemyObj.userData && enemyObj.userData.showEnvelope);
         threatEnvGroup.visible = showEnv;
         if (showEnv) {
-            while (threatEnvGroup.children.length > 0) {
-                let child = threatEnvGroup.children[0];
-                if (child.geometry) child.geometry.dispose();
-                threatEnvGroup.remove(child);
-            }
-            threatEnvGroup.position.set(0, 0, 0); threatEnvGroup.quaternion.identity();
-
             if (!window._threatEnvMats) {
                 window._threatEnvMats = {
                     t1: new THREE.LineBasicMaterial({ color: 0x00ff88, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending }),
@@ -799,31 +797,106 @@ window.updateTacticalPreview = function(teamObj) {
                     center: new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9 })
                 };
             }
-            const { t1: matT1, t2: matT2, t3: matT3, center: matCenter } = window._threatEnvMats;
-
-            function createEnvelopeNet(testThrottle, lineMat) {
-                const segments = 16; const pathSets = [];
-                for (let i = 0; i < segments; i++) {
-                    let angle = (i / segments) * Math.PI * 2;
-                    let tYaw = -Math.cos(angle) * (Math.PI / 4);
-                    let tPitch = Math.sin(angle) * (Math.PI / 3);
-                    let r = simulateFlight(enemyObj, [{ yaw: tYaw, pitch: tPitch, roll: 0, throttle: testThrottle }]);
-                    pathSets.push(r.points);
-                }
-                for (let i = 0; i < segments; i += 2) {
-                    threatEnvGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pathSets[i]), lineMat));
-                }
-                [15, 30].forEach(frame => {
-                    let ringPts = [];
-                    for (let i = 0; i < segments; i++) ringPts.push(pathSets[i][frame]);
-                    ringPts.push(pathSets[0][frame]);
-                    threatEnvGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(ringPts), lineMat));
-                });
+            if (!window._threatEnvPool) {
+                window._threatEnvPool = { lines: [], lastSig: '' };
             }
-            createEnvelopeNet(1, matT1); createEnvelopeNet(2, matT2); createEnvelopeNet(3, matT3);
-            let centerRes = simulateFlight(enemyObj, [{ yaw: 0, pitch: 0, roll: 0, throttle: enemyObj.throttle }]);
-            let centerLine = new THREE.Line(new THREE.BufferGeometry().setFromPoints(centerRes.points), matCenter);
-            threatEnvGroup.add(centerLine);
+            const ep = enemyObj.wrapper.position;
+            const eq = enemyObj.wrapper.userData && enemyObj.wrapper.userData.logicalQuat
+                ? enemyObj.wrapper.userData.logicalQuat
+                : enemyObj.wrapper.quaternion;
+            const threatSig = [
+                enemyId,
+                Number(enemyObj.throttle || 0).toFixed(2),
+                Number(enemyObj.ap || 0).toFixed(1),
+                Number(enemyObj.heat || 0).toFixed(1),
+                ep.x.toFixed(2), ep.y.toFixed(2), ep.z.toFixed(2),
+                eq.x.toFixed(3), eq.y.toFixed(3), eq.z.toFixed(3), eq.w.toFixed(3),
+                !!(enemyObj.stalled), !!(enemyObj.flameout)
+            ].join('|');
+
+            // Dirty-flag: pointer-move that only changes own joyX/joyY must not rebuild
+            // the enemy envelope (49× simulateFlight + fresh BufferGeometry per frame).
+            if (window._threatEnvPool.lastSig !== threatSig) {
+                const { t1: matT1, t2: matT2, t3: matT3, center: matCenter } = window._threatEnvMats;
+                const pool = window._threatEnvPool;
+                let poolIdx = 0;
+
+                function acquireLine(mat) {
+                    let line = pool.lines[poolIdx];
+                    if (!line) {
+                        const geo = new THREE.BufferGeometry();
+                        line = new THREE.Line(geo, mat);
+                        line.frustumCulled = false;
+                        pool.lines[poolIdx] = line;
+                    } else {
+                        line.material = mat;
+                    }
+                    poolIdx++;
+                    return line;
+                }
+
+                function setLinePoints(line, pts) {
+                    const n = pts.length;
+                    const need = Math.max(n * 3, 16);
+                    let posAttr = line.geometry.getAttribute('position');
+                    if (!posAttr || posAttr.array.length < need) {
+                        const arr = new Float32Array(Math.max(need, (posAttr && posAttr.array.length) || 0, 64));
+                        line.geometry.setAttribute('position', new THREE.BufferAttribute(arr, 3));
+                        posAttr = line.geometry.getAttribute('position');
+                    }
+                    const arr = posAttr.array;
+                    for (let i = 0; i < n; i++) {
+                        const p = pts[i];
+                        const b = i * 3;
+                        arr[b] = p.x; arr[b + 1] = p.y; arr[b + 2] = p.z;
+                    }
+                    posAttr.needsUpdate = true;
+                    line.geometry.setDrawRange(0, n);
+                    line.visible = n >= 2;
+                }
+
+                function createEnvelopeNet(testThrottle, lineMat) {
+                    const segments = 16;
+                    const pathSets = [];
+                    for (let i = 0; i < segments; i++) {
+                        const angle = (i / segments) * Math.PI * 2;
+                        const tYaw = -Math.cos(angle) * (Math.PI / 4);
+                        const tPitch = Math.sin(angle) * (Math.PI / 3);
+                        const r = simulateFlight(enemyObj, [{ yaw: tYaw, pitch: tPitch, roll: 0, throttle: testThrottle }]);
+                        pathSets.push(r.points);
+                    }
+                    for (let i = 0; i < segments; i += 2) {
+                        const line = acquireLine(lineMat);
+                        setLinePoints(line, pathSets[i]);
+                        if (!line.parent) threatEnvGroup.add(line);
+                    }
+                    [15, 30].forEach((frame) => {
+                        const ringPts = [];
+                        for (let i = 0; i < segments; i++) ringPts.push(pathSets[i][frame]);
+                        ringPts.push(pathSets[0][frame]);
+                        const line = acquireLine(lineMat);
+                        setLinePoints(line, ringPts);
+                        if (!line.parent) threatEnvGroup.add(line);
+                    });
+                }
+
+                threatEnvGroup.position.set(0, 0, 0);
+                threatEnvGroup.quaternion.identity();
+                createEnvelopeNet(1, matT1);
+                createEnvelopeNet(2, matT2);
+                createEnvelopeNet(3, matT3);
+                const centerRes = simulateFlight(enemyObj, [{ yaw: 0, pitch: 0, roll: 0, throttle: enemyObj.throttle }]);
+                const centerLine = acquireLine(matCenter);
+                setLinePoints(centerLine, centerRes.points);
+                if (!centerLine.parent) threatEnvGroup.add(centerLine);
+
+                for (let i = poolIdx; i < pool.lines.length; i++) {
+                    pool.lines[i].visible = false;
+                }
+                pool.lastSig = threatSig;
+            }
+        } else if (window._threatEnvPool) {
+            window._threatEnvPool.lastSig = '';
         }
     }
 

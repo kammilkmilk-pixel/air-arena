@@ -48,10 +48,13 @@ function getMissileWeaponConfig(missileType) {
     let type = sanitizePylonWeapon(missileType === 'empty' ? 'fox2' : missileType);
     // Bomb/rocket are not FOX seekers — fall back to fox2 envelope if mis-queried.
     if (type === 'bomb' || type === 'rocket') type = 'fox2';
+    if (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getMissileConfig === 'function') {
+        return CONFIG.getMissileConfig(type);
+    }
     if (typeof CONFIG !== 'undefined' && CONFIG.weapons && CONFIG.weapons[type]) {
         return CONFIG.weapons[type];
     }
-    return (CONFIG && CONFIG.weapons && CONFIG.weapons.fox2) ? CONFIG.weapons.fox2 : {};
+    return (typeof CONFIG !== 'undefined' && CONFIG && CONFIG.weapons && CONFIG.weapons.fox2) ? CONFIG.weapons.fox2 : {};
 }
 
 function pylonWeaponType(pylon) {

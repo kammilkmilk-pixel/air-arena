@@ -159,8 +159,10 @@ function tryAttachAllPylons() {
                 state: isEmpty ? 'empty' : 'standby'
             };
             if (weaponType === 'rocket') {
-                const maxR = (typeof CONFIG !== 'undefined' && CONFIG.weapons && CONFIG.weapons.rocket
-                    && Number(CONFIG.weapons.rocket.roundsPerPod)) || 9;
+                const maxR = (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getRocketRoundsPerPod === 'function')
+                    ? CONFIG.getRocketRoundsPerPod()
+                    : ((typeof CONFIG !== 'undefined' && CONFIG.weapons && CONFIG.weapons.rocket
+                        && Number(CONFIG.weapons.rocket.roundsPerPod)) || 9);
                 pylonState.ammoMax = maxR;
                 pylonState.ammo = maxR;
             }
