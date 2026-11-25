@@ -2428,3 +2428,20 @@ body.is-split-panes #tactical-computer-module {
     opacity: 0 !important;
     pointer-events: none !important;
 }
+
+/* Hover notes: shown by hover-help.js only after the pointer rests for 1s. */
+#hover-help-tip {
+    position: fixed;
+    z-index: 12000;
+    max-width: min(280px, 72vw);
+    padding: 6px 8px;
+    background: rgba(8, 12, 16, 0.94);
+    color: #e8f2ea;
+    border: 1px solid rgba(180, 220, 190, 0.55);
+    border-radius: 4px;
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
+    line-height: 1.35;
+    pointer-events: none;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+}
