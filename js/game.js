@@ -1112,6 +1112,7 @@ function animate() {
     // 1. ACMI 重播模式
     // ==========================================
     if (GameContext.isReplayMode()) { 
+        syncReplayFullFrame();
         const frameDt = Math.max(4, Math.min(80, now - (GameContext.state.lastReplayFrameMs || now)));
         GameContext.state.lastReplayFrameMs = now;
 
@@ -1301,8 +1302,24 @@ function resolveReplayCursor(val) {
     return { turnIdx, progress };
 }
 
+/** Replay draws the full canvas. Split chase leaves camera.aspect on a pane, which stretches this frame. */
+function syncReplayFullFrame() {
+    if (typeof renderer === 'undefined' || !renderer || typeof camera === 'undefined' || !camera) return;
+    const canvas = renderer.domElement;
+    const width = Math.max(1, canvas.clientWidth || window.innerWidth || 1);
+    const height = Math.max(1, canvas.clientHeight || window.innerHeight || 1);
+    renderer.setScissorTest(false);
+    renderer.setViewport(0, 0, width, height);
+    const aspect = width / height;
+    if (Math.abs((camera.aspect || 0) - aspect) > 0.002) {
+        camera.aspect = aspect;
+        camera.updateProjectionMatrix();
+    }
+}
+
 function refreshReplayDirectorFrame(opts) {
     if (!GameContext.isReplayMode() || !Array.isArray(battleLog) || !battleLog.length) return;
+    syncReplayFullFrame();
     const val = GameContext.state.virtualReplayTime || 1.0;
     const cur = resolveReplayCursor(val);
     if (!cur || !battleLog[cur.turnIdx]) return;
