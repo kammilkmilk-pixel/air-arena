@@ -15,7 +15,10 @@ renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 document.getElementById('canvas-container').appendChild(renderer.domElement);
 const controls = new THREE.OrbitControls(camera, renderer.domElement); 
-controls.minPolarAngle = Math.PI / 6; controls.maxPolarAngle = Math.PI / 1.6; controls.enableDamping = true;
+// Polar 0 is overhead, π/2 is level. π/6 is a 60° look-down; 5π/6 is a 60° look-up.
+controls.minPolarAngle = Math.PI / 6;
+controls.maxPolarAngle = Math.PI * 5 / 6;
+controls.enableDamping = true;
 controls.target.set(10, 25, -30); controls.update();
 // iPhone／觸控：關閉雙指 dolly，避免與瀏覽器 pinch 疊加造成「畫面與面板分離」
 (function disableTouchOrbitZoom() {
