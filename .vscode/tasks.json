@@ -2,7 +2,7 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "Air Arena: ensure dev server (8080)",
+      "label": "Active Theater: ensure dev server (8080)",
       "type": "shell",
       "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"${workspaceFolder}/tools/ensure-dev-server.ps1\"",
       "options": {
@@ -19,7 +19,7 @@
       }
     },
     {
-      "label": "Air Arena: open http://127.0.0.1:8080",
+      "label": "Active Theater: open http://127.0.0.1:8080",
       "type": "shell",
       "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"${workspaceFolder}/tools/ensure-dev-server.ps1\" -Open",
       "options": {

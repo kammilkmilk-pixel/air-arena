@@ -1,4 +1,4 @@
-# 📖 Air Arena 核心系統字典 (v3.0)
+# 📖 Active Theater 核心系統字典 (v3.0)
 
 ## 目前更新狀態
 

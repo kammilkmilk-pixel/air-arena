@@ -1,4 +1,4 @@
--- Air Arena BaaS optional schema (Supabase SQL editor)
+-- Active Theater BaaS optional schema (Supabase SQL editor)
 -- Private rooms MVP can run on Realtime Broadcast + Presence alone.
 -- These tables support TTL listing, reconnect audit, and queue durability (B2/B3).
 

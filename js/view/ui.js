@@ -2514,7 +2514,7 @@ function uiFormatAIDebugText(teamId, opts = {}) {
     if (!snap) return `${String(teamId || '').toUpperCase()}: N/A`;
     const includeJsonTail = opts.includeJsonTail !== false && snap._includeJsonTail !== false;
     const lines = [];
-    lines.push(`# Air Arena AI Debug Snapshot`);
+    lines.push(`# Active Theater AI Debug Snapshot`);
     lines.push(`schema: ${snap.schema}`);
     lines.push(`exportedAt: ${snap.exportedAt}`);
     lines.push(`turn: ${snap.turn}  match: ${snap.matchMode || '-'}  arena: ${snap.arenaMode}`);
@@ -2729,7 +2729,7 @@ function uiBuildAIRosterSnapshot() {
 function uiFormatAIRosterText(roster) {
     const dump = roster || uiBuildAIRosterSnapshot();
     const lines = [];
-    lines.push(`# Air Arena AI Roster Dump`);
+    lines.push(`# Active Theater AI Roster Dump`);
     lines.push(`schema: ${dump.schema}`);
     lines.push(`exportedAt: ${dump.exportedAt}`);
     lines.push(`turn: ${dump.turn}  mode: ${dump.matchMode || '-'}  arena: ${dump.arenaMode}  trailMax=${dump.trailMax || AI_DECISION_TRAIL_MAX}`);

@@ -1,4 +1,4 @@
-# Technical Debt Log — Air Arena v3.0+
+# Technical Debt Log — Active Theater v3.0+
 
 **Snapshot date:** 2026-08-05（備份前複檢）  
 **Context:** Post Phase 1–3 bake OS + Phase B thin knife + midair/undercroft P0–P1 + UI polish（交戰開始／收納不自動彈／鏡頭下移 10%）。Prior waves: soft-aiMap / typed CM / FOX-1 SARH / chase-cam-8 / top-bar fold / standard 2×F1+2×F2。  

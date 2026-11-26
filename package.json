@@ -2,7 +2,7 @@
   "name": "air-arena",
   "version": "3.0.0",
   "private": true,
-  "description": "Vertical Airspace tactical air combat simulator",
+  "description": "Active Theater tactical air combat simulator",
   "scripts": {
     "start": "node tools/room-server.js",
     "start:static": "serve -l 8080",

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 /**
- * Air Arena play + room server (static files + WebSocket on ONE port).
+ * Active Theater play + room server (static files + WebSocket on ONE port).
  * Mobile / LAN: open http://<pc-lan-ip>:8080/ on phone; WS uses same origin.
  *
  * Usage: node tools/room-server.js
@@ -406,7 +406,7 @@ function sendStatic(req, res) {
 
     if (!SERVE_STATIC) {
         res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
-        res.end(`Air Arena room WS only (:${PORT})\nSet SERVE_STATIC=1 or use npm start for game+WS.\n`);
+        res.end(`Active Theater room WS only (:${PORT})\nSet SERVE_STATIC=1 or use npm start for game+WS.\n`);
         return;
     }
 

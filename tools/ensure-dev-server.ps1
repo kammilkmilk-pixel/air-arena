@@ -1,4 +1,4 @@
-# Idempotent local static server for Air Arena (port 8080).
+# Idempotent local static server for Active Theater (port 8080).
 # Usage:
 #   powershell -File tools/ensure-dev-server.ps1
 #   powershell -File tools/ensure-dev-server.ps1 -Open
