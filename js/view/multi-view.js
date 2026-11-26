@@ -166,6 +166,7 @@
     /** Hide aiming ring / ghost plane / planned path so every chase pane shows the same scene. */
     function applySplitOverlayPolicy() {
         const split = isSplit();
+        if (document.body) document.body.classList.toggle('is-split-panes', split);
         if (split) {
             hideSplitExclusiveScene();
             hideSplitExclusiveDom();
@@ -635,6 +636,37 @@
         return true;
     }
 
+    /** Camera and pane rect under a CSS pixel, so hover raycasts match split screens. */
+    function cameraForClient(clientX, clientY) {
+        if (typeof renderer === 'undefined' || !renderer || !renderer.domElement) return null;
+        const bounds = canvasBounds();
+        const x = clientX - bounds.left;
+        const y = clientY - bounds.top;
+        if (x < 0 || y < 0 || x > bounds.width || y > bounds.height) return null;
+        const replay = typeof GameContext !== 'undefined' && GameContext.isReplayMode && GameContext.isReplayMode();
+        const ids = displayPaneIds();
+        let rect = { x: 0, y: 0, width: bounds.width, height: bounds.height };
+        let cam = (typeof camera !== 'undefined') ? camera : null;
+        if (!replay && ids.length > 1) {
+            const rects = layoutRectsForIds(ids, bounds.width, bounds.height);
+            const activeId = (GameContext.getActiveTeamId && GameContext.getActiveTeamId()) || ids[0];
+            for (let i = 0; i < ids.length; i++) {
+                const r = rects[i];
+                if (!r) continue;
+                if (x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height) {
+                    rect = r;
+                    const id = ids[i];
+                    cam = (id === activeId && typeof camera !== 'undefined' && camera)
+                        ? camera
+                        : getOrCreateCamera(id);
+                    break;
+                }
+            }
+        }
+        if (!cam) return null;
+        return { camera: cam, rect: rect, left: bounds.left, top: bounds.top };
+    }
+
     function setSplitRadioHud(split) {
         const radioHud = document.getElementById('radio-hud');
         if (radioHud) radioHud.classList.toggle('is-split-paned', !!split);
@@ -790,6 +822,7 @@
         syncStallOverlays,
         applyCameraShake,
         triggerViewCameraShake,
-        layoutRects
+        layoutRects,
+        cameraForClient
     };
 })(window);

@@ -2383,3 +2383,65 @@ body:not(:has(#replay-team-roster)) .team-seat-row {
         flex-wrap: wrap;
     }
 }
+
+/* Keep the bottom tactical computer; hide the classic instrument and stick cluster. */
+#u-shape-panel,
+#btn-ops-panel-toggle {
+    display: none !important;
+}
+#combat-hud-mobile {
+    width: auto !important;
+    height: auto !important;
+    bottom: 10px !important;
+    background: transparent !important;
+    pointer-events: none !important;
+}
+#ui-wrapper.is-controls-hidden #combat-hud-mobile,
+#ui-wrapper.is-ops-collapsed #combat-hud-mobile {
+    opacity: 1 !important;
+    visibility: visible !important;
+    pointer-events: none !important;
+    transform: translateX(-50%) !important;
+}
+#tactical-computer-module {
+    position: relative !important;
+    left: auto !important;
+    right: auto !important;
+    bottom: auto !important;
+    transform: none !important;
+    margin: 0 auto;
+    border-radius: 8px !important;
+    pointer-events: auto !important;
+}
+#ui-wrapper.is-controls-hidden #tactical-computer-module,
+#ui-wrapper.is-ops-collapsed #tactical-computer-module {
+    display: flex !important;
+    opacity: 1 !important;
+    visibility: visible !important;
+    pointer-events: auto !important;
+}
+/* Split chase panes: one shared tactical computer would sit across every screen. */
+body.is-split-panes #combat-hud-mobile,
+body.is-split-panes #tactical-computer-module {
+    display: none !important;
+    visibility: hidden !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+}
+
+/* Hover notes: shown by hover-help.js only after the pointer rests for 1s. */
+#hover-help-tip {
+    position: fixed;
+    z-index: 12000;
+    max-width: min(280px, 72vw);
+    padding: 6px 8px;
+    background: rgba(8, 12, 16, 0.94);
+    color: #e8f2ea;
+    border: 1px solid rgba(180, 220, 190, 0.55);
+    border-radius: 4px;
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
+    line-height: 1.35;
+    pointer-events: none;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+}
