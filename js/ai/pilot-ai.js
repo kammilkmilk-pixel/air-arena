@@ -11927,7 +11927,7 @@ window.AirArenaAI = {
         if (!selfPos || !selfForward || !enemyPos || typeof THREE === 'undefined') return s;
 
         const teamId = ctx.teamId;
-        const leadTurns = Number.isFinite(Number(ctx.predictLeadTurns)) ? Number(ctx.predictLeadTurns) : 1.1;
+        const leadTurns = Number.isFinite(Number(ctx.predictLeadTurns)) ? Number(ctx.predictLeadTurns) : 1.14;
         let predictPos = null;
         try {
             predictPos = teamId
@@ -13622,6 +13622,32 @@ window.AirArenaAI = {
                         this.raycaster.far = dist;
                         if (this.raycaster.intersectObjects(segObs, true).length > 0) buildingHit = true;
                     }
+                    // Bézier fillet sits inside the polyline chord — also probe the C1 midpoint.
+                    if (!buildingHit && typeof getPosAt === 'function' && points.length >= 2) {
+                        const midT = (i - 0.5) / (points.length - 1);
+                        const mid = getPosAt(midT, points, quats);
+                        const chordMid = prev.clone().add(pt).multiplyScalar(0.5);
+                        if (mid.distanceTo(chordMid) > 0.12) {
+                            moveVec.subVectors(mid, prev);
+                            const d0 = moveVec.length();
+                            if (d0 > 0.0001) {
+                                this.raycaster.set(prev, moveVec.divideScalar(d0));
+                                this.raycaster.near = 0;
+                                this.raycaster.far = d0;
+                                if (this.raycaster.intersectObjects(segObs, true).length > 0) buildingHit = true;
+                            }
+                            if (!buildingHit) {
+                                moveVec.subVectors(pt, mid);
+                                const d1 = moveVec.length();
+                                if (d1 > 0.0001) {
+                                    this.raycaster.set(mid, moveVec.divideScalar(d1));
+                                    this.raycaster.near = 0;
+                                    this.raycaster.far = d1;
+                                    if (this.raycaster.intersectObjects(segObs, true).length > 0) buildingHit = true;
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -13655,7 +13681,8 @@ window.AirArenaAI = {
                     startPos: other.wrapper.position,
                     fwd: oFwd,
                     turnDist: oTurnDist,
-                    pathPoints: useAllyPath ? other.pathPoints : null
+                    pathPoints: useAllyPath ? other.pathPoints : null,
+                    pathQuats: useAllyPath ? other.pathQuats : null
                 });
             }
             if (otherTrajs.length > 0) {
@@ -13664,11 +13691,13 @@ window.AirArenaAI = {
                 for (let s = 0; s <= sepSamples; s++) {
                     const frac = s / sepSamples;
                     const idx = Math.min(turn1Count - 1, Math.round(frac * (turn1Count - 1)));
-                    const myPt = points[idx];
+                    const myPt = (typeof getPosAt === 'function')
+                        ? getPosAt(frac, points, quats)
+                        : points[idx];
                     for (let k = 0; k < otherTrajs.length; k++) {
                         const ot = otherTrajs[k];
                         if (ot.pathPoints) {
-                            const gp = getPosAt(frac, ot.pathPoints);
+                            const gp = getPosAt(frac, ot.pathPoints, ot.pathQuats);
                             oPos.copy(gp);
                         } else {
                             oPos.copy(ot.startPos).addScaledVector(ot.fwd, ot.turnDist * frac);
@@ -17856,7 +17885,9 @@ window.AirArenaAI = {
         const closing = Math.max(1.2, muzzleSpeed + selfSpeedStep);
         // Convert frame-ish TOF into turn-lead units used by track velocity (per decide cycle).
         const framesToImpact = this.clamp(distance / closing, 4, 28);
-        const leadTurns = this.clamp(framesToImpact / 18, 0.45, 1.8);
+        // Bézier junctions hold incoming heading slightly longer than the Euler chord,
+        // so gun LCOS needs a touch more lead than the old polyline splice.
+        const leadTurns = this.clamp(framesToImpact / 17.4, 0.48, 1.85);
         const track = this.updateEnemyTrack(teamId, enemyPos, false);
         const trackVel = (assistedVelocity && assistedVelocity.lengthSq() > 0.0001)
             ? assistedVelocity.clone()
@@ -17869,7 +17900,10 @@ window.AirArenaAI = {
                 ? GameContext.getTeam(enemyId)
                 : null;
             if (liveEnemy && Array.isArray(liveEnemy.pathPoints) && liveEnemy.pathPoints.length >= 2) {
-                const ghost = liveEnemy.pathPoints[Math.min(liveEnemy.pathPoints.length - 1, Math.max(2, Math.floor(leadTurns * 4)))];
+                const frac = this.clamp(leadTurns, 0, 1);
+                const ghost = (typeof getPosAt === 'function')
+                    ? getPosAt(frac, liveEnemy.pathPoints, liveEnemy.pathQuats)
+                    : liveEnemy.pathPoints[Math.min(liveEnemy.pathPoints.length - 1, Math.max(2, Math.floor(leadTurns * 4)))];
                 if (ghost && typeof ghost.clone === 'function') {
                     aimPos = aimPos.multiplyScalar(0.45).add(ghost.clone().multiplyScalar(0.55));
                 }
@@ -17901,8 +17935,8 @@ window.AirArenaAI = {
             }
         }
         return {
-            horizontalBias: this.clamp(-local.x * 1.45, -1, 1),
-            verticalBias: this.clamp(local.y * 1.05, -0.75, 0.75),
+            horizontalBias: this.clamp(-local.x * 1.50, -1, 1),
+            verticalBias: this.clamp(local.y * 1.08, -0.75, 0.75),
             leadTurns: Number(leadTurns.toFixed(2)),
             aimDistance: Number(toAim.length().toFixed(1)),
             local
@@ -17972,7 +18006,7 @@ window.AirArenaAI = {
         for (let s = 0; s < samples; s++) {
             const ratio = (s + 0.5) / samples;
             const p1 = (typeof getPosAt === 'function')
-                ? getPosAt(ratio, pts)
+                ? getPosAt(ratio, pts, quats)
                 : pts[Math.min(pts.length - 1, Math.round(ratio * (pts.length - 1)))];
             const q1 = (typeof getQuatAt === 'function')
                 ? getQuatAt(ratio, quats)
@@ -17990,7 +18024,7 @@ window.AirArenaAI = {
             if (!(forwardDist > 0 && forwardDist <= dRange)) continue;
 
             if (B && B.sampleAircraftVelocity && B.computeBulletVelocity) {
-                B.sampleAircraftVelocity(ratio, pts, acVel);
+                B.sampleAircraftVelocity(ratio, pts, acVel, null, null, quats);
                 B.computeBulletVelocity(q1, acVel, muzzleSpeed, el, 0, 0, v0);
             } else {
                 v0.copy(fwd).multiplyScalar(muzzleSpeed);
@@ -23953,7 +23987,7 @@ altitude,
                             enemyPos: trackedEnemyPos,
                             trackedEnemyPos,
                             assistedEnemyVelocity: assistedVelocity,
-                            predictLeadTurns: 1.1,
+                            predictLeadTurns: 1.14,
                             envelopeSample: urbanRouteCtx.envelopeSample,
                             hardContact: !!hardBuildingContact,
                             hardBuilding: !!hardBuildingContact,

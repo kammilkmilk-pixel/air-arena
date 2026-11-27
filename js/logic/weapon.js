@@ -58,7 +58,7 @@ function buildMissileHeatSources(shooterId, ratio, currentFlares) {
         let pos;
         let quat;
         if (typeof ratio === 'number' && t.pathPoints && t.pathPoints.length && typeof getPosAt === 'function') {
-            pos = getPosAt(ratio, t.pathPoints);
+            pos = getPosAt(ratio, t.pathPoints, t.pathQuats);
             quat = (typeof getQuatAt === 'function' && t.pathQuats && t.pathQuats.length)
                 ? getQuatAt(ratio, t.pathQuats)
                 : t.wrapper.quaternion.clone();
@@ -229,16 +229,16 @@ function simulateMissileStep(mPos, mQuat, targetPos, targetQuat, mAP, teamObj, e
         let tgtPos = options.supportTargetPos || targetPos;
         let tgtVel = options.supportTargetVel || null;
         if (teamObj && teamObj.pathPoints && teamObj.pathPoints.length && ratio != null && typeof getPosAt === 'function') {
-            illumPos = getPosAt(ratio, teamObj.pathPoints);
+            illumPos = getPosAt(ratio, teamObj.pathPoints, teamObj.pathQuats);
             illumQuat = getQuatAt(ratio, teamObj.pathQuats);
         } else if (teamObj && teamObj.wrapper) {
             illumPos = teamObj.wrapper.position.clone();
             illumQuat = teamObj.wrapper.quaternion.clone();
         }
         if (supportTeam && supportTeam.pathPoints && supportTeam.pathPoints.length && ratio != null && typeof getPosAt === 'function') {
-            tgtPos = getPosAt(ratio, supportTeam.pathPoints);
+            tgtPos = getPosAt(ratio, supportTeam.pathPoints, supportTeam.pathQuats);
             if (ratio > 0.02) {
-                const prev = getPosAt(Math.max(0, ratio - 0.02), supportTeam.pathPoints);
+                const prev = getPosAt(Math.max(0, ratio - 0.02), supportTeam.pathPoints, supportTeam.pathQuats);
                 tgtVel = tgtPos.clone().sub(prev);
             }
         }

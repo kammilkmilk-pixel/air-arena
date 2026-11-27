@@ -263,7 +263,9 @@ function processFlares(ctx) {
             let acSpeed = t.flightCurve.getLength() / 100;
             for (let burst = 0; burst < 4; burst++) { 
                 let startFrame = burst * 15; 
-                let sPos = t.flightCurve.getPointAt(startFrame / 100);
+                let sPos = (typeof getPosAt === 'function')
+                    ? getPosAt(startFrame / 100, t.pathPoints, t.pathQuats)
+                    : t.flightCurve.getPointAt(startFrame / 100);
                 let sQuat = getQuatAt(startFrame / 100, t.pathQuats);
                 let vel = new THREE.Vector3((Math.random()-0.5)*0.12, -0.01, acSpeed + 0.01 + Math.random()*0.02).applyQuaternion(sQuat);
                 activeTurnFlares.push({ pos: sPos.clone(), vel: vel, age: 0, teamId: id, startFrame: startFrame });
@@ -315,7 +317,9 @@ function processChaff(ctx) {
     combatActiveIds().forEach((id) => {
         const t = teams[id];
         if (!t || !t.wasChaffArmedThisTurn || !t.flightCurve) return;
-        const sPos = t.flightCurve.getPointAt(0.08);
+        const sPos = (typeof getPosAt === 'function')
+            ? getPosAt(0.08, t.pathPoints, t.pathQuats)
+            : t.flightCurve.getPointAt(0.08);
         const sQuat = getQuatAt(0.08, t.pathQuats);
         const vel = new THREE.Vector3(
             (Math.random() - 0.5) * 0.04,

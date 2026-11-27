@@ -295,8 +295,16 @@
         if (!entry || !entry.pts || entry.pts.length < 2 || !entry.quats || entry.quats.length < 2) {
             return false;
         }
+        if (typeof evalFlightPathPosAcrossTurns === 'function') {
+            evalFlightPathPosAcrossTurns(battleLog, u, 0.08, outPos, id);
+            const q = (typeof getQuatAt === 'function')
+                ? getQuatAt(frac, entry.quats)
+                : entry.quats[Math.min(entry.quats.length - 1, Math.floor(frac * (entry.quats.length - 1)))];
+            outQuat.copy(q);
+            return true;
+        }
         const p = (typeof getPosAt === 'function')
-            ? getPosAt(frac, entry.pts)
+            ? getPosAt(frac, entry.pts, entry.quats)
             : entry.pts[Math.min(entry.pts.length - 1, Math.floor(frac * (entry.pts.length - 1)))];
         const q = (typeof getQuatAt === 'function')
             ? getQuatAt(frac, entry.quats)

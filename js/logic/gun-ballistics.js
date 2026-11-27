@@ -102,8 +102,11 @@
         };
     }
 
-    /** Exact linear interpolation of position array (matches getPosAt without allocating). */
-    function samplePosAt(t, pts, out) {
+    /** C1 cubic Bézier path sample (matches getPosAt / evalFlightPathPos without allocating). */
+    function samplePosAt(t, pts, out, quats) {
+        if (typeof evalFlightPathPos === 'function') {
+            return evalFlightPathPos(t, pts, quats, out);
+        }
         if (!pts || !pts.length) {
             out.set(0, 0, 0);
             return out;
@@ -153,7 +156,7 @@
     }
 
     /** Finite-difference aircraft velocity (world units per turn-unit) at t in [0, 1]. */
-    function sampleAircraftVelocity(t, pts, outVel, scratchA, scratchB) {
+    function sampleAircraftVelocity(t, pts, outVel, scratchA, scratchB, quats) {
         const dt = 0.02;
         if (!pts || pts.length < 2) {
             outVel.set(0, 0, 0);
@@ -164,8 +167,8 @@
         const span = Math.max(1e-4, t1 - t0);
         const a = scratchA || { x: 0, y: 0, z: 0, set(x, y, z) { this.x = x; this.y = y; this.z = z; }, copy(v) { this.x = v.x; this.y = v.y; this.z = v.z; } };
         const b = scratchB || { x: 0, y: 0, z: 0, set(x, y, z) { this.x = x; this.y = y; this.z = z; }, copy(v) { this.x = v.x; this.y = v.y; this.z = v.z; } };
-        samplePosAt(t0, pts, a);
-        samplePosAt(t1, pts, b);
+        samplePosAt(t0, pts, a, quats);
+        samplePosAt(t1, pts, b, quats);
         outVel.set((b.x - a.x) / span, (b.y - a.y) / span, (b.z - a.z) / span);
         return outVel;
     }
