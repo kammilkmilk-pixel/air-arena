@@ -82,10 +82,10 @@
         return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 33;
     }
 
-    /** Frames before first rocket in a salvo (~1s). */
+    /** Frames before first rocket in a salvo. */
     function launchDelaySteps() {
         const n = Number(rocketConfig().launchDelaySteps);
-        return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 33;
+        return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 12;
     }
 
     function launchStepForIndex(index) {
@@ -299,8 +299,8 @@
             const eps = 1 / Math.max(8, stepsPerTurn);
             const r0 = ratio;
             const r1 = Math.min(1, ratio + eps);
-            const p0 = getPosAt(r0, team.pathPoints);
-            const p1 = getPosAt(r1, team.pathPoints);
+            const p0 = getPosAt(r0, team.pathPoints, team.pathQuats);
+            const p1 = getPosAt(r1, team.pathPoints, team.pathQuats);
             pos = p0.clone();
             quat = (team.pathQuats && typeof getQuatAt === 'function')
                 ? getQuatAt(r0, team.pathQuats)
@@ -408,7 +408,7 @@
         const stepDist = turnDist / spt;
         if (enemy.pathPoints && enemy.pathPoints.length >= 2 && typeof getPosAt === 'function') {
             if (totalStep <= spt) {
-                return getPosAt(Math.max(0, totalStep / spt), enemy.pathPoints).clone();
+                return getPosAt(Math.max(0, totalStep / spt), enemy.pathPoints, enemy.pathQuats).clone();
             }
             const n = enemy.pathPoints.length;
             const pEnd = enemy.pathPoints[n - 1];
@@ -859,7 +859,7 @@
             const vt = teams[vid];
             if (!vt || vt.isDestroyed || !vt.pathPoints) return;
             const vPos = (typeof getPosAt === 'function')
-                ? getPosAt(ratio, vt.pathPoints)
+                ? getPosAt(ratio, vt.pathPoints, vt.pathQuats)
                 : (vt.wrapper && vt.wrapper.position);
             if (!vPos) return;
             const d = rocket.pos.distanceTo(vPos);
@@ -952,7 +952,7 @@
                                 const vt = teams[vid];
                                 if (!vt || vt.isDestroyed || !vt.pathPoints) return;
                                 const vPos = (typeof getPosAt === 'function')
-                                    ? getPosAt(ratio, vt.pathPoints)
+                                    ? getPosAt(ratio, vt.pathPoints, vt.pathQuats)
                                     : (vt.wrapper && vt.wrapper.position);
                                 if (vPos && r.pos.distanceTo(vPos) <= directR) {
                                     fuse = { reason: 'impact_direct', victimId: vid };
@@ -986,7 +986,7 @@
                         const vt = teams[vid];
                         if (!vt || vt.isDestroyed || !vt.pathPoints) return;
                         const vPos = (typeof getPosAt === 'function')
-                            ? getPosAt(ratio, vt.pathPoints)
+                            ? getPosAt(ratio, vt.pathPoints, vt.pathQuats)
                             : (vt.wrapper && vt.wrapper.position);
                         if (!vPos) return;
                         if (r.pos.distanceTo(vPos) <= blastR) {

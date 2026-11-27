@@ -1263,7 +1263,7 @@ GameContext.stateMachine = {
 
     /**
      * FOX-1 / FOX-2 empty pylons restock after CONFIG.weapons[type].reloadTurns
-     * (default fox1=50, fox2=30). Preserves weaponType; gun-empty seats stay empty.
+     * (default fox1=50, fox2=50). Preserves weaponType; gun-empty seats stay empty.
      */
     refillEmptyPylonsByCooldown() {
         const turn = Math.max(1, Number(GameContext.state.currentTurn) || 1);
@@ -1273,8 +1273,7 @@ GameContext.stateMachine = {
         const reloadOf = (type) => {
             const w = CONFIG && CONFIG.weapons && CONFIG.weapons[type];
             const n = Number(w && w.reloadTurns);
-            if (type === 'fox1') return Number.isFinite(n) && n > 0 ? n : 50;
-            return Number.isFinite(n) && n > 0 ? n : 30;
+            return Number.isFinite(n) && n > 0 ? n : 50;
         };
         ids.forEach((id) => {
             const t = GameContext.getTeam(id);

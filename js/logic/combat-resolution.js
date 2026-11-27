@@ -57,9 +57,9 @@ function precomputeGunRoundStops(id, t, ctx) {
 
     for (let b = 0; b < rounds; b++) {
         const tSpawn = B.roundSpawnTime(b, rounds);
-        B.samplePosAt(tSpawn, t.pathPoints, pos);
+        B.samplePosAt(tSpawn, t.pathPoints, pos, t.pathQuats);
         B.sampleQuatAt(tSpawn, t.pathQuats, quat);
-        B.sampleAircraftVelocity(tSpawn, t.pathPoints, acVel, scratchA, scratchB);
+        B.sampleAircraftVelocity(tSpawn, t.pathPoints, acVel, scratchA, scratchB, t.pathQuats);
         const barrel = params.barrels[b % params.barrels.length];
         B.computeMuzzleWorldPos(pos, quat, barrel, muzzle);
         const sp = B.roundSpread(b, logIdx, vcfg.spreadRad);
@@ -159,7 +159,7 @@ function resolveGunsForStep(step, ratio, ctx) {
             let dRange = params ? params.dRange : ((typeof GUN_RANGE !== 'undefined' ? GUN_RANGE : 35) * stats.gunRangeMult);
             let dAngle = params ? params.dAngle : ((typeof GUN_ANGLE !== 'undefined' ? GUN_ANGLE : Math.PI/12) * stats.gunAngleMult);
 
-            let p1 = getPosAt(ratio, t.pathPoints);
+            let p1 = getPosAt(ratio, t.pathPoints, t.pathQuats);
             let q1 = getQuatAt(ratio, t.pathQuats); 
             
             let el = params ? params.elevation : (CONFIG.weapons['gun'].elevation || 0);
@@ -181,7 +181,7 @@ function resolveGunsForStep(step, ratio, ctx) {
             let hitCandidates = [];
             for (let ei = 0; ei < enemyTargets.length; ei++) {
                 const enemy = enemyTargets[ei];
-                const p2 = getPosAt(ratio, enemy.pathPoints);
+                const p2 = getPosAt(ratio, enemy.pathPoints, enemy.pathQuats);
                 const vecToEnemy = new THREE.Vector3().subVectors(p2, gunMuzzlePos);
                 const forwardDist = vecToEnemy.dot(fwd);
                 if (forwardDist > 0 && forwardDist <= dRange) {
@@ -301,7 +301,7 @@ function resolveMissilesForStep(step, ratio, ctx) {
                 if (step < activeM.launchStep) { ctx.log[`${id}MslTracks`][activeM.pylonId].push(null); return; }
                 if (step === activeM.launchStep) {
                     activeM.active = true; 
-                    let acPos = getPosAt(ratio, t.pathPoints); let acQuat = getQuatAt(ratio, t.pathQuats);
+                    let acPos = getPosAt(ratio, t.pathPoints, t.pathQuats); let acQuat = getQuatAt(ratio, t.pathQuats);
                     let pylonConfig = t.pylons.find(p => p.id === activeM.pylonId);
                     activeM.pos.copy(acPos).add(pylonConfig.localPosition.clone().add(new THREE.Vector3(0, -0.05, 0.2)).applyQuaternion(acQuat));
                     activeM.quat.copy(acQuat);
@@ -316,7 +316,7 @@ function resolveMissilesForStep(step, ratio, ctx) {
                         : preferredEnemy;
                     let tgtPos = null;
                     if (tgtTeam && tgtTeam.pathPoints && tgtTeam.pathPoints.length) {
-                        tgtPos = getPosAt(ratio, tgtTeam.pathPoints);
+                        tgtPos = getPosAt(ratio, tgtTeam.pathPoints, tgtTeam.pathQuats);
                     } else if (tgtTeam && tgtTeam.wrapper && tgtTeam.wrapper.position) {
                         tgtPos = tgtTeam.wrapper.position;
                     }
@@ -339,7 +339,7 @@ function resolveMissilesForStep(step, ratio, ctx) {
             let fallbackPos = null;
             let fallbackQuat = null;
             if (preferredEnemy && preferredEnemy.pathPoints && preferredEnemy.pathPoints.length) {
-                fallbackPos = getPosAt(ratio, preferredEnemy.pathPoints);
+                fallbackPos = getPosAt(ratio, preferredEnemy.pathPoints, preferredEnemy.pathQuats);
                 fallbackQuat = getQuatAt(ratio, preferredEnemy.pathQuats);
             }
             let stepRes = simulateMissileStep(
@@ -361,7 +361,7 @@ function resolveMissilesForStep(step, ratio, ctx) {
                         ? GameContext.state.currentTurn
                         : undefined,
                     chaffList: (ctx.chaff && ctx.chaff[step]) ? ctx.chaff[step] : [],
-                    illuminatorPos: getPosAt(ratio, t.pathPoints),
+                    illuminatorPos: getPosAt(ratio, t.pathPoints, t.pathQuats),
                     illuminatorQuat: getQuatAt(ratio, t.pathQuats)
                 }
             );
@@ -476,8 +476,8 @@ function resolveDamageAndDeathForStep(step, ratio, ctx) {
             if (combatFactionOf(a) === combatFactionOf(b)) continue;
             if (teams[a].isDestroyed || teams[b].isDestroyed) continue;
             if (ctx.death[a] !== -1 || ctx.death[b] !== -1) continue;
-            const pA = getPosAt(ratio, teams[a].pathPoints);
-            const pB = getPosAt(ratio, teams[b].pathPoints);
+            const pA = getPosAt(ratio, teams[a].pathPoints, teams[a].pathQuats);
+            const pB = getPosAt(ratio, teams[b].pathPoints, teams[b].pathQuats);
             if (pA.distanceTo(pB) < 1.8) {
                 [a, b].forEach((id) => {
                     ctx.hp[id] = 0;
@@ -508,8 +508,8 @@ function resolveDamageAndDeathForStep(step, ratio, ctx) {
 
         let steps = CONFIG.rules.stepsPerTurn;
         let prevRatio = Math.max(0, ratio - (1/steps));
-        let pPrev = getPosAt(prevRatio, t.pathPoints);
-        let currentPos = getPosAt(ratio, t.pathPoints);
+        let pPrev = getPosAt(prevRatio, t.pathPoints, t.pathQuats);
+        let currentPos = getPosAt(ratio, t.pathPoints, t.pathQuats);
         let currentQuat = getQuatAt(ratio, t.pathQuats);
         
         let hasCollided = false; let collisionType = "";
@@ -646,7 +646,7 @@ function resolveDamageAndDeathForStep(step, ratio, ctx) {
 
         if (ctx.death[id] === step || (ctx.death[id] !== -1 && step === ctx.death[id])) {
             let deathRatio = step / CONFIG.rules.stepsPerTurn;
-            let simPos = getPosAt(deathRatio, t.pathPoints); let simQuat = getQuatAt(deathRatio, t.pathQuats);
+            let simPos = getPosAt(deathRatio, t.pathPoints, t.pathQuats); let simQuat = getQuatAt(deathRatio, t.pathQuats);
             const soft = !!(ctx.log.softWreck && ctx.log.softWreck[id]);
             const tumbleZ = soft ? 0.05 : 0.16;
             const tumbleX = soft ? -0.03 : -0.07;
@@ -674,7 +674,7 @@ function resolveDamageAndDeathForStep(step, ratio, ctx) {
         if (ctx.log.hpTrack[id]) ctx.log.hpTrack[id][step] = Math.max(0, ctx.hp[id]);
 
         if (isFallingWreck || (ctx.death[id] !== -1 && step >= ctx.death[id])) {
-            let deadPos = getPosAt(ratio, t.pathPoints); let deadQuat = getQuatAt(ratio, t.pathQuats);
+            let deadPos = getPosAt(ratio, t.pathPoints, t.pathQuats); let deadQuat = getQuatAt(ratio, t.pathQuats);
             let fwd = new THREE.Vector3(0,0,1).applyQuaternion(deadQuat);
             const soft = isFallingWreck || !!(ctx.log.softWreck && ctx.log.softWreck[id]);
             if (soft) {
@@ -689,7 +689,7 @@ function resolveDamageAndDeathForStep(step, ratio, ctx) {
                 ctx.log.vfxTriggers.push({ type: 'flash', step: step, pos: deadPos.clone().add(new THREE.Vector3((Math.random()-0.5), (Math.random()-0.5), (Math.random()-0.5))), rot: Math.random()*Math.PI*2, scale: 0.8 });
             }
         } else if (ctx.hp[id] > 0) {
-            let acPos = getPosAt(ratio, t.pathPoints); let acQuat = getQuatAt(ratio, t.pathQuats);
+            let acPos = getPosAt(ratio, t.pathPoints, t.pathQuats); let acQuat = getQuatAt(ratio, t.pathQuats);
             if (ctx.hp[id] <= 30) {
                 if (step % 3 === 0) ctx.log.vfxTriggers.push({ type: 'puff', step: step, pos: acPos.clone(), rot: Math.random()*Math.PI*2, scale: 1.0, opacity: 0.4, drift: new THREE.Vector3(0,0,1).applyQuaternion(acQuat).multiplyScalar(-0.02) });
                 if (step % 15 === 0) ctx.log.vfxTriggers.push({ type: 'flash', step: step, pos: acPos.clone(), rot: Math.random()*Math.PI*2, scale: 0.6 });

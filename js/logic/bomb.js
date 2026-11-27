@@ -170,8 +170,8 @@
         if (team.pathPoints && team.pathPoints.length >= 2 && typeof getPosAt === 'function') {
             // Velocity ≈ path derivative over one combat frame (turn duration = 1).
             const eps = 1 / Math.max(8, stepsPerTurn);
-            const p0 = getPosAt(0, team.pathPoints);
-            const p1 = getPosAt(Math.min(1, eps), team.pathPoints);
+            const p0 = getPosAt(0, team.pathPoints, team.pathQuats);
+            const p1 = getPosAt(Math.min(1, eps), team.pathPoints, team.pathQuats);
             pos = p0.clone();
             quat = (team.pathQuats && typeof getQuatAt === 'function')
                 ? getQuatAt(0, team.pathQuats)
@@ -488,7 +488,7 @@
                     if (step === b.launchStep) {
                         b.active = true;
                         const acPos = (t.pathPoints && typeof getPosAt === 'function')
-                            ? getPosAt(ratio, t.pathPoints)
+                            ? getPosAt(ratio, t.pathPoints, t.pathQuats)
                             : t.wrapper.position.clone();
                         const acQuat = (t.pathQuats && typeof getQuatAt === 'function')
                             ? getQuatAt(ratio, t.pathQuats)
@@ -573,7 +573,7 @@
                         if (!vt || vt.isDestroyed || !vt.pathPoints) return;
                         // Friendly fire allowed for now (bomb is dumb).
                         const vPos = (typeof getPosAt === 'function')
-                            ? getPosAt(ratio, vt.pathPoints)
+                            ? getPosAt(ratio, vt.pathPoints, vt.pathQuats)
                             : (vt.wrapper && vt.wrapper.position);
                         if (!vPos) return;
                         if (b.pos.distanceTo(vPos) <= blastR) {

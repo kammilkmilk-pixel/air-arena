@@ -597,9 +597,9 @@
                         : maxFlight;
                     if (dt > stopDt + 0.008) continue;
 
-                    B.samplePosAt(tSpawn, entry.pts, _pos);
+                    B.samplePosAt(tSpawn, entry.pts, _pos, entry.quats);
                     B.sampleQuatAt(tSpawn, entry.quats, _quat);
-                    B.sampleAircraftVelocity(tSpawn, entry.pts, _acVel, _tmpA, _tmpB);
+                    B.sampleAircraftVelocity(tSpawn, entry.pts, _acVel, _tmpA, _tmpB, entry.quats);
 
                     const barrel = params.barrels[b % params.barrels.length];
                     B.computeMuzzleWorldPos(_pos, _quat, barrel, _muzzle);

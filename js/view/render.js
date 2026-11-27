@@ -1026,7 +1026,7 @@ window.invalidateGhostPlaneCache = function() {
 };
 
 function _sampleRibbonPair(t, pathPoints, pathQuats, vis, outLeft, outRight) {
-    const pos = getPosAt(t, pathPoints);
+    const pos = getPosAt(t, pathPoints, pathQuats);
     const q = getQuatAt(t, pathQuats);
     _trajWingDir.set(1, 0, 0).applyQuaternion(q).normalize();
     _trajOffset.set(0, vis.engineOffsetY, 0).applyQuaternion(q);
@@ -1268,9 +1268,9 @@ function updateGunPreview(teamObj) {
             for (let i = 0; i <= samples; i++) {
                 const tSpawn = tMin + (i / samples) * (T_now - tMin);
                 const dt = Math.max(0, T_now - tSpawn);
-                B.samplePosAt(tSpawn, teamObj.pathPoints, _gunPrevPos);
+                B.samplePosAt(tSpawn, teamObj.pathPoints, _gunPrevPos, teamObj.pathQuats);
                 B.sampleQuatAt(tSpawn, teamObj.pathQuats, _gunPrevQuat);
-                B.sampleAircraftVelocity(tSpawn, teamObj.pathPoints, _gunPrevAcVel, _gunPrevScratchA, _gunPrevScratchB);
+                B.sampleAircraftVelocity(tSpawn, teamObj.pathPoints, _gunPrevAcVel, _gunPrevScratchA, _gunPrevScratchB, teamObj.pathQuats);
                 B.computeMuzzleWorldPos(_gunPrevPos, _gunPrevQuat, params.centerMuzzle, _gunPrevMuzzle);
                 B.computeBulletVelocity(_gunPrevQuat, _gunPrevAcVel, params.muzzleSpeed, params.elevation, 0, 0, _gunPrevVel);
 
@@ -1293,7 +1293,7 @@ function updateGunPreview(teamObj) {
             let dRange = baseGunRange * stats.gunRangeMult;
             for (let i = 0; i <= 30; i++) {
                 let t_spawn = (i / 30) * 1.0;
-                let sPos = getPosAt(t_spawn, teamObj.pathPoints);
+                let sPos = getPosAt(t_spawn, teamObj.pathPoints, teamObj.pathQuats);
                 let sQuat = getQuatAt(t_spawn, teamObj.pathQuats);
                 let nPos = sPos.clone().add(new THREE.Vector3(0, -0.12, 0.45).applyQuaternion(sQuat));
                 let el = CONFIG.weapons['gun'].elevation || 0;
@@ -1770,7 +1770,7 @@ function renderCombatFrame(currentLog, animProgress) {
         // Drive mesh visibility from history — live finalizeWreck sets visible=false permanently.
         t.wrapper.visible = !!hasReplayPath;
         if (hasReplayPath) {
-            currentPlanePos = getPosAt(animProgress, currentLog[id].pts); currentPlaneQuat = getQuatAt(animProgress, currentLog[id].quats);
+            currentPlanePos = getPosAt(animProgress, currentLog[id].pts, currentLog[id].quats); currentPlaneQuat = getQuatAt(animProgress, currentLog[id].quats);
             t.wrapper.position.copy(currentPlanePos); t.wrapper.quaternion.copy(currentPlaneQuat);
         } else {
             return;
@@ -1799,12 +1799,12 @@ function renderCombatFrame(currentLog, animProgress) {
                         let t_spawn = (b / 23) * 0.95;
                         let timeSinceSpawn = animProgress - t_spawn + age;
                         if (timeSinceSpawn < 0 || timeSinceSpawn > 1.5) continue;
-                        let spawnPos = getPosAt(t_spawn, pastLog[id].pts);
+                        let spawnPos = getPosAt(t_spawn, pastLog[id].pts, pastLog[id].quats);
                         let spawnQuat = getQuatAt(t_spawn, pastLog[id].quats);
                         let dt = 0.02;
                         let acVelocity = (t_spawn >= dt)
-                            ? new THREE.Vector3().subVectors(spawnPos, getPosAt(t_spawn - dt, pastLog[id].pts)).divideScalar(dt)
-                            : new THREE.Vector3().subVectors(getPosAt(t_spawn + dt, pastLog[id].pts), spawnPos).divideScalar(dt);
+                            ? new THREE.Vector3().subVectors(spawnPos, getPosAt(t_spawn - dt, pastLog[id].pts, pastLog[id].quats)).divideScalar(dt)
+                            : new THREE.Vector3().subVectors(getPosAt(t_spawn + dt, pastLog[id].pts, pastLog[id].quats), spawnPos).divideScalar(dt);
                         let startPos = spawnPos.clone().add(new THREE.Vector3(0, -0.12, 0.45).applyQuaternion(spawnQuat));
                         let forward = new THREE.Vector3(0, 0, 1).applyQuaternion(spawnQuat);
                         let bulletVelocity = forward.clone().multiplyScalar(dRange * 2.0).add(acVelocity);

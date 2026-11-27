@@ -11927,7 +11927,7 @@ window.AirArenaAI = {
         if (!selfPos || !selfForward || !enemyPos || typeof THREE === 'undefined') return s;
 
         const teamId = ctx.teamId;
-        const leadTurns = Number.isFinite(Number(ctx.predictLeadTurns)) ? Number(ctx.predictLeadTurns) : 1.1;
+        const leadTurns = Number.isFinite(Number(ctx.predictLeadTurns)) ? Number(ctx.predictLeadTurns) : 1.14;
         let predictPos = null;
         try {
             predictPos = teamId
@@ -13622,6 +13622,32 @@ window.AirArenaAI = {
                         this.raycaster.far = dist;
                         if (this.raycaster.intersectObjects(segObs, true).length > 0) buildingHit = true;
                     }
+                    // Bézier fillet sits inside the polyline chord — also probe the C1 midpoint.
+                    if (!buildingHit && typeof getPosAt === 'function' && points.length >= 2) {
+                        const midT = (i - 0.5) / (points.length - 1);
+                        const mid = getPosAt(midT, points, quats);
+                        const chordMid = prev.clone().add(pt).multiplyScalar(0.5);
+                        if (mid.distanceTo(chordMid) > 0.12) {
+                            moveVec.subVectors(mid, prev);
+                            const d0 = moveVec.length();
+                            if (d0 > 0.0001) {
+                                this.raycaster.set(prev, moveVec.divideScalar(d0));
+                                this.raycaster.near = 0;
+                                this.raycaster.far = d0;
+                                if (this.raycaster.intersectObjects(segObs, true).length > 0) buildingHit = true;
+                            }
+                            if (!buildingHit) {
+                                moveVec.subVectors(pt, mid);
+                                const d1 = moveVec.length();
+                                if (d1 > 0.0001) {
+                                    this.raycaster.set(mid, moveVec.divideScalar(d1));
+                                    this.raycaster.near = 0;
+                                    this.raycaster.far = d1;
+                                    if (this.raycaster.intersectObjects(segObs, true).length > 0) buildingHit = true;
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -13655,7 +13681,8 @@ window.AirArenaAI = {
                     startPos: other.wrapper.position,
                     fwd: oFwd,
                     turnDist: oTurnDist,
-                    pathPoints: useAllyPath ? other.pathPoints : null
+                    pathPoints: useAllyPath ? other.pathPoints : null,
+                    pathQuats: useAllyPath ? other.pathQuats : null
                 });
             }
             if (otherTrajs.length > 0) {
@@ -13664,11 +13691,13 @@ window.AirArenaAI = {
                 for (let s = 0; s <= sepSamples; s++) {
                     const frac = s / sepSamples;
                     const idx = Math.min(turn1Count - 1, Math.round(frac * (turn1Count - 1)));
-                    const myPt = points[idx];
+                    const myPt = (typeof getPosAt === 'function')
+                        ? getPosAt(frac, points, quats)
+                        : points[idx];
                     for (let k = 0; k < otherTrajs.length; k++) {
                         const ot = otherTrajs[k];
                         if (ot.pathPoints) {
-                            const gp = getPosAt(frac, ot.pathPoints);
+                            const gp = getPosAt(frac, ot.pathPoints, ot.pathQuats);
                             oPos.copy(gp);
                         } else {
                             oPos.copy(ot.startPos).addScaledVector(ot.fwd, ot.turnDist * frac);
@@ -17856,7 +17885,9 @@ window.AirArenaAI = {
         const closing = Math.max(1.2, muzzleSpeed + selfSpeedStep);
         // Convert frame-ish TOF into turn-lead units used by track velocity (per decide cycle).
         const framesToImpact = this.clamp(distance / closing, 4, 28);
-        const leadTurns = this.clamp(framesToImpact / 18, 0.45, 1.8);
+        // Bézier junctions hold incoming heading slightly longer than the Euler chord,
+        // so gun LCOS needs a touch more lead than the old polyline splice.
+        const leadTurns = this.clamp(framesToImpact / 17.4, 0.48, 1.85);
         const track = this.updateEnemyTrack(teamId, enemyPos, false);
         const trackVel = (assistedVelocity && assistedVelocity.lengthSq() > 0.0001)
             ? assistedVelocity.clone()
@@ -17869,7 +17900,10 @@ window.AirArenaAI = {
                 ? GameContext.getTeam(enemyId)
                 : null;
             if (liveEnemy && Array.isArray(liveEnemy.pathPoints) && liveEnemy.pathPoints.length >= 2) {
-                const ghost = liveEnemy.pathPoints[Math.min(liveEnemy.pathPoints.length - 1, Math.max(2, Math.floor(leadTurns * 4)))];
+                const frac = this.clamp(leadTurns, 0, 1);
+                const ghost = (typeof getPosAt === 'function')
+                    ? getPosAt(frac, liveEnemy.pathPoints, liveEnemy.pathQuats)
+                    : liveEnemy.pathPoints[Math.min(liveEnemy.pathPoints.length - 1, Math.max(2, Math.floor(leadTurns * 4)))];
                 if (ghost && typeof ghost.clone === 'function') {
                     aimPos = aimPos.multiplyScalar(0.45).add(ghost.clone().multiplyScalar(0.55));
                 }
@@ -17901,8 +17935,8 @@ window.AirArenaAI = {
             }
         }
         return {
-            horizontalBias: this.clamp(-local.x * 1.45, -1, 1),
-            verticalBias: this.clamp(local.y * 1.05, -0.75, 0.75),
+            horizontalBias: this.clamp(-local.x * 1.50, -1, 1),
+            verticalBias: this.clamp(local.y * 1.08, -0.75, 0.75),
             leadTurns: Number(leadTurns.toFixed(2)),
             aimDistance: Number(toAim.length().toFixed(1)),
             local
@@ -17972,7 +18006,7 @@ window.AirArenaAI = {
         for (let s = 0; s < samples; s++) {
             const ratio = (s + 0.5) / samples;
             const p1 = (typeof getPosAt === 'function')
-                ? getPosAt(ratio, pts)
+                ? getPosAt(ratio, pts, quats)
                 : pts[Math.min(pts.length - 1, Math.round(ratio * (pts.length - 1)))];
             const q1 = (typeof getQuatAt === 'function')
                 ? getQuatAt(ratio, quats)
@@ -17990,7 +18024,7 @@ window.AirArenaAI = {
             if (!(forwardDist > 0 && forwardDist <= dRange)) continue;
 
             if (B && B.sampleAircraftVelocity && B.computeBulletVelocity) {
-                B.sampleAircraftVelocity(ratio, pts, acVel);
+                B.sampleAircraftVelocity(ratio, pts, acVel, null, null, quats);
                 B.computeBulletVelocity(q1, acVel, muzzleSpeed, el, 0, 0, v0);
             } else {
                 v0.copy(fwd).multiplyScalar(muzzleSpeed);
@@ -18029,8 +18063,9 @@ window.AirArenaAI = {
     /**
      * Active VT Rocket Lead-Steering State (rocketLeadAttack):
      * Computes 1st-order ballistic lead onto the enemy's inertial trajectory and verifies
-     * bestCpaDist <= vtRadius * 1.15 via AirArenaRocket.computeRocketAimSolution against
-     * our planned turn trajectory.
+     * VT CPA via AirArenaRocket.computeRocketAimSolution against our planned turn trajectory.
+     * Fires when CPA is inside ~9m and nose is ≤18°. Otherwise cards (steer, no salvo)
+     * so the next WE-GO turn starts inside 10–18°.
      */
     buildRocketLeadAttackAction(teamId, ctx = {}) {
         if (typeof AirArenaA2GStoresDoctrine === 'undefined') return null;
@@ -18055,21 +18090,15 @@ window.AirArenaAI = {
         const hasArmedMissile = !!ctx.hasArmedMissile;
         const frontAspect = !!ctx.frontAspect || (Number.isFinite(Number(ctx.headOnFactor)) && Number(ctx.headOnFactor) > 0.35);
         const fox2OutOfCone = ctx.aiMissileType !== 'fox1' && (angleDeg > 10 || (frontAspect && angleDeg > 4));
+        const fox2Dry = !hasAnyMissile || !hasArmedMissile;
         const cleanFox2ShotNow =
-            !!ctx.missileAttackWindow &&
-            hasArmedMissile &&
-            !ctx.frontAspectPenalty &&
+            !fox2Dry &&
             !fox2OutOfCone &&
-            !enemyLowHp;
-        if (cleanFox2ShotNow) return null;
+            !ctx.frontAspectPenalty &&
+            (ctx.missileAttackWindow || !fox2OutOfCone);
+        if (cleanFox2ShotNow && !enemyLowHp) return null;
 
-        const trigger =
-            !hasAnyMissile ||
-            !hasArmedMissile ||
-            !!ctx.fox2LaunchHold ||
-            fox2OutOfCone ||
-            frontAspect ||
-            enemyLowHp;
+        const trigger = fox2Dry || fox2OutOfCone || enemyLowHp;
         if (!trigger) return null;
 
         const selfPos = liveSelf.wrapper.position;
@@ -18083,7 +18112,7 @@ window.AirArenaAI = {
         const rktCfg = (typeof CONFIG !== 'undefined' && CONFIG.weapons && CONFIG.weapons.rocket) ? CONFIG.weapons.rocket : {};
         const stepsPerTurn = (typeof CONFIG !== 'undefined' && CONFIG.rules && CONFIG.rules.stepsPerTurn)
             ? Number(CONFIG.rules.stepsPerTurn) : 100;
-        const launchDelayTurns = (rktCfg.launchDelaySteps != null ? Number(rktCfg.launchDelaySteps) : 33) / Math.max(1, stepsPerTurn);
+        const launchDelayTurns = (rktCfg.launchDelaySteps != null ? Number(rktCfg.launchDelaySteps) : 12) / Math.max(1, stepsPerTurn);
         const rocketSpeed = Number(rktCfg.launchSpeed) || 55;
         const vtR = Number(rktCfg.vtRadius) || 4.5;
         const gravScale = rktCfg.gravityScale != null ? Number(rktCfg.gravityScale) : 0.55;
@@ -18117,28 +18146,63 @@ window.AirArenaAI = {
         const heat = (typeof getEngineHeatLevel === 'function' ? getEngineHeatLevel(liveSelf.heat) : (Number(liveSelf.heat) || 0));
         const baseThr = heat > 78 ? 3 : (dist < 30 ? 3 : 4);
         const wegoEnemy = this.buildWegoSafeEnemyProxy(liveEnemy);
-        const triggerTag = !hasAnyMissile
+        const docR = Doc.getRocketDoctrine ? Doc.getRocketDoctrine() : {};
+        const fireAngMax = Number(docR.vtFireMaxAngleDeg) || 18;
+        const cardAngMax = 46;
+        const triggerTag = fox2Dry
             ? 'foxDry'
-            : (enemyLowHp ? 'lowHp' : (frontAspect ? 'frontAspect' : (ctx.fox2LaunchHold ? 'fox2Hold' : 'outCone')));
-
-        // Without browser AirArenaRocket solver (e.g. minimal Node unit tests), verify tight lead alignment.
-        if (typeof AirArenaRocket === 'undefined' || typeof AirArenaRocket.computeRocketAimSolution !== 'function') {
-            const leadAngDeg = Math.acos(this.clamp(localLead.z, -1, 1)) * 180 / Math.PI;
-            if (leadAngDeg > 18) return null;
-            return {
+            : (enemyLowHp ? 'lowHp' : 'outCone');
+        const leadStick = () => ({
+            throttle: baseThr,
+            joyX: baseJoyX,
+            joyY: baseJoyY,
+            roll: this.clamp(baseJoyX * Math.PI / 4.5, -Math.PI / 4.5, Math.PI / 4.5)
+        });
+        const makeCard = (why, extra) => {
+            const st = leadStick();
+            const card = {
                 state: 'rocketLeadAttack',
-                statusText: `NPC: 火箭前置追瞄 ${Math.floor(dist)}m`,
-                throttle: baseThr,
-                joyX: baseJoyX,
-                joyY: baseJoyY,
-                roll: this.clamp(baseJoyX * Math.PI / 4.5, -Math.PI / 4.5, Math.PI / 4.5),
+                statusText: `NPC: 火箭卡位 ${Math.floor(dist)}m`,
+                throttle: st.throttle,
+                joyX: st.joyX,
+                joyY: st.joyY,
+                roll: st.roll,
+                rocketFuze: 'vt',
+                powerPylons: false,
+                ready: true,
+                queueAction: 'none',
+                reason: `rocketLeadCard (${triggerTag}, ${why})`
+            };
+            // Stay on missile SMS while FOX-2 is still on a rail; switch only when dry.
+            if (fox2Dry) card.weapon = 'rocket';
+            return Object.assign(card, extra || {});
+        };
+        const makeFire = (why, extra) => {
+            const st = leadStick();
+            return Object.assign({
+                state: 'rocketLeadAttack',
+                statusText: `NPC: 火箭 VT 齊射 ${Math.floor(dist)}m`,
+                throttle: st.throttle,
+                joyX: st.joyX,
+                joyY: st.joyY,
+                roll: st.roll,
                 weapon: 'rocket',
                 queueAction: 'rocket',
                 rocketFuze: 'vt',
                 powerPylons: false,
                 ready: true,
-                reason: `Active rocketLeadAttack (${triggerTag}, geom lead=${leadAngDeg.toFixed(1)}deg)`
-            };
+                reason: `Active rocketLeadAttack (${triggerTag}, ${why})`
+            }, extra || {});
+        };
+
+        // Without browser AirArenaRocket solver (e.g. minimal Node unit tests), verify tight lead alignment.
+        if (typeof AirArenaRocket === 'undefined' || typeof AirArenaRocket.computeRocketAimSolution !== 'function') {
+            const leadAngDeg = Math.acos(this.clamp(localLead.z, -1, 1)) * 180 / Math.PI;
+            if (leadAngDeg <= fireAngMax && angleDeg <= fireAngMax) {
+                return makeFire(`geom lead=${leadAngDeg.toFixed(1)}deg`);
+            }
+            if (angleDeg <= cardAngMax) return makeCard(`geom lead=${leadAngDeg.toFixed(1)}deg`);
+            return null;
         }
 
         // Closed-loop VT solver refinement (up to 3 solves): use actual miss vector to steer salvo into VT sphere.
@@ -18196,26 +18260,37 @@ window.AirArenaAI = {
             curJx = this.clamp(curJx + dJx, -0.92, 0.92);
             curJy = this.clamp(curJy + dJy, -0.52, 0.62);
         }
-        if ((!bestSol || (!bestSol.anyVtHit && bestCpa > vtR * 1.15)) && baseThr > 2) {
+        const cpaLimit = Doc.rocketVtCommitCpaMax
+            ? Doc.rocketVtCommitCpaMax(bestSol)
+            : Math.max(vtR * 1.15, 6, 9);
+        if ((!bestSol || !(Doc.rocketVtCpaOk ? Doc.rocketVtCpaOk(bestSol) : (bestSol.anyVtHit || bestCpa <= cpaLimit))) && baseThr > 2) {
             evalStick(bestCand ? bestCand.joyX : curJx, bestCand ? bestCand.joyY : curJy, baseThr - 1);
         }
 
-        if (bestCand && bestSol && (bestSol.anyVtHit || bestCpa <= vtR * 1.15)) {
-            return {
-                state: 'rocketLeadAttack',
-                statusText: `NPC: 火箭 VT 齊射 ${Math.floor(dist)}m`,
+        const steered = bestCand
+            ? {
                 throttle: bestCand.throttle,
                 joyX: bestCand.joyX,
                 joyY: bestCand.joyY,
                 roll: bestCand.roll,
-                weapon: 'rocket',
-                queueAction: 'rocket',
-                rocketFuze: 'vt',
-                powerPylons: false,
-                ready: true,
-                rocketBestCpa: Number(bestCpa.toFixed(2)),
-                reason: `Active rocketLeadAttack (${triggerTag}, cpa=${bestCpa.toFixed(1)}m <= ${(vtR * 1.15).toFixed(1)}m)`
-            };
+                rocketBestCpa: Number.isFinite(bestCpa) ? Number(bestCpa.toFixed(2)) : undefined
+            }
+            : {};
+        const cpaOk = !!(bestSol && (Doc.rocketVtCpaOk
+            ? Doc.rocketVtCpaOk(bestSol)
+            : (bestSol.anyVtHit || bestCpa <= cpaLimit)));
+        const noseOk = angleDeg <= fireAngMax;
+        if (bestCand && cpaOk && noseOk) {
+            return makeFire(
+                `cpa=${bestCpa.toFixed(1)}m <= ${cpaLimit.toFixed(1)}m ang=${angleDeg.toFixed(1)}`,
+                steered
+            );
+        }
+        if (angleDeg <= cardAngMax) {
+            const why = bestSol
+                ? `cpa=${Number.isFinite(bestCpa) ? bestCpa.toFixed(1) : 'na'}m ang=${angleDeg.toFixed(1)}`
+                : `noSol ang=${angleDeg.toFixed(1)}`;
+            return makeCard(why, steered);
         }
         return null;
     },
@@ -23953,7 +24028,7 @@ altitude,
                             enemyPos: trackedEnemyPos,
                             trackedEnemyPos,
                             assistedEnemyVelocity: assistedVelocity,
-                            predictLeadTurns: 1.1,
+                            predictLeadTurns: 1.14,
                             envelopeSample: urbanRouteCtx.envelopeSample,
                             hardContact: !!hardBuildingContact,
                             hardBuilding: !!hardBuildingContact,
