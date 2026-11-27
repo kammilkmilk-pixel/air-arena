@@ -75,6 +75,8 @@
         const wpn = cfg && cfg.weapons && cfg.weapons.rocket;
         return {
             vtMaxLaunchAngleDeg: Number(row && row.vtMaxLaunchAngleDeg) || 22,
+            vtFireMaxAngleDeg: Number(row && row.vtFireMaxAngleDeg) || 18,
+            vtCommitCpaMax: Number(row && row.vtCommitCpaMax) || 9,
             vtMinRange: Number(row && row.vtMinRange) || 18,
             vtMaxRange: Number(row && row.vtMaxRange) || (Number(wpn && wpn.range) || 120),
             vtWhenMissileDry: row && row.vtWhenMissileDry != null ? !!row.vtWhenMissileDry : true,
@@ -88,6 +90,20 @@
             vtRadius: Number(wpn && wpn.vtRadius) || 4.5,
             blastRadius: Number(wpn && wpn.blastRadius) || 6
         };
+    }
+
+    function rocketVtCommitCpaMax(sol) {
+        const doc = getRocketDoctrine();
+        const blast = Number(sol && sol.blastRadius) || doc.blastRadius;
+        const vtR = Number(sol && sol.vtRadius) || doc.vtRadius;
+        return Math.max(vtR * 1.15, blast, doc.vtCommitCpaMax);
+    }
+
+    function rocketVtCpaOk(sol) {
+        if (!sol || sol.fuze === 'impact') return false;
+        if (sol.anyVtHit) return true;
+        const cpa = Number(sol.bestCpaDist);
+        return Number.isFinite(cpa) && cpa <= rocketVtCommitCpaMax(sol);
     }
 
     function getBombDoctrine() {
@@ -148,13 +164,14 @@
         if (Number.isFinite(dist) && (dist < doc.vtMinRange || dist > doc.vtMaxRange)) {
             return { ok: false, reason: 'range', dist };
         }
-        if (Number.isFinite(ang) && ang > doc.vtMaxLaunchAngleDeg) {
+        const fireAng = Number(doc.vtFireMaxAngleDeg) || 18;
+        if (Number.isFinite(ang) && ang > fireAng) {
             return { ok: false, reason: 'angle', angleDeg: ang };
         }
         if (typeof AirArenaRocket === 'undefined' || typeof AirArenaRocket.computeRocketAimSolution !== 'function') {
             // Geometric fallback (Node / missing solver): nose-on mid band.
             const lz = Number(ctx.localZ);
-            const soft = Number.isFinite(ang) && ang <= doc.vtMaxLaunchAngleDeg * 0.85
+            const soft = Number.isFinite(ang) && ang <= fireAng
                 && (!Number.isFinite(lz) || lz >= 0.72);
             return soft
                 ? { ok: true, reason: 'geomFallback', fuze: 'vt', sol: null }
@@ -162,10 +179,9 @@
         }
         const sol = withRocketFuze(team, 'vt', () => AirArenaRocket.computeRocketAimSolution(team, enemy));
         if (!sol || sol.fuze !== 'vt') return { ok: false, reason: 'noSol' };
-        const vtR = Number(sol.vtRadius) || doc.vtRadius;
-        const hit = !!sol.anyVtHit
-            || (Number.isFinite(sol.bestCpaDist) && sol.bestCpaDist <= vtR * 1.15);
-        if (!hit) return { ok: false, reason: 'noWindow', sol, bestCpaDist: sol.bestCpaDist };
+        if (!rocketVtCpaOk(sol)) {
+            return { ok: false, reason: 'noWindow', sol, bestCpaDist: sol.bestCpaDist };
+        }
         return { ok: true, reason: 'vtHit', fuze: 'vt', sol };
     }
 
@@ -506,6 +522,8 @@
         pickStrikeStoresCommit,
         applyStoresCommit,
         isSurvivalState,
-        missileOutOfEnvelope
+        missileOutOfEnvelope,
+        rocketVtCommitCpaMax,
+        rocketVtCpaOk
     };
 });

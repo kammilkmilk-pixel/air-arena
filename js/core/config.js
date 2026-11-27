@@ -226,8 +226,8 @@ const CONFIG = {
              * stepsPerTurn=100 ≈ one turn; 33 ≈ ~1s if a turn feels ~3s.
              */
             intervalSteps: 33,
-            /** Delay before first rocket (~1s): launches at 33 / 66 / 99. */
-            launchDelaySteps: 33,
+            /** Delay before first rocket: launches at 12 / 45 / 78. */
+            launchDelaySteps: 12,
             /** Launch speed (world units / turn-second) along nose. */
             launchSpeed: 55,
             launchSpeedScale: 1.0,
@@ -423,8 +423,12 @@ const CONFIG = {
              */
             rocket: {
                 vtMaxLaunchAngleDeg: 22,
+                /** Fire only when nose is inside this cone (card may steer from wider). */
+                vtFireMaxAngleDeg: 18,
                 vtMinRange: 18,
                 vtMaxRange: 110,
+                /** Predicted CPA (m) to commit a VT salvo — blast 6m / 8–10m band, not only 4.5×1.15. */
+                vtCommitCpaMax: 9,
                 /** Fire VT when FOX dry, out of FOX envelope, or soft hold with a true VT window. */
                 vtWhenMissileDry: true,
                 vtWhenOutOfMissileEnvelope: true,

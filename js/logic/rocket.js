@@ -82,10 +82,10 @@
         return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 33;
     }
 
-    /** Frames before first rocket in a salvo (~1s). */
+    /** Frames before first rocket in a salvo. */
     function launchDelaySteps() {
         const n = Number(rocketConfig().launchDelaySteps);
-        return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 33;
+        return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 12;
     }
 
     function launchStepForIndex(index) {

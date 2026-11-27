@@ -53,7 +53,17 @@ assert.strictEqual(vtGeom.fuze, 'vt');
 const vtWide = Doc.evaluateRocketVtShot(teamDryFox, foeMid, {
     distance: 55, angleDeg: 40, localZ: 0.4, lineOfSightBlocked: false
 });
-assert.strictEqual(vtWide.ok, false, 'VT should reject wide aspect');
+assert.strictEqual(vtWide.ok, false, 'VT should reject wide aspect (40° > fire 18°)');
+
+const vtFireEdge = Doc.evaluateRocketVtShot(teamDryFox, foeMid, {
+    distance: 55, angleDeg: 18, localZ: 0.85, lineOfSightBlocked: false
+});
+assert.strictEqual(vtFireEdge.ok, true, 'VT geom fallback should pass 18° fire cone');
+
+const vtCardNotFire = Doc.evaluateRocketVtShot(teamDryFox, foeMid, {
+    distance: 55, angleDeg: 22, localZ: 0.7, lineOfSightBlocked: false
+});
+assert.strictEqual(vtCardNotFire.ok, false, 'VT fire should reject 22° (card, do not salvo)');
 
 const vtLos = Doc.evaluateRocketVtShot(teamDryFox, foeMid, {
     distance: 55, angleDeg: 10, lineOfSightBlocked: true
@@ -108,7 +118,40 @@ assert.strictEqual(vtSol.ok, true);
 assert.strictEqual(vtSol.reason, 'vtHit');
 
 const impHigh = Doc.evaluateRocketImpactShot(teamDryFox, foeMid, {});
-assert.strictEqual(impHigh.ok, false, 'Impact should reject mid-altitude foe');
+assert.strictEqual(impHigh.ok, false, 'Impact should reject mid-altitude foe (urban 2v2 stays VT)');
+
+assert.strictEqual(CONFIG.doctrine.munition.rocket.impactEnemyAltMax, 12, 'Impact alt cap stays 12m');
+assert.strictEqual(CONFIG.doctrine.munition.rocket.vtCommitCpaMax, 9, 'VT commit CPA is 9m');
+assert.strictEqual(CONFIG.weapons.rocket.launchDelaySteps, 12, 'launchDelaySteps retuned to 12');
+
+const savedSolver = global.AirArenaRocket.computeRocketAimSolution;
+global.AirArenaRocket.computeRocketAimSolution = (team) => {
+    const fuze = team.rocketFuze === 'impact' ? 'impact' : 'vt';
+    if (fuze !== 'vt') return savedSolver(team, foeMid);
+    return {
+        fuze: 'vt', anyVtHit: false, bestCpaDist: 8.5, vtRadius: 4.5, blastRadius: 6,
+        aimWorld: { x: 0, y: 34, z: 48 }, slantDist: 50
+    };
+};
+const vtCpaCommit = Doc.evaluateRocketVtShot(teamDryFox, foeMid, {
+    distance: 55, angleDeg: 12, lineOfSightBlocked: false
+});
+assert.strictEqual(vtCpaCommit.ok, true, '8.5m predicted CPA should commit (blast/9m band)');
+assert.strictEqual(Doc.rocketVtCpaOk({ fuze: 'vt', anyVtHit: false, bestCpaDist: 8.5, vtRadius: 4.5, blastRadius: 6 }), true);
+assert.strictEqual(Doc.rocketVtCpaOk({ fuze: 'vt', anyVtHit: false, bestCpaDist: 12, vtRadius: 4.5, blastRadius: 6 }), false, '12m CPA should not commit');
+global.AirArenaRocket.computeRocketAimSolution = (team) => {
+    const fuze = team.rocketFuze === 'impact' ? 'impact' : 'vt';
+    if (fuze !== 'vt') return savedSolver(team, foeMid);
+    return {
+        fuze: 'vt', anyVtHit: false, bestCpaDist: 12, vtRadius: 4.5, blastRadius: 6,
+        aimWorld: { x: 0, y: 34, z: 48 }, slantDist: 50
+    };
+};
+const vtCpaWide = Doc.evaluateRocketVtShot(teamDryFox, foeMid, {
+    distance: 55, angleDeg: 12, lineOfSightBlocked: false
+});
+assert.strictEqual(vtCpaWide.ok, false, '12m predicted CPA should not commit');
+global.AirArenaRocket.computeRocketAimSolution = savedSolver;
 
 const impLow = Doc.evaluateRocketImpactShot(teamDryFox, foeDirt, {});
 assert.strictEqual(impLow.ok, true, 'Impact should accept dirt-skimming foe with near CCIP');
