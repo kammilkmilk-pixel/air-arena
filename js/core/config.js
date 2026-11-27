@@ -155,7 +155,7 @@ const CONFIG = {
             frontAspectFuseRangeMult: 0.32,
             frontAspectDamageMult: 0.32,
             /** Empty pylon auto-restock after this many turns (combat tempo). */
-            reloadTurns: 30,
+            reloadTurns: 50,
             
             model: {
                 // Applied via prepareStoreMeshBase (same XYZ map as bomb/rocket).
