@@ -3301,7 +3301,10 @@ document.addEventListener("DOMContentLoaded", () => {
         } else if (nextWeapon === 'bomb') {
             showSMSAlert('💣 炸彈模式｜CCIP 落地預示已開 — ENT 投放', '#c8e06a');
         } else if (nextWeapon === 'rocket') {
-            showSMSAlert('🚀 火箭巢｜VT 齊射 3/回 · ~1s 間隔 — ENT 發射', '#ff9966');
+            const n = (typeof AirArenaRocket !== 'undefined' && typeof AirArenaRocket.getTeamSalvoCount === 'function')
+                ? AirArenaRocket.getTeamSalvoCount(t)
+                : 3;
+            showSMSAlert(`🚀 火箭巢｜齊射 ${n}/回 · 可選 1–9（受剩餘彈藥限制）— ENT 發射`, '#ff9966');
         } else {
             showSMSAlert("⚠️ 主保險關閉：切換至機砲模式", "#ff0055");
         }
@@ -3377,6 +3380,19 @@ document.addEventListener("DOMContentLoaded", () => {
             e.stopPropagation();
             if (typeof window.uiToggleRocketFuze === 'function') {
                 window.uiToggleRocketFuze();
+            }
+        });
+    }
+    const smsSalvoPicker = document.getElementById('sms-salvo-picker');
+    if (smsSalvoPicker) {
+        smsSalvoPicker.addEventListener('click', (e) => {
+            const btn = e.target && e.target.closest ? e.target.closest('.sms-salvo-btn') : null;
+            if (!btn || btn.disabled) return;
+            e.preventDefault();
+            e.stopPropagation();
+            const n = parseInt(btn.getAttribute('data-salvo'), 10);
+            if (typeof window.uiSetRocketSalvoCount === 'function') {
+                window.uiSetRocketSalvoCount(null, n);
             }
         });
     }
@@ -3728,13 +3744,10 @@ function updateDashboardUI(teamObj) {
                     : 0;
                 const defaultPodMax = (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getRocketRoundsPerPod === 'function')
                     ? CONFIG.getRocketRoundsPerPod() : 9;
-                const defaultSalvo = (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getRocketSalvoPerTurn === 'function')
-                    ? CONFIG.getRocketSalvoPerTurn() : 3;
                 const max = (armedPod && armedPod.ammoMax) || defaultPodMax;
-                const salvo = Math.min(
-                    (typeof AirArenaRocket !== 'undefined' ? AirArenaRocket.salvoPerTurn() : defaultSalvo),
-                    ammo
-                );
+                const salvo = (typeof AirArenaRocket !== 'undefined' && typeof AirArenaRocket.getTeamSalvoCount === 'function')
+                    ? AirArenaRocket.getTeamSalvoCount(teamObj, ammo)
+                    : Math.min(3, ammo || 3);
                 const fuze = (typeof AirArenaRocket !== 'undefined' && typeof AirArenaRocket.getTeamFuzeMode === 'function')
                     ? AirArenaRocket.getTeamFuzeMode(teamObj)
                     : (teamObj.rocketFuze === 'impact' ? 'impact' : 'vt');
@@ -3778,6 +3791,9 @@ function updateDashboardUI(teamObj) {
             } else {
                 elFuzeBtn.hidden = true;
             }
+        }
+        if (typeof window.uiSyncRocketSalvoPicker === 'function') {
+            window.uiSyncRocketSalvoPicker(teamObj);
         }
     }
     uiUpdateSmsRadarLockWarn(teamObj);
@@ -4053,6 +4069,78 @@ function uiToggleRocketFuze(teamId = null, explicitMode = null) {
 }
 window.uiToggleRocketFuze = uiToggleRocketFuze;
 
+function uiRocketSalvoCap(team) {
+    if (!team) return 0;
+    if (typeof AirArenaRocket !== 'undefined' && typeof AirArenaRocket.remainingFiringPodAmmo === 'function') {
+        return AirArenaRocket.remainingFiringPodAmmo(team);
+    }
+    const pods = (typeof AirArenaRocket !== 'undefined' && typeof AirArenaRocket.teamRocketPylons === 'function')
+        ? AirArenaRocket.teamRocketPylons(team)
+        : (team.pylons || []);
+    const armed = pods.find((p) => p && p.state === 'armed' && (p.ammo || 0) > 0) || pods.find((p) => (p.ammo || 0) > 0);
+    return armed ? Number(armed.ammo) || 0 : 0;
+}
+
+function uiPaintSalvoButtons(root, effective, ammo, pickerMax) {
+    if (!root) return;
+    const maxPick = Math.max(1, pickerMax || 9);
+    const cap = Math.max(0, Math.min(maxPick, ammo));
+    root.querySelectorAll('[data-salvo]').forEach((btn) => {
+        const n = parseInt(btn.getAttribute('data-salvo'), 10);
+        const avail = Number.isFinite(n) && n >= 1 && n <= cap;
+        btn.disabled = !avail;
+        btn.classList.toggle('is-active', avail && n === effective);
+        btn.title = !avail
+            ? (ammo <= 0 ? '彈藥耗盡' : `剩餘 ${ammo} 枚，最多齊射 ${cap}`)
+            : `本回合齊射 ${n} 枚`;
+    });
+}
+
+function uiSyncRocketSalvoPicker(teamObj) {
+    const team = teamObj || (typeof teams !== 'undefined' && teams[uiCurrentTeamId()]);
+    const sms = document.getElementById('sms-salvo-picker');
+    const ops = document.getElementById('ops-wpn-salvo');
+    const show = !!(team && team.weapon === 'rocket' && !team.aiEnabled);
+    if (sms) sms.hidden = !show;
+    const pickerMax = (typeof AirArenaRocket !== 'undefined' && typeof AirArenaRocket.salvoPickerMax === 'function')
+        ? AirArenaRocket.salvoPickerMax()
+        : ((typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getRocketSalvoPickerMax === 'function')
+            ? CONFIG.getRocketSalvoPickerMax() : 9);
+    const ammo = show ? uiRocketSalvoCap(team) : 0;
+    const effective = show
+        ? ((typeof AirArenaRocket !== 'undefined' && typeof AirArenaRocket.getTeamSalvoCount === 'function')
+            ? AirArenaRocket.getTeamSalvoCount(team, ammo > 0 ? ammo : 1)
+            : Math.min(3, ammo || 3))
+        : 0;
+    if (show) uiPaintSalvoButtons(sms, effective, ammo, pickerMax);
+    if (ops && !ops.hidden) uiPaintSalvoButtons(ops, effective, ammo, pickerMax);
+    return effective;
+}
+window.uiSyncRocketSalvoPicker = uiSyncRocketSalvoPicker;
+
+function uiSetRocketSalvoCount(teamId = null, n) {
+    const currentTeam = teamId || uiCurrentTeamId();
+    const t = teams[currentTeam];
+    if (!t || t.aiEnabled || GameContext.isAnimating() || GameContext.isReplayMode() || t.isDestroyed || t.ready) {
+        return null;
+    }
+    const sm = GameContext.stateMachine;
+    const next = (sm && typeof sm.setRocketSalvoCount === 'function')
+        ? sm.setRocketSalvoCount(currentTeam, n)
+        : ((typeof AirArenaRocket !== 'undefined' && typeof AirArenaRocket.setTeamSalvoCount === 'function')
+            ? AirArenaRocket.setTeamSalvoCount(t, n)
+            : (t.rocketSalvoCount = n));
+    if (!next) return null;
+    showSMSAlert(`🚀 齊射發數：${next}（剩餘 ${uiRocketSalvoCap(t)} 枚）`, '#ff9966');
+    updateDashboardUI(t);
+    uiRefreshPreview(t);
+    if (window.AirArenaOpsRadial && typeof window.AirArenaOpsRadial.refresh === 'function') {
+        try { window.AirArenaOpsRadial.refresh(t); } catch (_) { /* ignore */ }
+    }
+    return next;
+}
+window.uiSetRocketSalvoCount = uiSetRocketSalvoCount;
+
 let _lastRocketFuzeTooltipSig = '';
 function uiSyncRocketFuzeTooltips() {
     if (typeof document === 'undefined') return null;
@@ -4133,9 +4221,9 @@ function uiToggleWeaponFireQueue(teamId = null) {
             ? GameContext.stateMachine.toggleRocketQueue(currentTeam)
             : false;
         const ammo = pods[0] ? AirArenaRocket.ensurePodAmmo(pods[0]) : 0;
-        const fallbackSalvo = (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getRocketSalvoPerTurn === 'function')
-            ? CONFIG.getRocketSalvoPerTurn() : 3;
-        const salvo = Math.min((typeof AirArenaRocket !== 'undefined' ? AirArenaRocket.salvoPerTurn() : fallbackSalvo), ammo);
+        const salvo = (typeof AirArenaRocket !== 'undefined' && typeof AirArenaRocket.getTeamSalvoCount === 'function')
+            ? AirArenaRocket.getTeamSalvoCount(t, ammo)
+            : Math.min(3, ammo || 3);
         const fuze = (typeof AirArenaRocket !== 'undefined' && typeof AirArenaRocket.getTeamFuzeMode === 'function')
             ? AirArenaRocket.getTeamFuzeMode(t)
             : (t.rocketFuze === 'impact' ? 'impact' : 'vt');

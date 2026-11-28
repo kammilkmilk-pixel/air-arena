@@ -90,6 +90,7 @@ function createTeamState(id, colorMain, matchActive = true) {
         stalled: false,
         gLimiterOn: true,
         weapon: 'gun',
+        rocketSalvoCount: 3,
         wpnQueued: false,
         flareAmmo: CONFIG.weapons['flare'].maxAmmo,
         chaffAmmo: (CONFIG.weapons.chaff && CONFIG.weapons.chaff.maxAmmo) ? CONFIG.weapons.chaff.maxAmmo : 3,

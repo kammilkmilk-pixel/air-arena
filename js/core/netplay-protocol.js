@@ -94,6 +94,7 @@
             throttle: Number(t.throttle) || 2,
             weapon: t.weapon || 'gun',
             rocketFuze: t.rocketFuze === 'impact' ? 'impact' : 'vt',
+            rocketSalvoCount: Math.max(1, Math.min(9, Math.floor(Number(t.rocketSalvoCount) || 3))),
             queuedAction: t.queuedAction || 'none',
             wpnQueued: !!t.wpnQueued,
             flaresArmed: !!t.flaresArmed,
@@ -145,6 +146,13 @@
                 if (src.ammo != null && Number.isFinite(Number(src.ammo))) p.ammo = Number(src.ammo);
                 if (src.ammoMax != null && Number.isFinite(Number(src.ammoMax))) p.ammoMax = Number(src.ammoMax);
             });
+        }
+        if (intent.rocketSalvoCount != null && Number.isFinite(Number(intent.rocketSalvoCount))) {
+            if (typeof AirArenaRocket !== 'undefined' && typeof AirArenaRocket.setTeamSalvoCount === 'function') {
+                AirArenaRocket.setTeamSalvoCount(t, intent.rocketSalvoCount, { persist: false });
+            } else {
+                t.rocketSalvoCount = Math.max(1, Math.min(9, Math.floor(Number(intent.rocketSalvoCount))));
+            }
         }
 
         t.flaresArmed = !!intent.flaresArmed;

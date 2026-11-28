@@ -182,6 +182,9 @@ function updateLcosWeaponTag(team, opts = {}) {
             ? AirArenaRocket.ensurePodAmmo(armedPod) : 0;
         const anyAmmo = pods.some((p) => (typeof AirArenaRocket !== 'undefined' ? AirArenaRocket.ensurePodAmmo(p) : (p.ammo || 0)) > 0);
         const queued = !!(team.wpnQueued && team.queuedAction === 'rocket');
+        const salvoN = (typeof AirArenaRocket !== 'undefined' && typeof AirArenaRocket.getTeamSalvoCount === 'function')
+            ? AirArenaRocket.getTeamSalvoCount(team, ammo)
+            : Math.min(3, ammo || 3);
         if (!anyAmmo) {
             status = '彈盡';
             tone = 'bad';
@@ -194,7 +197,7 @@ function updateLcosWeaponTag(team, opts = {}) {
                 status = '仰角過高';
                 tone = 'warn';
             } else if (queued) {
-                status = `對地排程${dStr}`;
+                status = `對地×${salvoN}${dStr}`;
                 tone = 'queued';
             } else if (opts.hitBuilding) {
                 status = `建築落點${dStr}`;
@@ -210,13 +213,13 @@ function updateLcosWeaponTag(team, opts = {}) {
                 ? CONFIG.getRocketRange()
                 : ((typeof CONFIG !== 'undefined' && CONFIG.weapons && CONFIG.weapons.rocket && Number(CONFIG.weapons.rocket.range)) || 120);
             if (opts.obscured) {
-                status = queued ? '齊射·遮擋' : '遮擋';
+                status = queued ? `齊射×${salvoN}·遮擋` : '遮擋';
                 tone = 'warn';
             } else if (queued && opts.inRange) {
-                status = '齊射·鎖定';
+                status = `齊射×${salvoN}·鎖定`;
                 tone = 'hot';
             } else if (queued) {
-                status = '齊射排程';
+                status = `齊射×${salvoN}`;
                 tone = 'queued';
             } else if (opts.inRange) {
                 status = 'VT 命中窗';
@@ -225,7 +228,7 @@ function updateLcosWeaponTag(team, opts = {}) {
                 status = '未進射程';
                 tone = 'idle';
             } else {
-                status = `就緒 ${ammo}發`;
+                status = `就緒 ${ammo}發×${salvoN}`;
                 tone = 'ready';
             }
         }

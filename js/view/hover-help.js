@@ -69,6 +69,8 @@
         'sms-exec-btn': '確認這架戰機本回合的操縱和武器，然後開始交戰。',
         'sms-text-content': '戰術電腦目前的武器狀態。黃字是已選武器，通電或待發會寫在這裡。',
         'sms-fuze-btn': '切換火箭引信。VT 對空會在靠近飛機時空爆，IMP 對地要撞上才炸。',
+        'sms-salvo-picker': '選本回合要打幾枚火箭。1 到 9，但不能超過這個掛架剩下的彈藥。',
+        'ops-wpn-salvo': '選本回合要打幾枚火箭。1 到 9，但不能超過這個掛架剩下的彈藥。',
         'sms-enter-btn': '把目前選中的武器排進本回合發射。',
         'hud-val-heat': '引擎核心溫度，單位是 °C。',
         'hud-val-ap': '空速，單位是公尺每秒。',
@@ -160,6 +162,10 @@
         if (el.classList.contains('ops-fuze-btn') || el.classList.contains('sms-fuze-btn')) {
             return BY_FUZE[el.getAttribute('data-fuze')] || BY_ID['sms-fuze-btn'];
         }
+        if (el.classList.contains('sms-salvo-btn') || el.classList.contains('ops-salvo-btn')
+            || el.classList.contains('sms-salvo-picker') || el.classList.contains('ops-wpn-salvo')) {
+            return BY_ID['sms-salvo-picker'];
+        }
         if (el.classList.contains('temp-score-btn')) {
             const mode = el.getAttribute('data-score-mode');
             const delta = el.getAttribute('data-score-delta');
@@ -241,6 +247,8 @@
         '#ghost-steer-thr',
         '#sms-text-content',
         '#ops-sms-text',
+        '#sms-salvo-picker',
+        '#ops-wpn-salvo',
         '#replay-status',
         '#replay-director-badge',
         '#arena-mode-status',

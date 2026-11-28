@@ -168,6 +168,7 @@ function executeTurnSimultaneously() {
                     flareAmmo: Number(t.flareAmmo != null ? t.flareAmmo : 0),
                     chaffAmmo: Number(t.chaffAmmo != null ? t.chaffAmmo : 0),
                     rocketFuze: t.rocketFuze || 'vt',
+                    rocketSalvoCount: Math.max(1, Math.min(9, Math.floor(Number(t.rocketSalvoCount) || 3))),
                     pylons: Array.isArray(t.pylons)
                         ? t.pylons.map((p) => ({
                             id: p.id,
@@ -419,6 +420,9 @@ function finishTurnSimultaneously() {
                 t.flaresArmed = false;
                 t.chaffArmed = false;
                 if (seatSnap.rocketFuze) t.rocketFuze = seatSnap.rocketFuze;
+                if (seatSnap.rocketSalvoCount != null && Number.isFinite(Number(seatSnap.rocketSalvoCount))) {
+                    t.rocketSalvoCount = Math.max(1, Math.min(9, Math.floor(Number(seatSnap.rocketSalvoCount))));
+                }
                 if (Array.isArray(seatSnap.pylons) && Array.isArray(t.pylons)) {
                     seatSnap.pylons.forEach((sp) => {
                         const localP = t.pylons.find((p) => p && p.id === sp.id);

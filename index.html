@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, shrink-to-fit=no">
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect fill='%2300bcd4' width='16' height='16'/%3E%3C/svg%3E">
     <title>垂直空域 (Vertical Airspace) - 側翼 MFD 完全體</title>
-    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/style.css?v=salvo1">
 </head>
 <body class="theme-red startup-lock">
     <!-- 1. 開場授權黑幕 + 對戰設定 -->
@@ -475,6 +475,20 @@
                 <button type="button" class="ops-fuze-btn" data-fuze="vt" title="對空近發引信（4.5m 感應空爆）">VT 對空</button>
                 <button type="button" class="ops-fuze-btn" data-fuze="impact" title="撞擊引信（觸地／建築引爆，不提前空爆）">IMPACT 對地</button>
             </div>
+            <div id="ops-wpn-salvo" class="ops-wpn-salvo" hidden>
+                <span class="ops-wpn-salvo-label">齊射發數</span>
+                <div class="ops-wpn-salvo-grid" role="group" aria-label="火箭齊射發數">
+                    <button type="button" class="ops-salvo-btn" data-salvo="1">1</button>
+                    <button type="button" class="ops-salvo-btn" data-salvo="2">2</button>
+                    <button type="button" class="ops-salvo-btn" data-salvo="3">3</button>
+                    <button type="button" class="ops-salvo-btn" data-salvo="4">4</button>
+                    <button type="button" class="ops-salvo-btn" data-salvo="5">5</button>
+                    <button type="button" class="ops-salvo-btn" data-salvo="6">6</button>
+                    <button type="button" class="ops-salvo-btn" data-salvo="7">7</button>
+                    <button type="button" class="ops-salvo-btn" data-salvo="8">8</button>
+                    <button type="button" class="ops-salvo-btn" data-salvo="9">9</button>
+                </div>
+            </div>
             <button type="button" id="ops-wpn-fire" class="ops-wpn-fire" disabled>發射 ENT</button>
         </div>
     </div>
@@ -510,6 +524,20 @@
                     <div class="pylon-switch-wrapper" data-pylon="4">
                         <div class="pylon-label">PYLON 4</div>
                         <div class="pylon-stick" id="pylon-stick-4"></div>
+                    </div>
+                </div>
+                <div id="sms-salvo-picker" class="sms-salvo-picker" hidden role="group" aria-label="火箭齊射發數">
+                    <span class="sms-salvo-label">齊射</span>
+                    <div class="sms-salvo-grid">
+                        <button type="button" class="sms-salvo-btn" data-salvo="1">1</button>
+                        <button type="button" class="sms-salvo-btn" data-salvo="2">2</button>
+                        <button type="button" class="sms-salvo-btn" data-salvo="3">3</button>
+                        <button type="button" class="sms-salvo-btn" data-salvo="4">4</button>
+                        <button type="button" class="sms-salvo-btn" data-salvo="5">5</button>
+                        <button type="button" class="sms-salvo-btn" data-salvo="6">6</button>
+                        <button type="button" class="sms-salvo-btn" data-salvo="7">7</button>
+                        <button type="button" class="sms-salvo-btn" data-salvo="8">8</button>
+                        <button type="button" class="sms-salvo-btn" data-salvo="9">9</button>
                     </div>
                 </div>
                 
@@ -628,7 +656,7 @@
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
 
     <!-- 模組化遊戲組件 -->
-    <script src="js/core/config.js?v=rkt1"></script>
+    <script src="js/core/config.js?v=salvo1"></script>
     <script src="js/core/combat-airspace.js"></script>
     <script src="js/core/arena-envelope.js"></script>
     <script src="js/ai/weapon-envelope.js"></script>
@@ -645,17 +673,17 @@
     <script src="js/core/radio-cues.js"></script>
     <script src="js/core/match-challenges.js"></script>
     <script src="js/core/turn-log-serialize.js?v=stall1"></script>
-    <script src="js/core/netplay-protocol.js"></script>
+    <script src="js/core/netplay-protocol.js?v=salvo1"></script>
     <script src="js/core/supabase-config.js"></script>
     <script src="js/core/supabase-config.local.js" onerror="this.onerror=null;this.src='js/core/supabase-config.local.example.js'"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.8/dist/umd/supabase.min.js"></script>
     <script src="js/core/netplay-transports.js"></script>
     <script src="js/core/host-authority.js"></script>
-    <script src="js/core/team-state.js"></script>
+    <script src="js/core/team-state.js?v=salvo1"></script>
     <script src="js/core/compat-aliases.js"></script>
-    <script src="js/core/state-machine-match.js"></script>
+    <script src="js/core/state-machine-match.js?v=salvo1"></script>
     <script src="js/core/state-machine-wreck.js"></script>
-    <script src="js/core/state-machine.js?v=fox2r50"></script>
+    <script src="js/core/state-machine.js?v=salvo1"></script>
     <script src="js/logic/physics.js?v=bez1"></script>
     <script src="js/logic/gun-ballistics.js?v=bez1"></script>
     <script src="js/logic/sarh.js"></script>
@@ -663,10 +691,10 @@
     <script src="js/logic/combat-helpers.js"></script>
     <script src="js/logic/ground-targets.js"></script>
     <script src="js/logic/bomb.js?v=bez1"></script>
-    <script src="js/logic/rocket.js?v=rkt1"></script>
+    <script src="js/logic/rocket.js?v=salvo1"></script>
     <script src="js/logic/combat-pipeline.js?v=bez1"></script>
     <script src="js/logic/combat-resolution.js?v=bez1"></script>
-    <script src="js/logic/combat-turn.js?v=cond4"></script>
+    <script src="js/logic/combat-turn.js?v=salvo1"></script>
     <script src="js/ai/pilot-tuning-defaults.js"></script>
     <script src="js/ai/pilot-tuning.local.js" onerror="this.onerror=null;this.src='js/ai/pilot-tuning.local.example.js'"></script>
     <script src="js/ai/pilot-ai.js?v=rkt1"></script>
@@ -683,12 +711,12 @@
     <script src="js/view/audio-mixer.js"></script>
     <script src="js/view/radio-voice.js"></script>
     <script src="js/view/radio-hud.js"></script>
-    <script src="js/view/hud.js"></script>
+    <script src="js/view/hud.js?v=salvo1"></script>
     <script src="js/view/multi-view.js?v=split2"></script>
     <script src="js/view/replay-director.js?v=rdir1"></script>
-    <script src="js/view/ops-radial-ui.js"></script>
-    <script src="js/view/ui.js?v=rdir1"></script>
-    <script src="js/view/hover-help.js?v=help2"></script>
+    <script src="js/view/ops-radial-ui.js?v=salvo1"></script>
+    <script src="js/view/ui.js?v=salvo1"></script>
+    <script src="js/view/hover-help.js?v=salvo1"></script>
     <script src="js/core/batch-ai-run.js"></script>
     <script src="js/game.js?v=plume1"></script>
 </body>

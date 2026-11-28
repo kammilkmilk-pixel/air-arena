@@ -208,7 +208,7 @@ const CONFIG = {
         /**
          * Rocket pod — dual-role: VT airburst (A2A) + Impact (A2G / low air).
          * AI decide uses doctrine.munition.rocket when aiEnabled.
-         * 9 rounds/pod; 3 per turn; ~1s spacing (intervalSteps ≈ turn/3).
+         * 9 rounds/pod; AI default 3/turn; human picker 1–9 capped at remaining ammo.
          */
         'rocket': {
             id: 'rocket',
@@ -219,8 +219,10 @@ const CONFIG = {
             range: 120,
             /** Ammo in one pod. */
             roundsPerPod: 9,
-            /** Rockets released per ENT / turn. */
+            /** AI / fallback rockets per ENT. Human picker is 1–9, ammo-capped. */
             salvoPerTurn: 3,
+            /** Human salvo picker upper bound (also capped by remaining pod ammo). */
+            salvoPickerMax: 9,
             /**
              * Combat frames between rockets in a salvo.
              * stepsPerTurn=100 ≈ one turn; 33 ≈ ~1s if a turn feels ~3s.
@@ -854,6 +856,13 @@ const AirArenaConfig = {
         const r = AirArenaConfig.getRocketConfig(overrideCfg);
         const n = Number(r.salvoPerTurn);
         return Number.isFinite(n) && n > 0 ? Math.floor(n) : 3;
+    },
+    getRocketSalvoPickerMax(overrideCfg) {
+        const r = AirArenaConfig.getRocketConfig(overrideCfg);
+        const n = Number(r.salvoPickerMax);
+        const pod = AirArenaConfig.getRocketRoundsPerPod(overrideCfg);
+        const cap = Number.isFinite(n) && n > 0 ? Math.floor(n) : 9;
+        return Math.max(1, Math.min(9, cap, pod));
     },
     getRocketVtRadius(overrideCfg) {
         const r = AirArenaConfig.getRocketConfig(overrideCfg);
