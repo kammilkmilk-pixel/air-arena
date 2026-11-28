@@ -1,5 +1,5 @@
 // ============================================================================
-// rocket.js — Rocket pod: 9 rnds, 3/turn @ ~1s spacing, VT proximity fuse
+// rocket.js — Rocket pod: 9 rnds, human 1–9 salvo (ammo-capped), VT proximity fuse
 // ============================================================================
 
 (function (global) {
@@ -53,6 +53,130 @@
         return Number.isFinite(n) && n > 0 ? Math.floor(n) : 3;
     }
 
+    /** Human picker max (1–9), independent of the AI default of 3. */
+    function salvoPickerMax() {
+        if (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getRocketSalvoPickerMax === 'function') {
+            return CONFIG.getRocketSalvoPickerMax();
+        }
+        return Math.min(9, roundsPerPod());
+    }
+
+    const SALVO_STORE_KEY = 'airarena.rocketSalvo';
+
+    function persistKeyFor(seatId, loadout) {
+        return `${String(seatId || 'seat')}:${String(loadout || 'standard')}`;
+    }
+
+    function salvoStoreRead() {
+        try {
+            const ls = (typeof localStorage !== 'undefined') ? localStorage : null;
+            if (!ls) return {};
+            const raw = ls.getItem(SALVO_STORE_KEY);
+            if (!raw) return {};
+            const obj = JSON.parse(raw);
+            return obj && typeof obj === 'object' ? obj : {};
+        } catch (_) {
+            return {};
+        }
+    }
+
+    function salvoStoreWrite(map) {
+        try {
+            const ls = (typeof localStorage !== 'undefined') ? localStorage : null;
+            if (!ls) return;
+            ls.setItem(SALVO_STORE_KEY, JSON.stringify(map || {}));
+        } catch (_) { /* quota / private mode */ }
+    }
+
+    function loadPersistedSalvo(seatId, loadout) {
+        const n = Number(salvoStoreRead()[persistKeyFor(seatId, loadout)]);
+        if (!Number.isFinite(n)) return null;
+        return sanitizeSalvoCount(n, salvoPickerMax());
+    }
+
+    function savePersistedSalvo(seatId, loadout, n) {
+        const next = sanitizeSalvoCount(n, salvoPickerMax());
+        const map = salvoStoreRead();
+        map[persistKeyFor(seatId, loadout)] = next;
+        salvoStoreWrite(map);
+        return next;
+    }
+
+    /**
+     * Clamp a requested salvo to 1..min(9, ammoCap).
+     * ammoCap omitted → picker max (9). ammoCap 0 still yields 1 so UI can show a last pick.
+     */
+    function sanitizeSalvoCount(n, ammoCap) {
+        const pickMax = salvoPickerMax();
+        const cap = (ammoCap != null && Number.isFinite(Number(ammoCap)))
+            ? Math.max(1, Math.min(pickMax, Math.floor(Number(ammoCap))))
+            : pickMax;
+        const v = Math.floor(Number(n));
+        if (!Number.isFinite(v)) return Math.min(salvoPerTurn(), cap);
+        return Math.max(1, Math.min(cap, v));
+    }
+
+    /** Remaining rounds in the pod that would fire next (first armed with ammo). */
+    function remainingFiringPodAmmo(team) {
+        const pods = teamRocketPylons(team);
+        const armed = pods.find((p) => p && p.state === 'armed' && ensurePodAmmo(p) > 0);
+        if (armed) return ensurePodAmmo(armed);
+        const any = pods.find((p) => p && ensurePodAmmo(p) > 0);
+        return any ? ensurePodAmmo(any) : 0;
+    }
+
+    function matchSeatMeta(team) {
+        if (!team) return { seatId: 'seat', loadout: 'standard' };
+        if (team.matchSeatId) {
+            return { seatId: team.matchSeatId, loadout: team.matchLoadout || 'standard' };
+        }
+        try {
+            const cfg = (typeof GameContext !== 'undefined' && GameContext.getMatchConfig)
+                ? GameContext.getMatchConfig()
+                : null;
+            if (cfg && cfg.seats) {
+                const found = Object.keys(cfg.seats).find((sid) => {
+                    const s = cfg.seats[sid];
+                    return s && s.teamId === team.id;
+                });
+                if (found) {
+                    return { seatId: found, loadout: (cfg.seats[found] && cfg.seats[found].loadout) || 'standard' };
+                }
+            }
+        } catch (_) { /* ignore */ }
+        return { seatId: team.id || 'seat', loadout: team.matchLoadout || 'standard' };
+    }
+
+    /**
+     * Rockets this ENT will actually release.
+     * Human: persisted/picker value, capped at remaining ammo.
+     * AI: config default (3) or remaining if less — ignores the human picker.
+     */
+    function getTeamSalvoCount(team, ammoCap) {
+        const ammo = (ammoCap != null && Number.isFinite(Number(ammoCap)))
+            ? Math.max(0, Math.floor(Number(ammoCap)))
+            : remainingFiringPodAmmo(team);
+        const cap = ammo > 0 ? ammo : salvoPickerMax();
+        if (team && team.aiEnabled) {
+            return sanitizeSalvoCount(salvoPerTurn(), cap);
+        }
+        const pref = (team && team.rocketSalvoCount != null) ? team.rocketSalvoCount : salvoPerTurn();
+        return sanitizeSalvoCount(pref, cap);
+    }
+
+    function setTeamSalvoCount(team, n, opts) {
+        if (!team) return sanitizeSalvoCount(n, salvoPickerMax());
+        const ammo = remainingFiringPodAmmo(team);
+        const next = sanitizeSalvoCount(n, ammo > 0 ? ammo : salvoPickerMax());
+        team.rocketSalvoCount = next;
+        const persist = !opts || opts.persist !== false;
+        if (persist && !team.aiEnabled) {
+            const meta = matchSeatMeta(team);
+            savePersistedSalvo(meta.seatId, meta.loadout, next);
+        }
+        return next;
+    }
+
     function vtRadius() {
         if (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getRocketVtRadius === 'function') {
             return CONFIG.getRocketVtRadius();
@@ -88,8 +212,23 @@
         return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 12;
     }
 
-    function launchStepForIndex(index) {
-        return launchDelaySteps() + (Number(index) || 0) * intervalSteps();
+    /**
+     * Combat frame for rocket `index` in a salvo of `salvoCount`.
+     * Default 3-round spacing (~1s) is kept when it fits the turn; larger salvos
+     * compress so the last round still launches before the turn ends.
+     */
+    function launchStepForIndex(index, salvoCount) {
+        const delay = launchDelaySteps();
+        const i = Math.max(0, Math.floor(Number(index) || 0));
+        const n = Math.max(1, Math.floor(Number(salvoCount) || 0) || 1);
+        if (n <= 1 || i <= 0) return delay;
+        const steps = ballisticKnobs().stepsPerTurn;
+        const defaultInterval = intervalSteps();
+        const lastDefault = delay + (n - 1) * defaultInterval;
+        const interval = lastDefault <= steps
+            ? defaultInterval
+            : Math.max(1, Math.floor((steps - delay) / (n - 1)));
+        return Math.min(steps, delay + i * interval);
     }
 
     function teamRocketPylons(team) {
@@ -436,7 +575,7 @@
 
         const fuze = getTeamFuzeMode(team);
         const ammo = ensurePodAmmo(pod);
-        const salvo = Math.max(1, Math.min(salvoPerTurn(), ammo > 0 ? ammo : 1));
+        const salvo = getTeamSalvoCount(team, ammo > 0 ? ammo : 1);
         const cfg = rocketConfig();
         const knobs = ballisticKnobs();
         const stepsPerTurn = knobs.stepsPerTurn;
@@ -504,7 +643,7 @@
             const maxSteps = cfg.maxFlightSteps != null ? Math.min(Number(cfg.maxFlightSteps), 180) : 150;
 
             for (let i = 0; i < salvo; i++) {
-                const launchStep = Math.min(stepsPerTurn, launchStepForIndex(i));
+                const launchStep = Math.min(stepsPerTurn, launchStepForIndex(i, salvo));
                 const ratio = Math.min(1, launchStep / Math.max(1, stepsPerTurn));
                 const rel = estimateLaunchState(team, pod, {
                     ratio,
@@ -635,7 +774,7 @@
         const groundedImpacts = [];
         let hitBuilding = false;
         for (let i = 0; i < salvo; i++) {
-            const launchStep = Math.min(stepsPerTurn, launchStepForIndex(i));
+            const launchStep = Math.min(stepsPerTurn, launchStepForIndex(i, salvo));
             const ratio = Math.min(1, launchStep / Math.max(1, stepsPerTurn));
             const rel = estimateLaunchState(team, pod, {
                 ratio,
@@ -757,8 +896,6 @@
         const ids = (typeof combatActiveIds === 'function')
             ? combatActiveIds()
             : Object.keys(typeof teams !== 'undefined' ? teams : {});
-        const salvoN = salvoPerTurn();
-
         ids.forEach((id) => {
             const t = teams[id];
             if (!t || t.isDestroyed) return;
@@ -785,7 +922,8 @@
             }
 
             const fuze = getTeamFuzeMode(t);
-            const fireCount = Math.min(salvoN, ensurePodAmmo(pod));
+            const ammo = ensurePodAmmo(pod);
+            const fireCount = getTeamSalvoCount(t, ammo);
             const turn = Math.max(
                 1,
                 Number((typeof GameContext !== 'undefined' && GameContext.state && GameContext.state.currentTurn) || 1)
@@ -795,7 +933,7 @@
             for (let i = 0; i < fireCount; i++) {
                 t._rocketSeq = seqBase + i + 1;
                 const trackId = `r${id}_p${pod.id}_t${turn}_${t._rocketSeq}`;
-                const launchStep = Math.min(stepsPerTurn, launchStepForIndex(i));
+                const launchStep = Math.min(stepsPerTurn, launchStepForIndex(i, fireCount));
                 const rocket = {
                     pylonId: pod.id,
                     trackId,
@@ -1256,9 +1394,6 @@
                 const flame = ensurePodMuzzleFlame(p);
                 if (!flame) return;
                 let intensity = 0;
-                if (previewLit && t.weapon === 'rocket' && t.wpnQueued && t.queuedAction === 'rocket' && p.state === 'armed') {
-                    intensity = 0.45 + 0.25 * Math.sin(Date.now() * 0.02);
-                }
                 if (log) {
                     const tracks = log[`${id}RktTracks`] || {};
                     Object.keys(tracks).forEach((tid) => {
@@ -1454,11 +1589,13 @@
 
         const grp = ensureAimVisuals(Math.max(sol.shots.length, 3));
         if (!grp) return;
-        if (Rocket._previewSol === sol && grp.visible) {
-            syncPodMuzzleFlames(0, null, true);
+        const committed = !!(team.wpnQueued && team.queuedAction === 'rocket');
+        if (Rocket._previewSol === sol && grp.visible && Rocket._previewCommitted === committed) {
+            syncPodMuzzleFlames(0, null, false);
             return;
         }
         Rocket._previewSol = sol;
+        Rocket._previewCommitted = committed;
 
         const isVt = sol.fuze === 'vt';
         const vtColors = [0x4dd0e1, 0x80deea, 0x26c6da];
@@ -1478,23 +1615,29 @@
             slot.pip.position.copy(shot.launchPos);
 
             if (isVt) {
-                const col = shot.vtHit ? 0xff0055 : vtColors[i % vtColors.length];
+                const enclosed = !!shot.vtHit;
+                const commitHot = committed && enclosed;
+                const col = commitHot ? 0xff0055 : (enclosed ? 0xd0d0d0 : vtColors[i % vtColors.length]);
                 slot.line.material.color.setHex(col);
-                slot.line.material.opacity = shot.vtHit ? 0.95 : 0.68;
+                slot.line.material.opacity = commitHot ? 0.95 : (enclosed ? 0.95 : 0.68);
                 slot.pip.material.color.setHex(col);
+                slot.pip.material.opacity = commitHot ? 0.9 : (enclosed ? 0.9 : 0.7);
                 slot.ring.material.color.setHex(col);
-                slot.ring.material.opacity = shot.vtHit ? 0.38 : 0.16;
+                slot.ring.material.opacity = commitHot ? 0.38 : (enclosed ? 0.38 : 0.16);
                 slot.ring.scale.setScalar(sol.vtRadius);
                 if (shot.ringPos) slot.ring.position.copy(shot.ringPos);
                 if (shot.ringQuat) slot.ring.quaternion.copy(shot.ringQuat);
                 slot.cross.visible = false;
+                slot.cross.scale.setScalar(1);
             } else {
                 const col = impColors[i % impColors.length];
                 slot.line.material.color.setHex(col);
                 slot.line.material.opacity = 0.8;
                 slot.pip.material.color.setHex(col);
+                slot.pip.material.opacity = 0.9;
                 slot.ring.visible = !!shot.grounded;
                 slot.cross.visible = !!shot.grounded;
+                slot.cross.scale.setScalar(1);
                 if (shot.grounded && shot.ringPos) {
                     const lift = (shot.normal || new THREE.Vector3(0, 1, 0)).clone().multiplyScalar(0.06 + i * 0.01);
                     slot.ring.position.copy(shot.ringPos).add(lift);
@@ -1510,12 +1653,13 @@
         }
         grp.visible = true;
 
-        // Preview: idle glow in pod when rocket mode / queued salvo.
-        syncPodMuzzleFlames(0, null, true);
+        // Nest flame waits for actual launch frames — not planning / ENT commit.
+        syncPodMuzzleFlames(0, null, false);
     }
 
     function hideRocketAimPreview() {
         Rocket._previewSol = null;
+        Rocket._previewCommitted = false;
         if (Rocket._aimGroup) Rocket._aimGroup.visible = false;
         // Dim pod flames when leaving rocket aim.
         if (typeof teams !== 'undefined') {
@@ -1581,6 +1725,13 @@
     Rocket.ensurePodAmmo = ensurePodAmmo;
     Rocket.roundsPerPod = roundsPerPod;
     Rocket.salvoPerTurn = salvoPerTurn;
+    Rocket.salvoPickerMax = salvoPickerMax;
+    Rocket.sanitizeSalvoCount = sanitizeSalvoCount;
+    Rocket.remainingFiringPodAmmo = remainingFiringPodAmmo;
+    Rocket.getTeamSalvoCount = getTeamSalvoCount;
+    Rocket.setTeamSalvoCount = setTeamSalvoCount;
+    Rocket.loadPersistedSalvo = loadPersistedSalvo;
+    Rocket.savePersistedSalvo = savePersistedSalvo;
     Rocket.intervalSteps = intervalSteps;
     Rocket.launchDelaySteps = launchDelaySteps;
     Rocket.launchStepForIndex = launchStepForIndex;

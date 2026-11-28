@@ -43,6 +43,7 @@ const rktSeat = {
     throttle: 4.5,
     weapon: 'rocket',
     rocketFuze: 'impact',
+    rocketSalvoCount: 7,
     queuedAction: 'rocket',
     wpnQueued: true,
     pylons: [
@@ -53,6 +54,7 @@ const rktSeat = {
 const rktIntent = Proto.buildTurnIntent('blue', rktSeat, 5);
 assert(rktIntent.pylons[1].ammo === 6 && rktIntent.pylons[1].ammoMax === 9, 'rocket ammo in intent');
 assert(rktIntent.rocketFuze === 'impact', 'rocketFuze in intent');
+assert(rktIntent.rocketSalvoCount === 7, 'rocketSalvoCount in intent');
 const hostSeat = {
     isDestroyed: false,
     matchActive: true,
@@ -83,6 +85,7 @@ const mockGC = {
 assert(Proto.applyTurnIntent('blue', rktIntent, { GameContext: mockGC }), 'apply rocket intent');
 assert(toggledRkt === 1 && hostSeat.queuedAction === 'rocket' && hostSeat.pylons[1].ammo === 6, 'rocket queued + ammo synced');
 assert(hostSeat.rocketFuze === 'impact', 'rocketFuze synced on host');
+assert(hostSeat.rocketSalvoCount === 7, 'rocketSalvoCount synced on host');
 const bombIntent = Proto.buildTurnIntent('blue', {
     weapon: 'bomb',
     queuedAction: 'bomb',

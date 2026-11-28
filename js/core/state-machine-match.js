@@ -209,6 +209,9 @@ window.StateMachineMatchApi = {
             t.lockedTargetId = null;
             t.designatedGroundTargetId = null;
             t.rocketFuze = defFuze;
+            t.rocketSalvoCount = (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getRocketSalvoPerTurn === 'function')
+                ? CONFIG.getRocketSalvoPerTurn()
+                : 3;
             t.fox2LaunchCommit = null;
             t.activeMissiles = [];
             t.activeBombs = [];
@@ -310,6 +313,19 @@ window.StateMachineMatchApi = {
             t.pendingPylonLoadout = (typeof sanitizePylonLoadout === 'function')
                 ? sanitizePylonLoadout(pylons)
                 : (Array.isArray(pylons) ? pylons.slice(0, 4) : ['fox1', 'fox2', 'fox2', 'fox1']);
+            t.matchSeatId = seatId;
+            t.matchLoadout = seat.loadout || 'standard';
+            const defSalvo = (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getRocketSalvoPerTurn === 'function')
+                ? CONFIG.getRocketSalvoPerTurn()
+                : 3;
+            if (seat.control === 'ai') {
+                t.rocketSalvoCount = defSalvo;
+            } else if (typeof AirArenaRocket !== 'undefined' && typeof AirArenaRocket.loadPersistedSalvo === 'function') {
+                const saved = AirArenaRocket.loadPersistedSalvo(seatId, t.matchLoadout);
+                t.rocketSalvoCount = saved != null ? saved : defSalvo;
+            } else {
+                t.rocketSalvoCount = defSalvo;
+            }
             if (typeof AirArenaPilotRoster !== 'undefined' && AirArenaPilotRoster.applyToTeam) {
                 const requested = seat.pilotId === 'random' ? null : seat.pilotId;
                 const pid = AirArenaPilotRoster.resolveSeatPilotId(

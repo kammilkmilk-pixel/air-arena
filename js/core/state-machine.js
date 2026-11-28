@@ -929,7 +929,7 @@ GameContext.stateMachine = {
         return this.queueAction(teamId, 'bomb');
     },
 
-    /** Human SMS: queue rocket-pod salvo (3/turn, VT). */
+    /** Human SMS: queue rocket-pod salvo (1–9 picker, ammo-capped). */
     toggleRocketQueue(teamId) {
         const t = this.getTeamOrNull(teamId);
         if (!t || t.weapon !== 'rocket' || !t.pylons) return false;
@@ -966,6 +966,22 @@ GameContext.stateMachine = {
             ? AirArenaRocket.getTeamFuzeMode(t)
             : (t.rocketFuze === 'impact' ? 'impact' : 'vt');
         return this.setRocketFuze(teamId, cur === 'vt' ? 'impact' : 'vt');
+    },
+
+    /** Human SMS / ops: set rockets this ENT will fire (1–9, remaining ammo). */
+    setRocketSalvoCount(teamId, n) {
+        const t = this.getTeamOrNull(teamId);
+        if (!t || t.isDestroyed || GameContext.isAnimating() || GameContext.isReplayMode() || t.ready) return null;
+        if (typeof AirArenaRocket !== 'undefined' && typeof AirArenaRocket.setTeamSalvoCount === 'function') {
+            return AirArenaRocket.setTeamSalvoCount(t, n, { persist: !t.aiEnabled });
+        }
+        const cap = (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.getRocketSalvoPickerMax === 'function')
+            ? CONFIG.getRocketSalvoPickerMax()
+            : 9;
+        const v = Math.floor(Number(n));
+        const next = Math.max(1, Math.min(cap, Number.isFinite(v) ? v : 3));
+        t.rocketSalvoCount = next;
+        return next;
     },
 
     toggleGunQueue(teamId) {

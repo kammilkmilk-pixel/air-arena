@@ -1084,7 +1084,10 @@
                 ? AirArenaRocket.getTeamFuzeMode(team)
                 : ((team && team.rocketFuze === 'impact') ? 'impact' : 'vt');
             rows.push(['彈藥', `${ammo} / ${max}`]);
-            if (cfg.salvoPerTurn != null) rows.push(['齊射', `${cfg.salvoPerTurn} / 回`]);
+            const salvo = (typeof AirArenaRocket !== 'undefined' && typeof AirArenaRocket.getTeamSalvoCount === 'function')
+                ? AirArenaRocket.getTeamSalvoCount(team, ammo)
+                : (cfg.salvoPerTurn != null ? cfg.salvoPerTurn : 3);
+            rows.push(['齊射', `${salvo} / 回`]);
             rows.push(['引信', fuze === 'impact' ? 'IMPACT 撞擊對地' : 'VT 對空近發']);
             if (fuze === 'vt') {
                 if (cfg.range != null) rows.push(['對空射程', `${cfg.range} m`]);
@@ -1121,6 +1124,8 @@
             panel.setAttribute('aria-hidden', 'true');
             panel.classList.remove('is-left', 'is-right');
         }
+        const salvoWrap = $('ops-wpn-salvo');
+        if (salvoWrap) salvoWrap.hidden = true;
     }
 
     /**
@@ -1199,8 +1204,10 @@
         }
 
         const fuzeWrap = $('ops-wpn-fuze');
+        const salvoWrap = $('ops-wpn-salvo');
         if (OpsDetail.kind === 'gun') {
             if (fuzeWrap) fuzeWrap.hidden = true;
+            if (salvoWrap) salvoWrap.hidden = true;
             const cfg = (typeof CONFIG !== 'undefined' && CONFIG.weapons && CONFIG.weapons.gun)
                 ? CONFIG.weapons.gun
                 : {};
@@ -1273,6 +1280,16 @@
                 });
             } else {
                 fuzeWrap.hidden = true;
+            }
+        }
+        if (salvoWrap) {
+            if (wt === 'rocket' && t && !t.aiEnabled) {
+                salvoWrap.hidden = false;
+                if (typeof window.uiSyncRocketSalvoPicker === 'function') {
+                    window.uiSyncRocketSalvoPicker(t);
+                }
+            } else {
+                salvoWrap.hidden = true;
             }
         }
         const fire = $('ops-wpn-fire');
@@ -1412,6 +1429,23 @@
                     window.uiToggleRocketFuze(teamId, mode);
                 } else if (teamId && GameContext.stateMachine && typeof GameContext.stateMachine.setRocketFuze === 'function') {
                     GameContext.stateMachine.setRocketFuze(teamId, mode);
+                }
+                const t = teams && teams[teamId];
+                syncWeaponDetail(t);
+                refresh(t);
+            });
+        }
+        const wpnSalvo = $('ops-wpn-salvo');
+        if (wpnSalvo) {
+            wpnSalvo.addEventListener('click', (e) => {
+                const btn = e.target && e.target.closest ? e.target.closest('.ops-salvo-step') : null;
+                if (!btn || btn.disabled) return;
+                e.preventDefault();
+                e.stopPropagation();
+                const delta = parseInt(btn.getAttribute('data-salvo-delta'), 10);
+                const teamId = OpsRadial.teamId;
+                if (typeof window.uiNudgeRocketSalvo === 'function') {
+                    window.uiNudgeRocketSalvo(teamId, delta);
                 }
                 const t = teams && teams[teamId];
                 syncWeaponDetail(t);
