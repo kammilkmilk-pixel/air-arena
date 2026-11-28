@@ -1615,34 +1615,26 @@
             slot.pip.position.copy(shot.launchPos);
 
             if (isVt) {
-                const col = shot.vtHit ? 0xff0055 : vtColors[i % vtColors.length];
+                const enclosed = !!shot.vtHit;
+                const commitHot = committed && enclosed;
+                const col = commitHot ? 0xff0055 : (enclosed ? 0xffffff : vtColors[i % vtColors.length]);
                 slot.line.material.color.setHex(col);
-                slot.line.material.opacity = shot.vtHit ? 0.95 : 0.68;
+                slot.line.material.opacity = commitHot ? 0.95 : (enclosed ? 0.28 : 0.68);
                 slot.pip.material.color.setHex(col);
+                slot.pip.material.opacity = commitHot ? 0.9 : (enclosed ? 0.28 : 0.7);
                 slot.ring.material.color.setHex(col);
-                slot.ring.material.opacity = shot.vtHit ? 0.38 : 0.16;
+                slot.ring.material.opacity = commitHot ? 0.38 : (enclosed ? 0.10 : 0.16);
                 slot.ring.scale.setScalar(sol.vtRadius);
                 if (shot.ringPos) slot.ring.position.copy(shot.ringPos);
                 if (shot.ringQuat) slot.ring.quaternion.copy(shot.ringQuat);
-                const showCommitX = committed && shot.vtHit;
-                slot.cross.visible = showCommitX;
-                if (showCommitX && shot.ringPos) {
-                    slot.cross.position.copy(shot.ringPos);
-                    if (shot.ringQuat) {
-                        const zSpin = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI / 4);
-                        slot.cross.quaternion.copy(shot.ringQuat).multiply(zSpin);
-                    }
-                    slot.cross.material.color.setHex(0xff0055);
-                    const vtR = Number(sol.vtRadius) || 4.5;
-                    slot.cross.scale.setScalar((vtR / 1.4) * 0.72);
-                } else {
-                    slot.cross.scale.setScalar(1);
-                }
+                slot.cross.visible = false;
+                slot.cross.scale.setScalar(1);
             } else {
                 const col = impColors[i % impColors.length];
                 slot.line.material.color.setHex(col);
                 slot.line.material.opacity = 0.8;
                 slot.pip.material.color.setHex(col);
+                slot.pip.material.opacity = 0.9;
                 slot.ring.visible = !!shot.grounded;
                 slot.cross.visible = !!shot.grounded;
                 slot.cross.scale.setScalar(1);

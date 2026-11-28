@@ -49,10 +49,6 @@
                 <line x1="50" y1="55" x2="50" y2="62"/>
                 <circle id="lcos-surface-dot" cx="50" cy="50" r="2.0" fill="#ff9966" stroke="none"/>
             </g>
-            <g id="lcos-rocket-commit-x" style="display: none; pointer-events: none;" stroke="#ff0055" stroke-width="4.2" stroke-linecap="square" fill="none">
-                <line x1="27" y1="27" x2="73" y2="73"/>
-                <line x1="73" y1="27" x2="27" y2="73"/>
-            </g>
         </svg>
         <div id="lcos-wpn-tag" class="lcos-wpn-tag" aria-hidden="true">
             <div class="lcos-wpn-name" id="lcos-wpn-name">—</div>
@@ -1294,19 +1290,11 @@ window.updateDynamicHUD = function() {
             if (surfaceDot) surfaceDot.setAttribute('fill', color);
         }
     };
-    const rocketCommitX = document.getElementById('lcos-rocket-commit-x');
-    const setRocketCommitX = (visible, color) => {
-        if (!rocketCommitX) return;
-        rocketCommitX.style.display = visible ? 'block' : 'none';
-        if (visible && color) rocketCommitX.setAttribute('stroke', color);
-    };
-
     const hidePipper = () => {
         if (window.isDraggingLcosRing) return;
         if (lcosPipper) lcosPipper.style.display = 'none';
         if (ghostHud) ghostHud.style.display = 'none';
         setSurfaceReticle(false);
-        setRocketCommitX(false);
         updateLcosGunHeatRing(t, 50, 50, 37.4, false);
         updateMissileSeekerBrackets({ visible: false });
         updateLcosWeaponTag(null, { hide: true });
@@ -1324,7 +1312,10 @@ window.updateDynamicHUD = function() {
                 ? `drop-shadow(0 0 4px ${customColor})`
                 : 'drop-shadow(0 0 3px rgba(255, 255, 255, 0.45))';
         }
-        if (lcosConeCircle) lcosConeCircle.setAttribute('stroke', ringStroke);
+        if (lcosConeCircle) {
+            lcosConeCircle.setAttribute('stroke', ringStroke);
+            lcosConeCircle.setAttribute('stroke-opacity', '1');
+        }
         const innerT = document.getElementById('lcos-inner-t');
         if (innerT) innerT.setAttribute('stroke', aimStroke);
         const centerDot = document.getElementById('lcos-center-dot');
@@ -1337,7 +1328,6 @@ window.updateDynamicHUD = function() {
 
     if (t.weapon === 'gun') {
         setSurfaceReticle(false);
-        setRocketCommitX(false);
         updateMissileSeekerBrackets({ visible: false });
         if (typeof trajectoryMeshes !== 'undefined' && trajectoryMeshes[enemy.id]) trajectoryMeshes[enemy.id].visible = false;
         if (typeof threatEnvGroup !== 'undefined' && threatEnvGroup) threatEnvGroup.visible = false;
@@ -1489,7 +1479,6 @@ window.updateDynamicHUD = function() {
         }
     } else if (t.weapon === 'missile') {
         setSurfaceReticle(false);
-        setRocketCommitX(false);
         updateLcosGunHeatRing(t, 50, 50, 37.4, false);
         // 飛彈：僅外細圓環，平時黃、進入 seeker 命中窗變紅
         let shouldShowEnv = !!(enemy.userData && enemy.userData.showEnvelope && !isObscured);
@@ -1717,7 +1706,6 @@ window.updateDynamicHUD = function() {
                     ? '#ff9800'
                     : (queued ? '#00e5ff' : '#ff9966');
                 setSurfaceReticle(true, impCol);
-                setRocketCommitX(false);
                 paintPipperColor(false, impCol);
                 updateLcosWeaponTag(t, {
                     distance: distToEnemy,
@@ -1731,9 +1719,17 @@ window.updateDynamicHUD = function() {
                 setSurfaceReticle(false);
                 const vtHit = !!(sol && sol.anyVtHit && !isObscured);
                 const queued = !!(t.wpnQueued && t.queuedAction === 'rocket');
-                const vtBaseCol = queued ? '#4dd0e1' : null;
-                paintPipperColor(vtHit, vtHit ? null : vtBaseCol);
-                setRocketCommitX(!!(queued && vtHit), '#ff0055');
+                if (queued && vtHit) {
+                    paintPipperColor(true);
+                } else if (vtHit) {
+                    paintPipperColor(false, '#ffffff');
+                    lcosPipper.style.opacity = '0.4';
+                    if (lcosConeCircle) lcosConeCircle.setAttribute('stroke-opacity', '0.42');
+                } else if (queued) {
+                    paintPipperColor(false, '#4dd0e1');
+                } else {
+                    paintPipperColor(false);
+                }
                 updateLcosWeaponTag(t, {
                     distance: distToEnemy,
                     inRange: vtHit,
@@ -1742,7 +1738,6 @@ window.updateDynamicHUD = function() {
             }
         }
     } else if (t.weapon === 'bomb') {
-        setRocketCommitX(false);
         updateLcosGunHeatRing(t, 50, 50, 37.4, false);
         updateMissileSeekerBrackets({ visible: false });
         if (typeof trajectoryMeshes !== 'undefined' && trajectoryMeshes[enemy.id]) {
