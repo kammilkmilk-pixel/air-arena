@@ -1394,9 +1394,6 @@
                 const flame = ensurePodMuzzleFlame(p);
                 if (!flame) return;
                 let intensity = 0;
-                if (previewLit && t.weapon === 'rocket' && t.wpnQueued && t.queuedAction === 'rocket' && p.state === 'armed') {
-                    intensity = 0.45 + 0.25 * Math.sin(Date.now() * 0.02);
-                }
                 if (log) {
                     const tracks = log[`${id}RktTracks`] || {};
                     Object.keys(tracks).forEach((tid) => {
@@ -1592,11 +1589,13 @@
 
         const grp = ensureAimVisuals(Math.max(sol.shots.length, 3));
         if (!grp) return;
-        if (Rocket._previewSol === sol && grp.visible) {
-            syncPodMuzzleFlames(0, null, true);
+        const committed = !!(team.wpnQueued && team.queuedAction === 'rocket');
+        if (Rocket._previewSol === sol && grp.visible && Rocket._previewCommitted === committed) {
+            syncPodMuzzleFlames(0, null, false);
             return;
         }
         Rocket._previewSol = sol;
+        Rocket._previewCommitted = committed;
 
         const isVt = sol.fuze === 'vt';
         const vtColors = [0x4dd0e1, 0x80deea, 0x26c6da];
@@ -1625,7 +1624,20 @@
                 slot.ring.scale.setScalar(sol.vtRadius);
                 if (shot.ringPos) slot.ring.position.copy(shot.ringPos);
                 if (shot.ringQuat) slot.ring.quaternion.copy(shot.ringQuat);
-                slot.cross.visible = false;
+                const showCommitX = committed && shot.vtHit;
+                slot.cross.visible = showCommitX;
+                if (showCommitX && shot.ringPos) {
+                    slot.cross.position.copy(shot.ringPos);
+                    if (shot.ringQuat) {
+                        const zSpin = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI / 4);
+                        slot.cross.quaternion.copy(shot.ringQuat).multiply(zSpin);
+                    }
+                    slot.cross.material.color.setHex(0xff0055);
+                    const vtR = Number(sol.vtRadius) || 4.5;
+                    slot.cross.scale.setScalar((vtR / 1.4) * 0.72);
+                } else {
+                    slot.cross.scale.setScalar(1);
+                }
             } else {
                 const col = impColors[i % impColors.length];
                 slot.line.material.color.setHex(col);
@@ -1633,6 +1645,7 @@
                 slot.pip.material.color.setHex(col);
                 slot.ring.visible = !!shot.grounded;
                 slot.cross.visible = !!shot.grounded;
+                slot.cross.scale.setScalar(1);
                 if (shot.grounded && shot.ringPos) {
                     const lift = (shot.normal || new THREE.Vector3(0, 1, 0)).clone().multiplyScalar(0.06 + i * 0.01);
                     slot.ring.position.copy(shot.ringPos).add(lift);
@@ -1648,12 +1661,13 @@
         }
         grp.visible = true;
 
-        // Preview: idle glow in pod when rocket mode / queued salvo.
-        syncPodMuzzleFlames(0, null, true);
+        // Nest flame waits for actual launch frames — not planning / ENT commit.
+        syncPodMuzzleFlames(0, null, false);
     }
 
     function hideRocketAimPreview() {
         Rocket._previewSol = null;
+        Rocket._previewCommitted = false;
         if (Rocket._aimGroup) Rocket._aimGroup.visible = false;
         // Dim pod flames when leaving rocket aim.
         if (typeof teams !== 'undefined') {

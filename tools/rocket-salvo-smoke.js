@@ -69,4 +69,14 @@ assert.ok(!/sms-salvo-grid|ops-wpn-salvo-grid|data-salvo="9"/.test(html), '1–9
 assert.strictEqual((html.match(/class="sms-salvo-step"/g) || []).length, 2);
 assert.strictEqual((html.match(/class="ops-salvo-step"/g) || []).length, 2);
 
+const hudSrc = fs.readFileSync(path.join(__dirname, '../js/view/hud.js'), 'utf8');
+assert.ok(/id="lcos-rocket-commit-x"/.test(hudSrc), '2D commit X inside red pipper');
+assert.ok(!/齊射×\$\{salvoN\}·鎖定/.test(hudSrc), 'rocket HUD must not keep 鎖定 after commit');
+assert.ok(/setRocketCommitX\(!!\(queued && vtHit\)/.test(hudSrc), 'commit X only after ENT + VT window');
+
+const rocketSrc = fs.readFileSync(path.join(__dirname, '../js/logic/rocket.js'), 'utf8');
+assert.ok(!/intensity = 0\.45 \+ 0\.25 \* Math\.sin/.test(rocketSrc), 'no nest idle glow at commit');
+assert.ok(/Nest flame waits for actual launch/.test(rocketSrc), 'flame comment documents launch-only');
+assert.ok(/showCommitX && shot\.ringPos/.test(rocketSrc), '3D VT disc shows commit X');
+
 console.log('rocket-salvo-smoke: PASS');
