@@ -1722,9 +1722,8 @@ window.updateDynamicHUD = function() {
                 if (queued && vtHit) {
                     paintPipperColor(true);
                 } else if (vtHit) {
-                    paintPipperColor(false, '#ffffff');
-                    lcosPipper.style.opacity = '0.4';
-                    if (lcosConeCircle) lcosConeCircle.setAttribute('stroke-opacity', '0.42');
+                    paintPipperColor(false, '#d0d0d0');
+                    lcosPipper.style.opacity = '1.0';
                 } else if (queued) {
                     paintPipperColor(false, '#4dd0e1');
                 } else {

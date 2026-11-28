@@ -1617,13 +1617,13 @@
             if (isVt) {
                 const enclosed = !!shot.vtHit;
                 const commitHot = committed && enclosed;
-                const col = commitHot ? 0xff0055 : (enclosed ? 0xffffff : vtColors[i % vtColors.length]);
+                const col = commitHot ? 0xff0055 : (enclosed ? 0xd0d0d0 : vtColors[i % vtColors.length]);
                 slot.line.material.color.setHex(col);
-                slot.line.material.opacity = commitHot ? 0.95 : (enclosed ? 0.28 : 0.68);
+                slot.line.material.opacity = commitHot ? 0.95 : (enclosed ? 0.95 : 0.68);
                 slot.pip.material.color.setHex(col);
-                slot.pip.material.opacity = commitHot ? 0.9 : (enclosed ? 0.28 : 0.7);
+                slot.pip.material.opacity = commitHot ? 0.9 : (enclosed ? 0.9 : 0.7);
                 slot.ring.material.color.setHex(col);
-                slot.ring.material.opacity = commitHot ? 0.38 : (enclosed ? 0.10 : 0.16);
+                slot.ring.material.opacity = commitHot ? 0.38 : (enclosed ? 0.38 : 0.16);
                 slot.ring.scale.setScalar(sol.vtRadius);
                 if (shot.ringPos) slot.ring.position.copy(shot.ringPos);
                 if (shot.ringQuat) slot.ring.quaternion.copy(shot.ringQuat);

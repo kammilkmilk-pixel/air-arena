@@ -72,14 +72,14 @@ assert.strictEqual((html.match(/class="ops-salvo-step"/g) || []).length, 2);
 const hudSrc = fs.readFileSync(path.join(__dirname, '../js/view/hud.js'), 'utf8');
 assert.ok(!/lcos-rocket-commit-x/.test(hudSrc), 'no commit X in the VT circle');
 assert.ok(!/齊射×\$\{salvoN\}·鎖定/.test(hudSrc), 'rocket HUD must not keep 鎖定 after commit');
-assert.ok(/paintPipperColor\(false, '#ffffff'\)/.test(hudSrc), 'enclose-without-ENT is white');
-assert.ok(/lcosPipper\.style\.opacity = '0\.4'/.test(hudSrc), 'enclose-without-ENT lowers opacity');
+assert.ok(/paintPipperColor\(false, '#d0d0d0'\)/.test(hudSrc), 'enclose-without-ENT is darker white');
+assert.ok(!/lcosPipper\.style\.opacity = '0\.4'/.test(hudSrc), 'enclose must not lower opacity');
 assert.ok(/if \(queued && vtHit\) \{\s*paintPipperColor\(true\)/.test(hudSrc), 'ENT + enclose goes red');
 
 const rocketSrc = fs.readFileSync(path.join(__dirname, '../js/logic/rocket.js'), 'utf8');
 assert.ok(!/intensity = 0\.45 \+ 0\.25 \* Math\.sin/.test(rocketSrc), 'no nest idle glow at commit');
 assert.ok(/Nest flame waits for actual launch/.test(rocketSrc), 'flame comment documents launch-only');
-assert.ok(/commitHot \? 0xff0055 : \(enclosed \? 0xffffff/.test(rocketSrc), '3D VT ring white until ENT');
+assert.ok(/commitHot \? 0xff0055 : \(enclosed \? 0xd0d0d0/.test(rocketSrc), '3D VT ring darker white until ENT');
 assert.ok(!/showCommitX/.test(rocketSrc), '3D VT disc has no commit X');
 
 console.log('rocket-salvo-smoke: PASS');
