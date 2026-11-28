@@ -1203,68 +1203,56 @@ html.startup-lock body {
     color: #ffab76;
     border-color: rgba(255, 153, 102, 0.75);
 }
-.ops-wpn-salvo {
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-    margin: 0 0 8px;
-}
-.ops-wpn-salvo[hidden] { display: none !important; }
-.ops-wpn-salvo-label,
-.sms-salvo-label {
-    font-size: 10px;
-    letter-spacing: 0.6px;
-    color: rgba(255, 153, 102, 0.85);
-    font-weight: bold;
-}
-.ops-wpn-salvo-grid,
-.sms-salvo-grid {
-    display: grid;
-    grid-template-columns: repeat(9, minmax(0, 1fr));
-    gap: 3px;
-}
-.ops-salvo-btn,
-.sms-salvo-btn {
-    border: 1px solid rgba(255, 255, 255, 0.22);
-    background: rgba(255, 255, 255, 0.06);
-    color: rgba(255, 255, 255, 0.7);
-    font-family: 'Courier New', monospace;
-    font-size: 11px;
-    font-weight: bold;
-    padding: 5px 0;
-    border-radius: 3px;
-    cursor: pointer;
-    min-width: 0;
-}
-.ops-salvo-btn:hover,
-.sms-salvo-btn:hover {
-    border-color: rgba(255, 153, 102, 0.7);
-    color: #fff;
-}
-.ops-salvo-btn.is-active,
-.sms-salvo-btn.is-active {
-    border-color: rgba(255, 153, 102, 0.95);
-    background: rgba(210, 90, 30, 0.42);
-    color: #ffe0cc;
-    box-shadow: 0 0 6px rgba(255, 140, 70, 0.28);
-}
-.ops-salvo-btn:disabled,
-.sms-salvo-btn:disabled {
-    opacity: 0.28;
-    cursor: not-allowed;
-    box-shadow: none;
-}
+.ops-wpn-salvo,
 .sms-salvo-picker {
     display: flex;
     flex-direction: row;
     align-items: center;
-    gap: 6px;
-    width: 95%;
-    box-sizing: border-box;
-    padding: 2px 8px 4px;
+    justify-content: center;
+    gap: 2px;
+    flex-shrink: 0;
 }
+.ops-wpn-salvo {
+    margin: 0 0 8px;
+}
+.ops-wpn-salvo[hidden],
 .sms-salvo-picker[hidden] { display: none !important; }
-.sms-salvo-picker .sms-salvo-grid { flex: 1; }
+.sms-salvo-picker { margin-right: 4px; }
+.ops-salvo-step,
+.sms-salvo-step {
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: 1px solid rgba(255, 255, 255, 0.28);
+    background: rgba(255, 255, 255, 0.06);
+    color: rgba(255, 255, 255, 0.85);
+    font-family: 'Courier New', monospace;
+    font-size: 13px;
+    font-weight: bold;
+    line-height: 1;
+    border-radius: 3px;
+    cursor: pointer;
+}
+.ops-salvo-step:hover,
+.sms-salvo-step:hover {
+    border-color: rgba(255, 153, 102, 0.8);
+    color: #fff;
+}
+.ops-salvo-step:disabled,
+.sms-salvo-step:disabled {
+    opacity: 0.28;
+    cursor: not-allowed;
+}
+.ops-salvo-val,
+.sms-salvo-val {
+    min-width: 1.15em;
+    text-align: center;
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
+    font-weight: bold;
+    color: #ffcc99;
+    line-height: 1;
+}
 .ops-wpn-fire {
     width: 100%;
     border: 1px solid rgba(255,255,255,0.2);
@@ -2297,8 +2285,8 @@ body:not(:has(#replay-team-roster)) .team-seat-row {
         padding: 0 !important;
         font-size: 8px !important;
     }
-    .sms-salvo-label { font-size: 8px !important; }
-    .sms-salvo-btn { font-size: 9px !important; padding: 2px 0 !important; }
+    .sms-salvo-step { width: 18px !important; height: 16px !important; font-size: 11px !important; }
+    .sms-salvo-val { font-size: 10px !important; }
 
     /* 儀表放大後外圈／讀數微調；側翼油門與 HP 略讓出空間 */
     #roll-ring {

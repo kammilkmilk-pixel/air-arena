@@ -1087,7 +1087,7 @@
             const salvo = (typeof AirArenaRocket !== 'undefined' && typeof AirArenaRocket.getTeamSalvoCount === 'function')
                 ? AirArenaRocket.getTeamSalvoCount(team, ammo)
                 : (cfg.salvoPerTurn != null ? cfg.salvoPerTurn : 3);
-            rows.push(['齊射', `${salvo} / 回（可選 1–${Math.min(9, ammo || 0)}）`]);
+            rows.push(['齊射', `${salvo} / 回`]);
             rows.push(['引信', fuze === 'impact' ? 'IMPACT 撞擊對地' : 'VT 對空近發']);
             if (fuze === 'vt') {
                 if (cfg.range != null) rows.push(['對空射程', `${cfg.range} m`]);
@@ -1438,16 +1438,14 @@
         const wpnSalvo = $('ops-wpn-salvo');
         if (wpnSalvo) {
             wpnSalvo.addEventListener('click', (e) => {
-                const btn = e.target && e.target.closest ? e.target.closest('.ops-salvo-btn') : null;
+                const btn = e.target && e.target.closest ? e.target.closest('.ops-salvo-step') : null;
                 if (!btn || btn.disabled) return;
                 e.preventDefault();
                 e.stopPropagation();
-                const n = parseInt(btn.getAttribute('data-salvo'), 10);
+                const delta = parseInt(btn.getAttribute('data-salvo-delta'), 10);
                 const teamId = OpsRadial.teamId;
-                if (typeof window.uiSetRocketSalvoCount === 'function') {
-                    window.uiSetRocketSalvoCount(teamId, n);
-                } else if (teamId && GameContext.stateMachine && typeof GameContext.stateMachine.setRocketSalvoCount === 'function') {
-                    GameContext.stateMachine.setRocketSalvoCount(teamId, n);
+                if (typeof window.uiNudgeRocketSalvo === 'function') {
+                    window.uiNudgeRocketSalvo(teamId, delta);
                 }
                 const t = teams && teams[teamId];
                 syncWeaponDetail(t);

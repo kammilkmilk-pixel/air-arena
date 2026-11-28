@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, shrink-to-fit=no">
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect fill='%2300bcd4' width='16' height='16'/%3E%3C/svg%3E">
     <title>垂直空域 (Vertical Airspace) - 側翼 MFD 完全體</title>
-    <link rel="stylesheet" href="css/style.css?v=salvo1">
+    <link rel="stylesheet" href="css/style.css?v=salvo2">
 </head>
 <body class="theme-red startup-lock">
     <!-- 1. 開場授權黑幕 + 對戰設定 -->
@@ -475,19 +475,10 @@
                 <button type="button" class="ops-fuze-btn" data-fuze="vt" title="對空近發引信（4.5m 感應空爆）">VT 對空</button>
                 <button type="button" class="ops-fuze-btn" data-fuze="impact" title="撞擊引信（觸地／建築引爆，不提前空爆）">IMPACT 對地</button>
             </div>
-            <div id="ops-wpn-salvo" class="ops-wpn-salvo" hidden>
-                <span class="ops-wpn-salvo-label">齊射發數</span>
-                <div class="ops-wpn-salvo-grid" role="group" aria-label="火箭齊射發數">
-                    <button type="button" class="ops-salvo-btn" data-salvo="1">1</button>
-                    <button type="button" class="ops-salvo-btn" data-salvo="2">2</button>
-                    <button type="button" class="ops-salvo-btn" data-salvo="3">3</button>
-                    <button type="button" class="ops-salvo-btn" data-salvo="4">4</button>
-                    <button type="button" class="ops-salvo-btn" data-salvo="5">5</button>
-                    <button type="button" class="ops-salvo-btn" data-salvo="6">6</button>
-                    <button type="button" class="ops-salvo-btn" data-salvo="7">7</button>
-                    <button type="button" class="ops-salvo-btn" data-salvo="8">8</button>
-                    <button type="button" class="ops-salvo-btn" data-salvo="9">9</button>
-                </div>
+            <div id="ops-wpn-salvo" class="ops-wpn-salvo" hidden role="group" aria-label="火箭齊射發數">
+                <button type="button" class="ops-salvo-step" data-salvo-delta="-1" title="少一枚">−</button>
+                <span class="ops-salvo-val" id="ops-salvo-val">3</span>
+                <button type="button" class="ops-salvo-step" data-salvo-delta="1" title="多一枚">+</button>
             </div>
             <button type="button" id="ops-wpn-fire" class="ops-wpn-fire" disabled>發射 ENT</button>
         </div>
@@ -526,20 +517,6 @@
                         <div class="pylon-stick" id="pylon-stick-4"></div>
                     </div>
                 </div>
-                <div id="sms-salvo-picker" class="sms-salvo-picker" hidden role="group" aria-label="火箭齊射發數">
-                    <span class="sms-salvo-label">齊射</span>
-                    <div class="sms-salvo-grid">
-                        <button type="button" class="sms-salvo-btn" data-salvo="1">1</button>
-                        <button type="button" class="sms-salvo-btn" data-salvo="2">2</button>
-                        <button type="button" class="sms-salvo-btn" data-salvo="3">3</button>
-                        <button type="button" class="sms-salvo-btn" data-salvo="4">4</button>
-                        <button type="button" class="sms-salvo-btn" data-salvo="5">5</button>
-                        <button type="button" class="sms-salvo-btn" data-salvo="6">6</button>
-                        <button type="button" class="sms-salvo-btn" data-salvo="7">7</button>
-                        <button type="button" class="sms-salvo-btn" data-salvo="8">8</button>
-                        <button type="button" class="sms-salvo-btn" data-salvo="9">9</button>
-                    </div>
-                </div>
                 
                 <div id="sms-display-screen">
                     <div id="sms-text-wrap">
@@ -547,6 +524,11 @@
                         <div id="sms-lock-warn" hidden aria-hidden="true">
                             <span class="sms-lock-marquee">⚠ 被鎖定　⚠ 被鎖定　⚠ 被鎖定　⚠ 被鎖定　⚠ 被鎖定　⚠ 被鎖定　</span>
                         </div>
+                    </div>
+                    <div id="sms-salvo-picker" class="sms-salvo-picker" hidden role="group" aria-label="火箭齊射發數">
+                        <button type="button" class="sms-salvo-step" data-salvo-delta="-1" title="少一枚">−</button>
+                        <span class="sms-salvo-val" id="sms-salvo-val">3</span>
+                        <button type="button" class="sms-salvo-step" data-salvo-delta="1" title="多一枚">+</button>
                     </div>
                     <button type="button" id="sms-fuze-btn" class="sms-fuze-btn" hidden title="切換火箭引信（VT 對空／IMPACT 對地）">VT</button>
                     <button id="sms-enter-btn">ENT</button>
@@ -714,9 +696,9 @@
     <script src="js/view/hud.js?v=salvo1"></script>
     <script src="js/view/multi-view.js?v=split2"></script>
     <script src="js/view/replay-director.js?v=rdir1"></script>
-    <script src="js/view/ops-radial-ui.js?v=salvo1"></script>
-    <script src="js/view/ui.js?v=salvo1"></script>
-    <script src="js/view/hover-help.js?v=salvo1"></script>
+    <script src="js/view/ops-radial-ui.js?v=salvo2"></script>
+    <script src="js/view/ui.js?v=salvo2"></script>
+    <script src="js/view/hover-help.js?v=salvo2"></script>
     <script src="js/core/batch-ai-run.js"></script>
     <script src="js/game.js?v=plume1"></script>
 </body>

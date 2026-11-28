@@ -3386,13 +3386,13 @@ document.addEventListener("DOMContentLoaded", () => {
     const smsSalvoPicker = document.getElementById('sms-salvo-picker');
     if (smsSalvoPicker) {
         smsSalvoPicker.addEventListener('click', (e) => {
-            const btn = e.target && e.target.closest ? e.target.closest('.sms-salvo-btn') : null;
+            const btn = e.target && e.target.closest ? e.target.closest('.sms-salvo-step') : null;
             if (!btn || btn.disabled) return;
             e.preventDefault();
             e.stopPropagation();
-            const n = parseInt(btn.getAttribute('data-salvo'), 10);
-            if (typeof window.uiSetRocketSalvoCount === 'function') {
-                window.uiSetRocketSalvoCount(null, n);
+            const delta = parseInt(btn.getAttribute('data-salvo-delta'), 10);
+            if (typeof window.uiNudgeRocketSalvo === 'function') {
+                window.uiNudgeRocketSalvo(null, delta);
             }
         });
     }
@@ -4081,19 +4081,26 @@ function uiRocketSalvoCap(team) {
     return armed ? Number(armed.ammo) || 0 : 0;
 }
 
-function uiPaintSalvoButtons(root, effective, ammo, pickerMax) {
+function uiPaintSalvoStepper(root, effective, ammo, pickerMax) {
     if (!root) return;
     const maxPick = Math.max(1, pickerMax || 9);
-    const cap = Math.max(0, Math.min(maxPick, ammo));
-    root.querySelectorAll('[data-salvo]').forEach((btn) => {
-        const n = parseInt(btn.getAttribute('data-salvo'), 10);
-        const avail = Number.isFinite(n) && n >= 1 && n <= cap;
-        btn.disabled = !avail;
-        btn.classList.toggle('is-active', avail && n === effective);
-        btn.title = !avail
-            ? (ammo <= 0 ? '彈藥耗盡' : `剩餘 ${ammo} 枚，最多齊射 ${cap}`)
-            : `本回合齊射 ${n} 枚`;
-    });
+    const cap = Math.max(1, Math.min(maxPick, ammo > 0 ? ammo : 1));
+    const n = Math.max(1, Math.min(cap, effective || 1));
+    const val = root.querySelector('.sms-salvo-val, .ops-salvo-val');
+    if (val) val.textContent = String(n);
+    const minus = root.querySelector('[data-salvo-delta="-1"]');
+    const plus = root.querySelector('[data-salvo-delta="1"]');
+    if (minus) {
+        minus.disabled = n <= 1;
+        minus.title = n <= 1 ? '最少 1 枚' : '少一枚';
+    }
+    if (plus) {
+        const atCap = n >= cap || ammo <= 0;
+        plus.disabled = atCap;
+        plus.title = ammo <= 0
+            ? '彈藥耗盡'
+            : (n >= cap ? `最多 ${cap} 枚` : '多一枚');
+    }
 }
 
 function uiSyncRocketSalvoPicker(teamObj) {
@@ -4112,13 +4119,13 @@ function uiSyncRocketSalvoPicker(teamObj) {
             ? AirArenaRocket.getTeamSalvoCount(team, ammo > 0 ? ammo : 1)
             : Math.min(3, ammo || 3))
         : 0;
-    if (show) uiPaintSalvoButtons(sms, effective, ammo, pickerMax);
-    if (ops && !ops.hidden) uiPaintSalvoButtons(ops, effective, ammo, pickerMax);
+    if (show) uiPaintSalvoStepper(sms, effective, ammo, pickerMax);
+    if (ops && !ops.hidden) uiPaintSalvoStepper(ops, effective, ammo, pickerMax);
     return effective;
 }
 window.uiSyncRocketSalvoPicker = uiSyncRocketSalvoPicker;
 
-function uiSetRocketSalvoCount(teamId = null, n) {
+function uiSetRocketSalvoCount(teamId = null, n, opts) {
     const currentTeam = teamId || uiCurrentTeamId();
     const t = teams[currentTeam];
     if (!t || t.aiEnabled || GameContext.isAnimating() || GameContext.isReplayMode() || t.isDestroyed || t.ready) {
@@ -4131,7 +4138,9 @@ function uiSetRocketSalvoCount(teamId = null, n) {
             ? AirArenaRocket.setTeamSalvoCount(t, n)
             : (t.rocketSalvoCount = n));
     if (!next) return null;
-    showSMSAlert(`🚀 齊射發數：${next}（剩餘 ${uiRocketSalvoCap(t)} 枚）`, '#ff9966');
+    if (!(opts && opts.silent)) {
+        showSMSAlert(`🚀 齊射發數：${next}（剩餘 ${uiRocketSalvoCap(t)} 枚）`, '#ff9966');
+    }
     updateDashboardUI(t);
     uiRefreshPreview(t);
     if (window.AirArenaOpsRadial && typeof window.AirArenaOpsRadial.refresh === 'function') {
@@ -4140,6 +4149,18 @@ function uiSetRocketSalvoCount(teamId = null, n) {
     return next;
 }
 window.uiSetRocketSalvoCount = uiSetRocketSalvoCount;
+
+function uiNudgeRocketSalvo(teamId, delta) {
+    const currentTeam = teamId || uiCurrentTeamId();
+    const t = teams[currentTeam];
+    if (!t) return null;
+    const ammo = uiRocketSalvoCap(t);
+    const cur = (typeof AirArenaRocket !== 'undefined' && typeof AirArenaRocket.getTeamSalvoCount === 'function')
+        ? AirArenaRocket.getTeamSalvoCount(t, ammo > 0 ? ammo : 1)
+        : Math.min(3, ammo || 3);
+    return uiSetRocketSalvoCount(currentTeam, cur + (Number(delta) || 0), { silent: true });
+}
+window.uiNudgeRocketSalvo = uiNudgeRocketSalvo;
 
 let _lastRocketFuzeTooltipSig = '';
 function uiSyncRocketFuzeTooltips() {

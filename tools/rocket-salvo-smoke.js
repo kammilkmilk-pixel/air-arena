@@ -61,4 +61,12 @@ const last9 = R.launchStepForIndex(8, 9);
 assert.ok(last9 <= 100, '9-round salvo must fit in the turn, last=' + last9);
 assert.ok(R.launchStepForIndex(1, 9) < R.launchStepForIndex(2, 9), 'compressed salvo stays ordered');
 
+const fs = require('fs');
+const html = fs.readFileSync(path.join(__dirname, '../index.html'), 'utf8');
+assert.ok(/id="sms-salvo-picker"/.test(html) && /id="ops-wpn-salvo"/.test(html), 'stepper roots present');
+assert.ok(/data-salvo-delta="-1"/.test(html) && /data-salvo-delta="1"/.test(html), 'minus/plus stepper');
+assert.ok(!/sms-salvo-grid|ops-wpn-salvo-grid|data-salvo="9"/.test(html), '1–9 grid must be gone');
+assert.strictEqual((html.match(/class="sms-salvo-step"/g) || []).length, 2);
+assert.strictEqual((html.match(/class="ops-salvo-step"/g) || []).length, 2);
+
 console.log('rocket-salvo-smoke: PASS');
